@@ -465,6 +465,9 @@ type StoreTestingKnobs struct {
 
 	// RangeLeaseAcquireTimeoutOverride overrides RaftConfig.RangeLeaseAcquireTimeout().
 	RangeLeaseAcquireTimeoutOverride time.Duration
+
+	// MaybeAddInterceptor intercepts calls to MaybeAdd -> passes the function with the label
+	MaybeAddInterceptor func(labelName string, labelDoesExist bool)
 }
 
 // ModuleTestingKnobs is part of the base.ModuleTestingKnobs interface.
