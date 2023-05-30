@@ -3153,7 +3153,9 @@ func (r *Replica) followerSendSnapshot(
 	//
 	//}
 
+	fmt.Println("cross region here called here 2")
 	recordBytesSent := func(inc int64) {
+		fmt.Println("cross region here called here 1")
 		// Only counts for delegated bytes if we are not self-delegating.
 		if r.NodeID() != req.CoordinatorReplica.NodeID {
 			r.store.metrics.DelegateSnapshotSendBytes.Inc(inc)
@@ -3162,6 +3164,7 @@ func (r *Replica) followerSendSnapshot(
 		// Question: where do we want to error here
 		isCrossRegion, _ := r.store.cfg.StorePool.IsCrossRegion(req.CoordinatorReplica, req.RecipientReplica)
 		if isCrossRegion {
+			fmt.Println("cross region here already")
 			r.store.metrics.RangeSnapShotCrossRegionSentBytes.Inc(inc)
 		}
 		//if err != nil {

@@ -1394,9 +1394,10 @@ func (sp *StorePool) GetNodeLocalityWithString(nodeID roachpb.NodeID) localityWi
 	}
 	sp.localitiesMu.RLock()
 	defer sp.localitiesMu.RUnlock()
-	if locality, ok := sp.localitiesMu.nodeLocalities[nodeID]; !ok {
+	if locality, ok := sp.localitiesMu.nodeLocalities[nodeID]; ok {
 		nodeLocality = locality
 	}
+	// should return an error here if not found?
 	return nodeLocality
 }
 
@@ -1414,9 +1415,13 @@ func (sp *StorePool) GetNodeLocality(nodeID roachpb.NodeID) roachpb.Locality {
 func (sp *StorePool) IsCrossRegion(
 	firstReplica roachpb.ReplicaDescriptor, secReplica roachpb.ReplicaDescriptor,
 ) (bool, error) {
-	if sp.GetNodeLocality(firstReplica.NodeID).  {
-
+	isCrossRegion, err := sp.GetNodeLocality(firstReplica.NodeID).IsCrossRegion(sp.GetNodeLocality(secReplica.NodeID))
+	if err != nil {
+		fmt.Println("not cross region")
+		return false, err
 	}
+	fmt.Printf("checking: %v", isCrossRegion)
+	return isCrossRegion, nil
 }
 
 // IsStoreReadyForRoutineReplicaTransfer returns true iff the store's node is

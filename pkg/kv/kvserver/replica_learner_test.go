@@ -956,10 +956,25 @@ func testRaftSnapshotsToNonVoters(t *testing.T, drainReceivingNode bool) {
 		}
 	}
 
+	const numNodes = 3
+	serverArgs := make(map[int]base.TestServerArgs)
+	for i := 0; i < numNodes; i++ {
+		serverArgs[i] = base.TestServerArgs{
+			Locality: roachpb.Locality{
+				Tiers: []roachpb.Tier{
+					{
+						Key: "region", Value: fmt.Sprintf("us-east-%v", i),
+					},
+				},
+			},
+			Knobs: knobs,
+		}
+	}
+
 	tc := testcluster.StartTestCluster(
-		t, 2, base.TestClusterArgs{
-			ServerArgs:      base.TestServerArgs{Knobs: knobs},
-			ReplicationMode: base.ReplicationManual,
+		t, numNodes, base.TestClusterArgs{
+			ServerArgsPerNode: serverArgs,
+			ReplicationMode:   base.ReplicationManual,
 		},
 	)
 	defer tc.Stopper().Stop(ctx)
@@ -1056,6 +1071,12 @@ func testRaftSnapshotsToNonVoters(t *testing.T, drainReceivingNode bool) {
 		kvserverpb.SnapshotRequest_RECOVERY:  {sentBytes: snapshotLength, rcvdBytes: 0},
 		kvserverpb.SnapshotRequest_UNKNOWN:   {sentBytes: 0, rcvdBytes: 0},
 	}
+
+	fmt.Println(getFirstStoreMetric(t, tc.Server(0), "range.snapshots.sent-crossregion"))
+	fmt.Println(getFirstStoreMetric(t, tc.Server(1), "range.snapshots.sent-crossregion"))
+	fmt.Println(getFirstStoreMetric(t, tc.Server(0), "range.snapshots.recv-crossregion"))
+	fmt.Println(getFirstStoreMetric(t, tc.Server(1), "range.snapshots.recv-crossregion"))
+
 	require.Equal(t, senderTotalExpected, senderTotalDelta)
 	require.Equal(t, senderMapExpected, senderMapDelta)
 
@@ -2199,27 +2220,22 @@ type snapshotBytesMetrics struct {
 // and granularMetrics is the map mentioned above.
 func getSnapshotBytesMetrics(
 	t *testing.T, tc *testcluster.TestCluster, serverIdx int,
-) (snapshotBytesMetrics, map[kvserverpb.SnapshotRequest_Priority]snapshotBytesMetrics) {
-	granularMetrics := make(map[kvserverpb.SnapshotRequest_Priority]snapshotBytesMetrics)
-
-	granularMetrics[kvserverpb.SnapshotRequest_UNKNOWN] = snapshotBytesMetrics{
-		sentBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.unknown.sent-bytes"),
-		rcvdBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.unknown.rcvd-bytes"),
-	}
-	granularMetrics[kvserverpb.SnapshotRequest_RECOVERY] = snapshotBytesMetrics{
-		sentBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.recovery.sent-bytes"),
-		rcvdBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.recovery.rcvd-bytes"),
-	}
-	granularMetrics[kvserverpb.SnapshotRequest_REBALANCE] = snapshotBytesMetrics{
-		sentBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.rebalancing.sent-bytes"),
-		rcvdBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.rebalancing.rcvd-bytes"),
+) (snapshotBytesMetrics, map[string]snapshotBytesMetrics) {
+	granularMetrics := make(map[string]snapshotBytesMetrics)
+	findSnapshotBytesMetrics := func(metricName string) snapshotBytesMetrics {
+		sentMetricStr := fmt.Sprintf("range.snapshots.%vsent-bytes", metricName)
+		rcvdMetricStr := fmt.Sprintf("range.snapshots.%vrcvd-bytes", metricName)
+		return snapshotBytesMetrics{
+			sentBytes: getFirstStoreMetric(t, tc.Server(serverIdx), sentMetricStr),
+			rcvdBytes: getFirstStoreMetric(t, tc.Server(serverIdx), rcvdMetricStr),
+		}
 	}
 
-	totalBytes := snapshotBytesMetrics{
-		sentBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.sent-bytes"),
-		rcvdBytes: getFirstStoreMetric(t, tc.Server(serverIdx), "range.snapshots.rcvd-bytes"),
-	}
-
+	granularMetrics["unknown"] = findSnapshotBytesMetrics("unknown.")
+	granularMetrics["recovery"] = findSnapshotBytesMetrics("recovery.")
+	granularMetrics["rebalancing"] = findSnapshotBytesMetrics("rebalancing.")
+	granularMetrics["cross-region"] = findSnapshotBytesMetrics("cross-region.")
+	totalBytes := findSnapshotBytesMetrics("")
 	return totalBytes, granularMetrics
 }
 

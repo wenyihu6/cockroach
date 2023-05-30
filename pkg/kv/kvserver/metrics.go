@@ -946,6 +946,18 @@ var (
 		Measurement: "Snapshots",
 		Unit:        metric.Unit_COUNT,
 	}
+	metaRangeSnapShotCrossRegionSentBytes = metric.Metadata{
+		Name:        "range.snapshots.cross-region.sent-bytes",
+		Help:        "Number of snapshot bytes sent that were cross region",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_BYTES,
+	}
+	metaRangeSnapShotCrossRegionRcvdBytes = metric.Metadata{
+		Name:        "range.snapshots.cross-region.rcvd-bytes",
+		Help:        "Number of snapshot bytes received that were cross region",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_BYTES,
+	}
 	metaRangeSnapshotSendQueueLength = metric.Metadata{
 		Name:        "range.snapshots.send-queue",
 		Help:        "Number of snapshots queued to send",
@@ -2791,6 +2803,8 @@ func newStoreMetrics(histogramWindow time.Duration) *StoreMetrics {
 		RangeSnapshotRebalancingSentBytes:            metric.NewCounter(metaRangeSnapshotRebalancingSentBytes),
 		RangeSnapshotRecvFailed:                      metric.NewCounter(metaRangeSnapshotRecvFailed),
 		RangeSnapshotRecvUnusable:                    metric.NewCounter(metaRangeSnapshotRecvUnusable),
+		RangeSnapShotCrossRegionSentBytes:            metric.NewCounter(metaRangeSnapShotCrossRegionSentBytes),
+		RangeSnapShotCrossRegionRcvdBytes:            metric.NewCounter(metaRangeSnapShotCrossRegionRcvdBytes),
 		RangeSnapshotSendQueueLength:                 metric.NewGauge(metaRangeSnapshotSendQueueLength),
 		RangeSnapshotRecvQueueLength:                 metric.NewGauge(metaRangeSnapshotRecvQueueLength),
 		RangeSnapshotSendInProgress:                  metric.NewGauge(metaRangeSnapshotSendInProgress),
