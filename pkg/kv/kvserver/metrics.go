@@ -2173,6 +2173,8 @@ type StoreMetrics struct {
 	RangeSnapshotRebalancingSentBytes            *metric.Counter
 	RangeSnapshotRecvFailed                      *metric.Counter
 	RangeSnapshotRecvUnusable                    *metric.Counter
+	RangeSnapShotCrossRegionSentBytes            *metric.Counter
+	RangeSnapShotCrossRegionRcvdBytes            *metric.Counter
 
 	// Range snapshot queue metrics.
 	RangeSnapshotSendQueueLength     *metric.Gauge

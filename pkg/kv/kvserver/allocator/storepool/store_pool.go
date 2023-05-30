@@ -1397,6 +1397,12 @@ func (sp *StorePool) GetNodeLocalityString(nodeID roachpb.NodeID) string {
 	return locality.str
 }
 
+func (sp *StorePool) IsCrossRegion(
+	firstReplica roachpb.ReplicaDescriptor, secReplica roachpb.ReplicaDescriptor,
+) (bool, error) {
+	return false, nil
+}
+
 // IsStoreReadyForRoutineReplicaTransfer returns true iff the store's node is
 // live (as indicated by its `NodeLivenessStatus`) and thus a legal candidate
 // to receive a replica.

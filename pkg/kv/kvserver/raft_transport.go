@@ -478,7 +478,7 @@ func (t *RaftTransport) processQueue(
 	}
 }
 
-// getQueue returns the queue for the specified node ID and a boolean
+// getQueue returns the queue for the specif ID and a boolean
 // indicating whether the queue already exists (true) or was created (false).
 func (t *RaftTransport) getQueue(
 	nodeID roachpb.NodeID, class rpc.ConnectionClass,

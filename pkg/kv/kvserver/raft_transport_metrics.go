@@ -23,6 +23,8 @@ type RaftTransportMetrics struct {
 
 	ReverseSent *metric.Counter
 	ReverseRcvd *metric.Counter
+
+	CrossRegionMessagesBytes *metric.Counter
 }
 
 func (t *RaftTransport) initMetrics() {

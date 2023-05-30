@@ -1089,6 +1089,13 @@ func (s *Store) receiveSnapshot(
 	recordBytesReceived := func(inc int64) {
 		s.metrics.RangeSnapshotRcvdBytes.Inc(inc)
 
+		isCrossRegion, _ := s.cfg.StorePool.IsCrossRegion(
+			header.RaftMessageRequest.FromReplica, header.RaftMessageRequest.ToReplica,
+		)
+		if isCrossRegion {
+			s.metrics.RangeSnapShotCrossRegionRcvdBytes.Inc(inc)
+		}
+
 		switch header.Priority {
 		case kvserverpb.SnapshotRequest_RECOVERY:
 			s.metrics.RangeSnapshotRecoveryRcvdBytes.Inc(inc)

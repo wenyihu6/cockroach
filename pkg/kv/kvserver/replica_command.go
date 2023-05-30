@@ -3145,11 +3145,29 @@ func (r *Replica) followerSendSnapshot(
 		r.store.metrics.RangeSnapshotsGenerated.Inc(1)
 	}
 
+	//fromReplicaNodeID := req.CoordinatorReplica.NodeID
+	//toReplicaNodeID := req.RecipientReplica.NodeID
+	//nodeDesc, err := r.store.cfg.Gossip.GetNodeDescriptor(fromReplicaNodeID)
+	//
+	//isCrossRegion := func() {
+	//
+	//}
+
 	recordBytesSent := func(inc int64) {
 		// Only counts for delegated bytes if we are not self-delegating.
 		if r.NodeID() != req.CoordinatorReplica.NodeID {
 			r.store.metrics.DelegateSnapshotSendBytes.Inc(inc)
 		}
+
+		// Question: where do we want to error here
+		isCrossRegion, _ := r.store.cfg.StorePool.IsCrossRegion(req.CoordinatorReplica, req.RecipientReplica)
+		if isCrossRegion {
+			r.store.metrics.RangeSnapShotCrossRegionSentBytes.Inc(inc)
+		}
+		//if err != nil {
+		//	return errors.Wrap(err, "Unable to find localities")
+		//}
+
 		r.store.metrics.RangeSnapshotSentBytes.Inc(inc)
 
 		switch header.Priority {
