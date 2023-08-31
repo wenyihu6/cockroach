@@ -132,7 +132,15 @@ clear
 ----
 
 # We expect ranges to be randomly allocated across stores with a replication
-# factor of 1.
+# factor of 1. Assertion failures on some samples are expected under this setup.
+# When there is only one replica and the removal target in rebalancing is the
+# leaseholder, stabilizing is hard. The system can't easily remove the replica,
+# so it chose to fall back to adding a replica, hoping lease transfer and
+# removal of original replica would happen next time this range is checked. In
+# this set up, it is always possible to be over-replicated if rebalancing is
+# occurring -- as we catch ranges in the middle of rebalancing. In addition, we
+# expect all output details to be displayed upon test failure. Please see the
+# comment in ReplicationChangesForRebalance for more details.
 rand_cluster cluster_gen_type=single_region
 ----
 

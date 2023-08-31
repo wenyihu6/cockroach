@@ -12,6 +12,20 @@ set_span_config delay=1m
 [0,9999999999): num_replicas=3 constraints={'+region=a'}
 ----
 
+validate_config
+----
+satisfiable:
+validation result:
+	1.zone:
+	2.region:
+		a: 3 non_voters
+	3.cluster: 3 voters
+constraint:
+replicas=3
+voters=0
+constraints=[+region=a]
+voter_constraints=[]
+
 assertion type=conformance under=0 violating=0
 ----
 
