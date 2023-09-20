@@ -23,10 +23,10 @@ func Validate(initialState state.State, events scheduled.EventExecutor) string {
 	buf := strings.Builder{}
 	buf.WriteString("validation result:\n")
 	failed := false
-	zone, region, zoneToRegion := processClusterInfo(initialState.ClusterInfo().Regions)
+	zoneToRegion, zone, region, total := processClusterInfo(initialState.ClusterInfo().Regions)
 	for _, se := range events.ScheduledEvents() {
 		if e, ok := se.TargetEvent.(event.SetSpanConfigEvent); ok {
-			ma := newMockAllocator(zone, region, zoneToRegion)
+			ma := newMockAllocator(zoneToRegion, zone, region, total)
 			if success, reason := ma.isSatisfiable(e.Config); !success {
 				failed = true
 				buf.WriteString(fmt.Sprintf("\tinvalid: event scheduled at %s is expected to lead to failure\n", se.At.Format("2006-01-02 15:04:05")))

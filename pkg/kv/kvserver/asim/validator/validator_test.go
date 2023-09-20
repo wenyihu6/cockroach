@@ -19,7 +19,7 @@ import (
 )
 
 func TestValidator(t *testing.T) {
-	zone, region, zoneToRegion := processClusterInfo(state.ComplexConfig.Regions)
+	zoneToRegion, zone, region, total := processClusterInfo(state.ComplexConfig.Regions)
 	testCases := []struct {
 		constraint          string
 		expectedSuccess     bool
@@ -91,7 +91,7 @@ func TestValidator(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.constraint, func(t *testing.T) {
-			ma := newMockAllocator(zone, region, zoneToRegion)
+			ma := newMockAllocator(zoneToRegion, zone, region, total)
 			config := spanconfigtestutils.ParseZoneConfig(t, tc.constraint).AsSpanConfig()
 			success, actualError := ma.isSatisfiable(config)
 			require.Equal(t, tc.expectedSuccess, success)
