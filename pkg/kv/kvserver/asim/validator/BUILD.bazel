@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "validator",
@@ -14,5 +14,18 @@ go_library(
         "//pkg/kv/kvserver/asim/state",
         "//pkg/roachpb",
         "@com_github_cockroachdb_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "validator_test",
+    srcs = ["validator_test.go"],
+    args = ["-test.timeout=295s"],
+    embed = [":validator"],
+    deps = [
+        "//pkg/kv/kvserver/asim/state",
+        "//pkg/kv/kvserver/liveness/livenesspb",
+        "//pkg/spanconfig/spanconfigtestutils",
+        "@com_github_stretchr_testify//require",
     ],
 )

@@ -177,6 +177,9 @@ func (m *mockAllocator) processConstraints(
 	}
 	return zoneConstraints, regionConstraints, nil
 }
+func computeNonVotersToPromote(existingNonVoters int, requiredVoters int) int {
+	return int(math.Min(float64(existingNonVoters), float64(requiredVoters)))
+}
 
 func computeNonVotersToAdd(existingNonVoters int, requiredVoters int, requiredReplicas int) int {
 	return int(math.Max(0, float64(requiredReplicas-requiredVoters-existingNonVoters)))
@@ -235,9 +238,9 @@ func (m *mockAllocator) tryToSatisfyRegionConstraint(
 	if !ok {
 		panic("BETTER MSG")
 	}
-	votersToAdd := computeVotersToAdd(existing.assignedVoters, requiredVoters)
-	nonVotersToAdd := computeNonVotersToAdd(existing.assignedNonVoters, requiredVoters, requiredReplicas)
-	fmt.Println(nonVotersToAdd)
+	nonVotersToPromote := computeNonVotersToPromote(existing.assignedNonVoters, requiredVoters)
+	votersToAdd := computeVotersToAdd(existing.assignedVoters+nonVotersToPromote, requiredVoters)
+	nonVotersToAdd := computeNonVotersToAdd(existing.assignedNonVoters-nonVotersToPromote, requiredVoters, requiredReplicas)
 	if votersToAdd == 0 && nonVotersToAdd == 0 {
 		return true
 	}
@@ -253,8 +256,9 @@ func (m *mockAllocator) tryToSatisfyZoneConstraint(
 	if !ok {
 		panic("BETTER MSG")
 	}
-	votersToAdd := computeVotersToAdd(existing.assignedVoters, requiredVoters)
-	nonVotersToAdd := computeNonVotersToAdd(existing.assignedNonVoters, requiredVoters, requiredReplicas)
+	nonVotersToPromote := computeNonVotersToPromote(existing.assignedNonVoters, requiredVoters)
+	votersToAdd := computeVotersToAdd(existing.assignedVoters+nonVotersToPromote, requiredVoters)
+	nonVotersToAdd := computeNonVotersToAdd(existing.assignedNonVoters-nonVotersToPromote, requiredVoters, requiredReplicas)
 	if votersToAdd == 0 && nonVotersToAdd == 0 {
 		return true
 	}
@@ -276,7 +280,7 @@ func (m *mockAllocator) tryToSatisfyZoneConstraint(
 // - For zone constraint, we compute voters and nonvoters to ba added
 
 // given the region and zone constriant, we can give arise the same constraints
-func (m *mockAllocator) isSatisfiable(config roachpb.SpanConfig) (success bool, reason error) {
+func (m *mockAllocator) isSatisfiable(config roachpb.SpanConfig) (success bool, err error) {
 	m.remainingVoters = int(config.GetNumVoters())
 	m.remainingReplicas = int(config.NumReplicas)
 	zoneConstraints, regionConstraints, err := m.processConstraints(config)

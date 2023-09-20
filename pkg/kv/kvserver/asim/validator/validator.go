@@ -19,7 +19,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
 )
 
-func ValidationResult(initialState state.State, events scheduled.EventExecutor) string {
+func Validate(initialState state.State, events scheduled.EventExecutor) string {
 	buf := strings.Builder{}
 	buf.WriteString("validation result:\n")
 	failed := false
@@ -30,7 +30,7 @@ func ValidationResult(initialState state.State, events scheduled.EventExecutor) 
 			if success, reason := ma.isSatisfiable(e.Config); !success {
 				failed = true
 				buf.WriteString(fmt.Sprintf("\tinvalid: event scheduled at %s is expected to lead to failure\n", se.At.Format("2006-01-02 15:04:05")))
-				buf.WriteString(fmt.Sprintf("\tunsatisfiable due to %s\n", reason))
+				buf.WriteString(fmt.Sprintf("\tunsatisfiable: %s\n", reason))
 			}
 		}
 	}

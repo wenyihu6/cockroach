@@ -168,7 +168,7 @@ func (tr testResultsReport) String() string {
 			buf.WriteString(fmt.Sprintf("topology:\n%s", topology.String()))
 		}
 		if failed || tr.flags.Has(OutputValidate) {
-			buf.WriteString(validator.ValidationResult(output.initialState, output.eventExecutor))
+			buf.WriteString(validator.Validate(output.initialState, output.eventExecutor))
 		}
 		if failed || tr.flags.Has(OutputEvents) {
 			buf.WriteString(output.eventExecutor.PrintEventsExecuted())
