@@ -1211,7 +1211,9 @@ func registerCDC(r registry.Registry) {
 					fingerprints1 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t1)
 					fingerprints2 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t2)
 					require.Equal(t, fingerprints1, fingerprints2)
+					fmt.Println("PASSED")
 				})
+				fmt.Println("PASSED FINAL CHECK")
 				return nil
 			})
 			if err != nil {
