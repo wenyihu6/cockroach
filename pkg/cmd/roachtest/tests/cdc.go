@@ -21,9 +21,18 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/base"
+	"github.com/cockroachdb/cockroach/pkg/blobs"
+	"github.com/cockroachdb/cockroach/pkg/cloud"
+	"github.com/cockroachdb/cockroach/pkg/security/username"
+	cluster2 "github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/util/ioctx"
+	"github.com/cockroachdb/cockroach/pkg/util/parquet"
+	"github.com/stretchr/testify/require"
 	"math/big"
 	"net"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -81,6 +90,7 @@ var envVars = []string{
 	// NB: This is crucial for chaos tests as we expect changefeeds to see
 	// many retries.
 	"COCKROACH_CHANGEFEED_TESTING_FAST_RETRY=true",
+	"COCKROACH_CHANGEFEED_INCLUDE_PARQUET_READER_METADATA=true",
 }
 
 type cdcTester struct {
@@ -1089,6 +1099,124 @@ func registerCDC(r registry.Registry) {
 			})
 			waitForCompletion()
 
+		},
+	})
+	r.Add(registry.TestSpec{
+		Name:             "cdc/initial-scan-only/parquet/metamorphic",
+		Owner:            registry.OwnerCDC,
+		Benchmark:        true,
+		Cluster:          r.MakeClusterSpec(1, spec.CPU(16), spec.Arch(vm.ArchAMD64)),
+		RequiresLicense:  true,
+		CompatibleClouds: registry.AllExceptAWS,
+		Suites:           registry.Suites(registry.Nightly),
+		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
+			ct := newCDCTester(ctx, t, c)
+			defer ct.Close()
+
+			ct.runTPCCWorkload(tpccArgs{warehouses: 200})
+
+			// feed1
+			feed := ct.newChangefeed(feedArgs{
+				sinkType: cloudStorageSink,
+				targets:  allTpccTargets,
+				opts:     map[string]string{"initial_scan": "'only'", "format": "'parquet'"},
+			})
+			waitForCompletion := ct.runFeedLatencyVerifier(feed, latencyTargets{
+				initialScanLatency: 30 * time.Minute,
+			})
+			waitForCompletion()
+
+			feed2 := ct.newChangefeed(feedArgs{
+				sinkType: cloudStorageSink,
+				targets:  allTpccTargets,
+				opts:     map[string]string{"initial_scan": "'only'", "format": "'parquet'"},
+			})
+			waitForCompletion2 := ct.runFeedLatencyVerifier(feed2, latencyTargets{
+				initialScanLatency: 30 * time.Minute,
+			})
+			waitForCompletion2()
+			db := c.Conn(context.Background(), t.L(), 1)
+			tdb := sqlutils.MakeSQLRunner(db)
+			stmts := allTpccTargetsStmt()
+			for _, stmt := range stmts {
+				tdb.Exec(t, stmt)
+			}
+			sinkURI := strings.TrimPrefix(feed.sinkURI, `experimental-`)
+
+			//sinkURI2 := strings.TrimPrefix(feed2.sinkURI, `experimental-`)
+			// gs://cockroach-tmp/roachtest/20231106004234/2023-11-06?AUTH=implicit
+			es1, err := cloud.ExternalStorageFromURI(ctx, sinkURI,
+				base.ExternalIODirConfig{},
+				cluster2.MakeTestingClusterSettings(),
+				blobs.TestEmptyBlobClientFactory,
+				username.RootUserName(),
+				nil, /* db */
+				nil, /* limiters */
+				cloud.NilMetrics,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = es1.List(context.Background(), "", "", func(str string) error {
+
+				tableName, err := parseTableNameFromFile(str)
+
+				fmt.Println(str)
+
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, _, err := es1.ReadFile(context.Background(), str, cloud.ReadOptions{NoFileSize: true})
+				require.NoError(t, err)
+				f, err := os.CreateTemp(os.TempDir(), "")
+				require.NoError(t, err)
+				defer func() {
+					err := os.Remove(f.Name())
+					require.NoError(t, err)
+				}()
+				defer res.Close(ctx)
+				content, err := ioctx.ReadAll(ctx, res)
+				if string(content) != "" {
+					fmt.Println("NOT EMPTY")
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				a, err := f.Write(content)
+				if err != nil {
+					t.Fatal(err)
+				}
+				fmt.Println("Written size: ", a)
+
+				if err != nil {
+					t.Fatal(err)
+				}
+				fmt.Println("file name is ", f.Name())
+				meta, datums, err := parquet.ReadFile(f.Name())
+				require.NoError(t, err)
+
+				for _, s := range datums {
+					// improvement here create a struct with caches for upsert statements
+					stmt1, stmt2 := upsertStmtForTable(tableName+"_1", meta.NumRows, meta.NumCols),
+						upsertStmtForTable(tableName+"_2", meta.NumRows, meta.NumCols)
+					tdb.Exec(t, stmt1, s)
+					tdb.Exec(t, stmt2, s)
+				}
+				fmt.Println("size is not empty: ", len(datums))
+				// datums [][]tree.Datum
+				// expectedFingerprints := sqlDB.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE data.bank")
+				//	actualFingerprints := sqlDB.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE data2.bank")
+				//	require.Equal(t, expectedFingerprints, actualFingerprints)
+				checkAllTables(func(t1 string, t2 string) {
+					fingerprints1 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t1)
+					fingerprints2 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t2)
+					require.Equal(t, fingerprints1, fingerprints2)
+				})
+				return nil
+			})
+			if err != nil {
+				fmt.Println("non nil error", err.Error())
+			}
 		},
 	})
 	r.Add(registry.TestSpec{

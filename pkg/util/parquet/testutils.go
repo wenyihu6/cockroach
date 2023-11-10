@@ -13,6 +13,7 @@ package parquet
 import (
 	"bytes"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"os"
 	"strconv"
 	"strings"
@@ -28,6 +29,8 @@ import (
 	"github.com/lib/pq/oid"
 	"github.com/stretchr/testify/require"
 )
+
+var includeParquestTestMetadata = envutil.EnvOrDefaultBool("COCKROACH_CHANGEFEED_INCLUDE_PARQUET_READER_METADATA", false)
 
 // ReadFileAndVerifyDatums asserts that a parquet file's metadata matches the
 // metadata from the writer and its data matches writtenDatums.

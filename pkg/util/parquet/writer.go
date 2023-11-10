@@ -11,6 +11,9 @@
 package parquet
 
 import (
+	"context"
+	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"io"
 	"math"
 
@@ -19,7 +22,6 @@ import (
 	"github.com/apache/arrow/go/v11/parquet/file"
 	"github.com/apache/arrow/go/v11/parquet/metadata"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
-	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/errors"
 )
 
@@ -180,9 +182,11 @@ func NewWriter(sch *SchemaDefinition, sink io.Writer, opts ...Option) (*Writer, 
 			return nil, err
 		}
 	}
-	// Add additional metadata required to use the reader utility functions in
-	// testutils.go.
-	if buildutil.CrdbTestBuild {
+	// testutils.go. CrdbTestBuild is set to true in unit tests. includeParquestTestMetadata
+	// is set to true for roachtests.
+	log.Info(context.Background(), "HEYYY PRINTEDE here AS WELL")
+	if buildutil.CrdbTestBuild || includeParquestTestMetadata {
+		log.Info(context.Background(), "HEYYY PRINTEDEDDDDD here AS WELL")
 		if err := WithMetadata(MakeReaderMetadata(sch)).apply(&cfg); err != nil {
 			return nil, err
 		}
