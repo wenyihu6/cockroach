@@ -1137,10 +1137,7 @@ func registerCDC(r registry.Registry) {
 			waitForCompletion2()
 			db := c.Conn(context.Background(), t.L(), 1)
 			tdb := sqlutils.MakeSQLRunner(db)
-			stmts := allTpccTargetsStmt()
-			for _, stmt := range stmts {
-				tdb.Exec(t, stmt)
-			}
+			stmts, deleteStmts := allTpccTargetsStmt()
 			sinkURI := strings.TrimPrefix(feed.sinkURI, `experimental-`)
 
 			//sinkURI2 := strings.TrimPrefix(feed2.sinkURI, `experimental-`)
@@ -1158,7 +1155,14 @@ func registerCDC(r registry.Registry) {
 				t.Fatal(err)
 			}
 			err = es1.List(context.Background(), "", "", func(str string) error {
-
+				for _, stmt := range stmts {
+					tdb.Exec(t, stmt)
+				}
+				defer func() {
+					for _, dstmt := range deleteStmts {
+						tdb.Exec(t, dstmt)
+					}
+				}()
 				tableName, err := parseTableNameFromFile(str)
 
 				fmt.Println(str)
@@ -1207,18 +1211,23 @@ func registerCDC(r registry.Registry) {
 				// expectedFingerprints := sqlDB.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE data.bank")
 				//	actualFingerprints := sqlDB.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE data2.bank")
 				//	require.Equal(t, expectedFingerprints, actualFingerprints)
-				checkAllTables(func(t1 string, t2 string) {
-					fingerprints1 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t1)
-					fingerprints2 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t2)
-					require.Equal(t, fingerprints1, fingerprints2)
-					fmt.Println("PASSED")
-				})
-				fmt.Println("PASSED FINAL CHECK")
 				return nil
 			})
 			if err != nil {
 				fmt.Println("non nil error", err.Error())
 			}
+			checkAllTables(func(t1 string, t2 string) {
+				fingerprints1 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t1)
+				fingerprints2 := tdb.QueryStr(t, "SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE "+t2)
+				require.Equal(t, fingerprints1, fingerprints2)
+				fmt.Println("SHOW STATS")
+				// SELECT max(created) AS created FROM [SHOW STATISTICS FOR TABLE %s.%s]"
+				stats := tdb.QueryStr(t, "SELECT row_count FROM [SHOW STATISTICS FOR TABLE %s]", t1)
+				fmt.Println(stats, t1)
+				stats = tdb.QueryStr(t, "SELECT row_count FROM [SHOW STATISTICS FOR TABLE %s]", t2)
+				fmt.Println(stats, t2)
+			})
+			fmt.Println("PASSED FINAL CHECK")
 		},
 	})
 	r.Add(registry.TestSpec{

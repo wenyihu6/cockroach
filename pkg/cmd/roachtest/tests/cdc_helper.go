@@ -55,7 +55,7 @@ func upsertStmtForTable(tableName string, rows int, cols int) (stmt string) {
 //	rows := meta.NumRows
 
 // create duplicated tables for each tpcctarget
-func allTpccTargetsStmt() (stmts []string) {
+func allTpccTargetsStmt() (stmts []string, deleteStmts []string) {
 	for _, targetTable := range allTpccTargets {
 		// CREATE TABLE table2 (LIKE table1 INCLUDING ALL EXCLUDING CONSTRAINTS, c INT, INDEX(b,c));
 		// tpcc.warehouse_1, tpcc.warehouse_1
@@ -64,6 +64,8 @@ func allTpccTargetsStmt() (stmts []string) {
 		tableName2 := targetTable + "_2"
 		stmts = append(stmts, fmt.Sprintf("CREATE TABLE %s (LIKE %s INCLUDING ALL)", tableName1, targetTable))
 		stmts = append(stmts, fmt.Sprintf("CREATE TABLE %s (LIKE %s INCLUDING ALL)", tableName2, targetTable))
+		deleteStmts = append(deleteStmts, fmt.Sprintf("DELETE TABLE %s", tableName1))
+		deleteStmts = append(deleteStmts, fmt.Sprintf("DELETE TABLE %s", tableName2))
 	}
 	return
 }
