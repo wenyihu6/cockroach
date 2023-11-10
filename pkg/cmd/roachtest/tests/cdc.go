@@ -1113,7 +1113,7 @@ func registerCDC(r registry.Registry) {
 			ct := newCDCTester(ctx, t, c)
 			defer ct.Close()
 
-			ct.runTPCCWorkload(tpccArgs{warehouses: 200})
+			ct.runTPCCWorkload(tpccArgs{warehouses: 100})
 
 			// feed1
 			feed := ct.newChangefeed(feedArgs{
@@ -1203,8 +1203,16 @@ func registerCDC(r registry.Registry) {
 					// improvement here create a struct with caches for upsert statements
 					stmt1, stmt2 := upsertStmtForTable(tableName+"_1", meta.NumRows, meta.NumCols),
 						upsertStmtForTable(tableName+"_2", meta.NumRows, meta.NumCols)
-					tdb.Exec(t, stmt1, s)
-					tdb.Exec(t, stmt2, s)
+					var interfaceSlice []interface{}
+					for _, v := range s {
+						interfaceSlice = append(interfaceSlice, v)
+					}
+					tdb.Exec(t, stmt1, interfaceSlice...)
+					var interfaceSlice2 []interface{}
+					for _, v := range s {
+						interfaceSlice2 = append(interfaceSlice2, v)
+					}
+					tdb.Exec(t, stmt2, interfaceSlice2...)
 				}
 				fmt.Println("size is not empty: ", len(datums))
 				// datums [][]tree.Datum
