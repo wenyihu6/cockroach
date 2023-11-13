@@ -22,6 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondatapb"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
+	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/json"
 	"github.com/cockroachdb/cockroach/pkg/util/parquet"
@@ -30,7 +31,9 @@ import (
 
 // includeParquestTestMetadata configures the parquet writer to write
 // metadata required for reading parquet files in tests.
-var includeParquestTestMetadata = buildutil.CrdbTestBuild
+var includeParquestTestMetadata = buildutil.CrdbTestBuild ||
+	envutil.EnvOrDefaultBool("COCKROACH_CHANGEFEED_TESTING_INCLUDE_PARQUET_METADATA",
+		false)
 
 type parquetWriter struct {
 	inner        *parquet.Writer
@@ -335,4 +338,16 @@ func deserializeMap(s string) (orderedKeys []string, m map[string]int, err error
 		m[key] = value
 	}
 	return orderedKeys, m, nil
+}
+
+func GetEventTypeColIdx(rd parquet.ReadDatumsMetadata) (int, error) {
+	columnsNamesString, ok := rd.MetaFields["allCols"]
+	if !ok {
+		return -1, errors.Errorf("BETTER MSG")
+	}
+	_, columnNameSet, err := deserializeMap(columnsNamesString)
+	if err != nil {
+		return -1, err
+	}
+	return columnNameSet[parquetCrdbEventTypeColName], nil
 }

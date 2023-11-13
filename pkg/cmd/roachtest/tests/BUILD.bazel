@@ -37,6 +37,7 @@ go_library(
         "cancel.go",
         "cdc.go",
         "cdc_bench.go",
+        "cdc_helper.go",
         "cdc_stats.go",
         "chaos.go",
         "clearrange.go",
@@ -298,6 +299,7 @@ go_test(
     name = "tests_test",
     srcs = [
         "blocklist_test.go",
+        "cdc_helper_test.go",
         "drt_test.go",
         "query_comparison_util_test.go",
         "restore_test.go",

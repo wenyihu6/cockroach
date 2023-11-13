@@ -20,8 +20,13 @@ import (
 	"github.com/apache/arrow/go/v11/parquet/metadata"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
+	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"github.com/cockroachdb/errors"
 )
+
+var includeParquestTestMetadata = buildutil.CrdbTestBuild ||
+	envutil.EnvOrDefaultBool("COCKROACH_CHANGEFEED_TESTING_INCLUDE_PARQUET_READER_METADATA",
+		false)
 
 type config struct {
 	maxRowGroupLength int64
@@ -182,7 +187,7 @@ func NewWriter(sch *SchemaDefinition, sink io.Writer, opts ...Option) (*Writer, 
 	}
 	// Add additional metadata required to use the reader utility functions in
 	// testutils.go.
-	if buildutil.CrdbTestBuild {
+	if includeParquestTestMetadata {
 		if err := WithMetadata(MakeReaderMetadata(sch)).apply(&cfg); err != nil {
 			return nil, err
 		}
