@@ -40,7 +40,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/ccl/changefeedccl/changefeedbase"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/cluster"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/clusterstats"
-	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/grafana"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/option"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/spec"
@@ -621,34 +620,7 @@ func newCDCTester(ctx context.Context, t test.Test, c cluster.Cluster) cdcTester
 
 	c.Start(ctx, t.L(), startOpts, settings, tester.crdbNodes)
 	c.Put(ctx, t.DeprecatedWorkload(), "./workload", tester.workloadNode)
-	tester.startGrafana()
 	return tester
-}
-
-func (ct *cdcTester) startGrafana() {
-	cfg := (&prometheus.Config{}).
-		WithPrometheusNode(ct.workloadNode.InstallNodes()[0]).
-		WithCluster(ct.crdbNodes.InstallNodes()).
-		WithNodeExporter(ct.crdbNodes.InstallNodes()).
-		WithGrafanaDashboardJSON(grafana.ChangefeedRoachtestGrafanaDashboardJSON)
-
-	cfg.Grafana.Enabled = true
-
-	ct.promCfg = cfg
-
-	if !ct.t.SkipInit() {
-		err := ct.cluster.StartGrafana(ct.ctx, ct.t.L(), cfg)
-		if err != nil {
-			ct.t.Errorf("error starting prometheus/grafana: %s", err)
-		}
-		nodeURLs, err := ct.cluster.ExternalIP(ct.ctx, ct.t.L(), ct.workloadNode)
-		if err != nil {
-			ct.t.Errorf("error getting grafana node external ip: %s", err)
-		}
-		ct.t.Status(fmt.Sprintf("started grafana at http://%s:3000/d/928XNlN4k/basic?from=now-15m&to=now", nodeURLs[0]))
-	} else {
-		ct.t.Status("skipping grafana installation")
-	}
 }
 
 type latencyTargets struct {
