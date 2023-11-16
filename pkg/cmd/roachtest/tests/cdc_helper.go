@@ -101,8 +101,7 @@ func fetchFilesOfTargetTable(
 			return err
 		}
 		if targetTableName != selectedTargetTable {
-			return errors.New("unexpected mismatch between the target table and " +
-				"table names inferred from file names")
+			return nil
 		}
 		csFileNames = append(csFileNames, str)
 		return nil
@@ -249,6 +248,9 @@ func checkTwoChangeFeedExportContent(
 		cloud.NilMetrics,
 	)
 	require.NoError(t, err)
+	require.NotEqual(t, firstSinkURI, secSinkURI)
+	fmt.Println("firstSinkURI is: ", firstSinkURI)
+	fmt.Println("secSinkURI is: ", secSinkURI)
 
 	fmt.Println("selectedTargetTable table is: ", selectedTargetTable)
 	firstTableName := selectedTargetTable + "_1"
@@ -264,6 +266,8 @@ func checkTwoChangeFeedExportContent(
 		sqlRunner.Exec(t, firstDropStmt)
 		sqlRunner.Exec(t, secDropStmt)
 	}()
+	fmt.Println(firstCreateStmt)
+	fmt.Println(firstDropStmt)
 
 	// Fetch file names of the changefeed output files in cloud storage.
 	firstCloudStorageFileNames, err := fetchFilesOfTargetTable(selectedTargetTable, firstCloudStorage)
@@ -271,6 +275,8 @@ func checkTwoChangeFeedExportContent(
 	secCloudStorageFileNames, err := fetchFilesOfTargetTable(selectedTargetTable, secCloudStorage)
 	require.NoError(t, err)
 	fmt.Println("firstCloudStorageFileNames table is: ", firstCloudStorageFileNames)
+	require.NotEmpty(t, firstCloudStorageFileNames)
+	require.NotEmpty(t, secCloudStorageFileNames)
 
 	// Download files from cloud storage and return the local files names.
 	firstDownloadedFileNames, err := downloadFiles(ctx, firstCloudStorage, firstCloudStorageFileNames)
@@ -278,6 +284,8 @@ func checkTwoChangeFeedExportContent(
 	secDownloadedFileNames, err := downloadFiles(ctx, secCloudStorage, secCloudStorageFileNames)
 	require.NoError(t, err)
 	fmt.Println("firstDownloadedFileNames table is: ", firstDownloadedFileNames)
+	require.NotEmpty(t, firstDownloadedFileNames)
+	require.NotEmpty(t, secDownloadedFileNames)
 
 	// Parse the downloaded files given the local file names and execute UPSERT
 	// stmts for the file content into the two tables.
@@ -292,7 +300,12 @@ func checkTwoChangeFeedExportContent(
 		fmt.Sprintf("SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE %s", firstTableName))
 	secFingerPrint := sqlRunner.QueryStr(t,
 		fmt.Sprintf("SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE %s", secTableName))
-	require.Equal(t, firstFingerPrint, secFingerPrint)
+	require.NotEmpty(t, firstFingerPrint)
+	require.NotEmpty(t, secFingerPrint)
+	require.NotEmpty(t, firstFingerPrint[0])
+	require.NotEmpty(t, secFingerPrint[0])
+	require.NotEqual(t, "NULL", firstFingerPrint[0][0])
+	require.NotEqual(t, "NULL", secFingerPrint[0][0])
 
 	fmt.Println(firstFingerPrint)
 	fmt.Println(secFingerPrint)

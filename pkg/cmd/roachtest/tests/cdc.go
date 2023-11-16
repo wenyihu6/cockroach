@@ -1111,27 +1111,30 @@ func registerCDC(r registry.Registry) {
 
 			// Randomly select one table as changefeed target and skip other tables to
 			// speed up the test.
-			randomlySelectedIndex := getRandomIndex(len(allTpccTargets))
-			selectedTargetTable := allTpccTargets[randomlySelectedIndex]
-			trimmedTargetTable := strings.TrimPrefix(selectedTargetTable, `tpcc.`)
+			//randomlySelectedIndex := getRandomIndex(len(allTpccTargets))
+			//selectedTargetTable := allTpccTargets[randomlySelectedIndex]
+			//trimmedTargetTable := strings.TrimPrefix(selectedTargetTable, `tpcc.`)
 
 			firstFeed := ct.newChangefeed(feedArgs{
 				sinkType: cloudStorageSink,
-				targets:  []string{selectedTargetTable},
+				targets:  allTpccTargets,
 				opts:     map[string]string{"initial_scan": "'only'", "format": "'parquet'"},
 			})
 			firstFeed.waitForCompletion()
 
 			secFeed := ct.newChangefeed(feedArgs{
 				sinkType: cloudStorageSink,
-				targets:  []string{selectedTargetTable},
+				targets:  allTpccTargets,
 				opts:     map[string]string{"initial_scan": "'only'", "format": "'parquet'"},
 			})
 			secFeed.waitForCompletion()
 
 			db := c.Conn(context.Background(), t.L(), 1)
 			sqlRunner := sqlutils.MakeSQLRunner(db)
-			checkTwoChangeFeedExportContent(ctx, t, sqlRunner, firstFeed.sinkURI, secFeed.sinkURI, trimmedTargetTable)
+			for _, tt := range allTpccTargets {
+				trimmed := strings.TrimPrefix(tt, `tpcc.`)
+				checkTwoChangeFeedExportContent(ctx, t, sqlRunner, firstFeed.sinkURI, secFeed.sinkURI, trimmed)
+			}
 		},
 	})
 	r.Add(registry.TestSpec{
