@@ -250,6 +250,7 @@ func checkTwoChangeFeedExportContent(
 	)
 	require.NoError(t, err)
 
+	fmt.Println("selectedTargetTable table is: ", selectedTargetTable)
 	firstTableName := selectedTargetTable + "_1"
 	secTableName := selectedTargetTable + "_2"
 
@@ -269,12 +270,14 @@ func checkTwoChangeFeedExportContent(
 	require.NoError(t, err)
 	secCloudStorageFileNames, err := fetchFilesOfTargetTable(selectedTargetTable, secCloudStorage)
 	require.NoError(t, err)
+	fmt.Println("firstCloudStorageFileNames table is: ", firstCloudStorageFileNames)
 
 	// Download files from cloud storage and return the local files names.
 	firstDownloadedFileNames, err := downloadFiles(ctx, firstCloudStorage, firstCloudStorageFileNames)
 	require.NoError(t, err)
 	secDownloadedFileNames, err := downloadFiles(ctx, secCloudStorage, secCloudStorageFileNames)
 	require.NoError(t, err)
+	fmt.Println("firstDownloadedFileNames table is: ", firstDownloadedFileNames)
 
 	// Parse the downloaded files given the local file names and execute UPSERT
 	// stmts for the file content into the two tables.
@@ -290,6 +293,9 @@ func checkTwoChangeFeedExportContent(
 	secFingerPrint := sqlRunner.QueryStr(t,
 		fmt.Sprintf("SHOW EXPERIMENTAL_FINGERPRINTS FROM TABLE %s", secTableName))
 	require.Equal(t, firstFingerPrint, secFingerPrint)
+
+	fmt.Println(firstFingerPrint)
+	fmt.Println(secFingerPrint)
 
 	// Clean up downloaded local files.
 	err = cleanUpDownloadedFiles(firstDownloadedFileNames)
