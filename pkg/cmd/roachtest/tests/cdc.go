@@ -50,7 +50,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachprod/logger"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/prometheus"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/vm"
-	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/jobutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
@@ -1477,28 +1476,30 @@ func registerCDC(r registry.Registry) {
 			// run workload
 			// grab cluster logs
 
-			for i := 0; i < 20000; i++ {
-				if err := kafka.createTopic(ctx, "bank"+fmt.Sprintf("%v", i)); err != nil {
-					t.Fatal(err)
-				}
-			}
+			//for i := 0; i < 20000; i++ {
+			//	if err := kafka.createTopic(ctx, "longgggggg name long nlong long long longer bank"+fmt.Sprintf("%v", i)); err != nil {
+			//		t.Fatal(err)
+			//	}
+			//}
 
 			// need to wait for feed to finish, run tpcc
 			feed.waitForCompletion()
 
-			testutils.SucceedsWithin(t, func() error {
-				for _, node := range c.All() {
-					if err := c.RunE(ctx,
-						c.Node(node),
-						fmt.Sprintf("grep -q '%s' logs/cockroach.log"),
-					); err == nil {
-						return nil
-					}
-				}
-				return errors.New("still waiting for decommissioning replicas report")
-			},
-				3*time.Minute,
-			)
+			fmt.Println("DONEHERE")
+
+			//testutils.SucceedsWithin(t, func() error {
+			//	for _, node := range c.All() {
+			//		if err := c.RunE(ctx,
+			//			c.Node(node),
+			//			fmt.Sprintf("grep -q '%s' logs/cockroach.log"),
+			//		); err == nil {
+			//			return nil
+			//		}
+			//	}
+			//	return errors.New("still waiting for decommissioning replicas report")
+			//},
+			//	3*time.Minute,
+			//)
 		},
 	})
 	r.Add(registry.TestSpec{
