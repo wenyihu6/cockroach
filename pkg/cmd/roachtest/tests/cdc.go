@@ -1443,15 +1443,25 @@ func registerCDC(r registry.Registry) {
 				return
 			}
 
-			ct := newCDCTester(ctx, t, c)
-			defer ct.Close()
+			//ct := newCDCTester(ctx, t, c)
+			//defer ct.Close()
+			//
+			//// Run tpcc workload for tiny bit.  Roachtest monitor does not
+			//// like when there are no tasks that were started with the monitor
+			//// (This can be removed once #108530 resolved).
+			//ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "30s"})
 
-			// Run tpcc workload for tiny bit.  Roachtest monitor does not
-			// like when there are no tasks that were started with the monitor
-			// (This can be removed once #108530 resolved).
-			ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "30s"})
+			c.Run(ctx, c.All(), `mkdir -p logs`)
 
-			_, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
+			crdbNodes, workloadNode, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
+			c.Put(ctx, t.DeprecatedWorkload(), "./workload", workloadNode)
+			startOpts := option.DefaultStartOpts()
+			startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
+				"--vmodule=changefeed=2",
+			)
+			c.Start(ctx, t.L(), startOpts, install.MakeClusterSettings(), crdbNodes)
+
+			// _, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
 			kafka, cleanup := setupKafka(ctx, t, c, kafkaNode)
 			defer cleanup()
 			//kafka := kafkaManager{
@@ -1461,24 +1471,34 @@ func registerCDC(r registry.Registry) {
 			//	mon:       ct.mon,
 			//	useKafka2: true, // The broker-side oauth configuration used only works with Kafka 2
 			//}
-			// kafka.install(ct.ctx)
+			//kafka.install(ct.ctx)
 
-			creds, kafkaEnv := kafka.configureOauth(ct.ctx)
+			// creds, kafkaEnv := kafka.configureOauth(ct.ctx)
 
-			kafka.start(ctx, "kafka", kafkaEnv)
+			db := c.Conn(ctx, t.L(), 1)
+			defer stopFeeds(db)
+
 			t.Status("creating kafka topic")
 			fmt.Println("creating kafka topic")
-			if err := kafka.createTopic(ctx, "bank1"); err != nil {
+			if err := kafka.createTopic(ctx, "bank"); err != nil {
 				t.Fatal(err)
 			}
 
+			options := map[string]string{
+				"updated":                   "",
+				"resolved":                  "",
+				"format":                    "experimental_avro",
+				"confluent_schema_registry": "$2",
+				"diff":                      "",
+			}
+
 			// run with initial_scan
-			feed := ct.newChangefeed(feedArgs{
-				sinkType:        kafkaSink,
-				sinkURIOverride: kafka.sinkURLOAuth(ct.ctx, creds),
-				targets:         allTpccTargets,
-				opts:            map[string]string{"initial_scan": "'only'"},
-			})
+			_, err := newChangefeedCreator(db, t.L(), "bank.bank", kafka.sinkURL(ctx), makeDefaultFeatureFlags()).
+				With(options).
+				Create()
+			if err != nil {
+				t.Fatal(err)
+			}
 
 			// run workload
 			// grab cluster logs
@@ -1490,7 +1510,7 @@ func registerCDC(r registry.Registry) {
 			//}
 
 			// need to wait for feed to finish, run tpcc
-			feed.waitForCompletion()
+			//feed.waitForCompletion()
 
 			fmt.Println("DONEHERE")
 
