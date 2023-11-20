@@ -1451,19 +1451,26 @@ func registerCDC(r registry.Registry) {
 			// (This can be removed once #108530 resolved).
 			ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "30s"})
 
-			kafkaNode := ct.kafkaSinkNode()
-			kafka := kafkaManager{
-				t:         ct.t,
-				c:         ct.cluster,
-				nodes:     kafkaNode,
-				mon:       ct.mon,
-				useKafka2: true, // The broker-side oauth configuration used only works with Kafka 2
-			}
-			kafka.install(ct.ctx)
+			_, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
+			kafka, cleanup := setupKafka(ctx, t, c, kafkaNode)
+			defer cleanup()
+			//kafka := kafkaManager{
+			//	t:         ct.t,
+			//	c:         ct.cluster,
+			//	nodes:     kafkaNode,
+			//	mon:       ct.mon,
+			//	useKafka2: true, // The broker-side oauth configuration used only works with Kafka 2
+			//}
+			// kafka.install(ct.ctx)
 
 			creds, kafkaEnv := kafka.configureOauth(ct.ctx)
 
 			kafka.start(ctx, "kafka", kafkaEnv)
+			t.Status("creating kafka topic")
+			fmt.Println("creating kafka topic")
+			if err := kafka.createTopic(ctx, "bank1"); err != nil {
+				t.Fatal(err)
+			}
 
 			// run with initial_scan
 			feed := ct.newChangefeed(feedArgs{
