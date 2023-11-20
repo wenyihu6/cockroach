@@ -1485,11 +1485,13 @@ func registerCDC(r registry.Registry) {
 			}
 
 			options := map[string]string{
-				"updated":                   "",
-				"resolved":                  "",
-				"format":                    "experimental_avro",
-				"confluent_schema_registry": "$2",
-				"diff":                      "",
+				"updated":  "",
+				"resolved": "",
+				// we need to set a min_checkpoint_frequency here because if we
+				// use the default 30s duration, the test will likely not be able
+				// to finish within 30 minutes
+				"min_checkpoint_frequency": "'2s'",
+				"diff":                     "",
 			}
 
 			// run with initial_scan
