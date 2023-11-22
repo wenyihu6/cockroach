@@ -79,13 +79,15 @@ type kafkaSinkKnobs struct {
 var _ sarama.StdLogger = (*kafkaLogAdapter)(nil)
 
 func (l *kafkaLogAdapter) Print(v ...interface{}) {
-	log.InfofDepth(l.ctx, 1, "", v...)
+	log.InfofDepth(l.ctx, 3, "dasjkfhsdj", v...)
 }
 func (l *kafkaLogAdapter) Printf(format string, v ...interface{}) {
-	log.InfofDepth(l.ctx, 1, format, v...)
+	log.Info(l.ctx, "HEYOOYOYOY")
+	log.InfofDepth(l.ctx, 3, format+"heyy yo 2", v...)
 }
+
 func (l *kafkaLogAdapter) Println(v ...interface{}) {
-	log.InfofDepth(l.ctx, 1, "", v...)
+	log.InfofDepth(l.ctx, 3, "heyy yo ", v...)
 }
 
 func init() {
@@ -255,7 +257,7 @@ func (s *kafkaSink) Dial() error {
 	if s.kafkaCfg.Metadata.Full {
 		log.Info(context.Background(), "HEYYO WRONG HERE")
 	}
-	log.Infof(context.Background(), "HEREEEEE %+v", s.kafkaCfg)
+	log.InfofDepth(context.Background(), 3, "HEREEEEEhere %+v", s.kafkaCfg)
 	client, err := s.newClient(s.kafkaCfg)
 	if err != nil {
 		return err
@@ -399,9 +401,9 @@ func (s *kafkaSink) EmitResolvedTimestamp(
 		if s.kafkaCfg.Metadata.Full {
 			log.Info(context.Background(), "HEYYO WRONG HERE")
 		}
-		//if err := s.client.RefreshMetadata(s.topics.DisplayNamesSlice()...); err != nil {
-		//	return err
-		//}
+		if err := s.client.RefreshMetadata(s.topics.DisplayNamesSlice()...); err != nil {
+			return err
+		}
 		s.lastMetadataRefresh = timeutil.Now()
 	}
 

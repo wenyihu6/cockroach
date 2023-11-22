@@ -320,6 +320,7 @@ func VInfof(ctx context.Context, level Level, format string, args ...interface{}
 // The `INFO` severity is used for informational messages that do not
 // require action.
 func Info(ctx context.Context, msg string) {
+	// runtime.stack debug.stack
 	logfDepth(ctx, 1, severity.INFO, channel.DEV, msg)
 }
 
