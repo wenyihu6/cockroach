@@ -1551,7 +1551,10 @@ func registerCDC(r registry.Registry) {
 			// 	3*time.Minute,
 			// )
 			// grep -q '%s'
-			r, err := ct.cluster.RunWithDetails(ct.ctx, t.L(), ct.cluster.All(), "grep -ri client/metadata fetching metadata for all topics from broker .")
+			// "grep -q '%s' logs/cockroach.log", verboseStoreLogRe
+			// "grep -r -w 'client/metadata fetching metadata for all topics from broker' ."
+			var verboseStoreLogRe = regexp.MustCompile("client/metadata fetching metadata for all topics from broker")
+			r, err := ct.cluster.RunWithDetails(ct.ctx, t.L(), ct.cluster.All(), fmt.Sprintf("grep -r -q '%s' .", verboseStoreLogRe))
 			if err != nil {
 				t.Fatal(err)
 			}

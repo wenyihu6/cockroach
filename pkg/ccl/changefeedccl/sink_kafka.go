@@ -83,7 +83,7 @@ func (l *kafkaLogAdapter) Print(v ...interface{}) {
 }
 func (l *kafkaLogAdapter) Printf(format string, v ...interface{}) {
 	log.Info(l.ctx, "HEYOOYOYOY")
-	log.InfofDepth(l.ctx, 3, format+"heyy yo 2", v...)
+	log.InfofDepth(l.ctx, 3, format, v...)
 }
 
 func (l *kafkaLogAdapter) Println(v ...interface{}) {
