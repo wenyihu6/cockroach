@@ -252,6 +252,10 @@ func defaultSaramaConfig() *saramaConfig {
 
 // Dial implements the Sink interface.
 func (s *kafkaSink) Dial() error {
+	if s.kafkaCfg.Metadata.Full {
+		log.Info(context.Background(), "HEYYO WRONG HERE")
+	}
+	log.Infof(context.Background(), "HEREEEEE %+v", s.kafkaCfg)
 	client, err := s.newClient(s.kafkaCfg)
 	if err != nil {
 		return err
@@ -279,6 +283,10 @@ func (s *kafkaSink) newClient(config *sarama.Config) (kafkaClient, error) {
 		return client, err
 	}
 
+	if config.Metadata.Full {
+		log.Info(context.Background(), "HEYYO WRONG HERE")
+	}
+	log.Infof(context.Background(), "HEREEEEEAGAINN %+v", config)
 	client, err := sarama.NewClient(strings.Split(s.bootstrapAddrs, `,`), config)
 	if err != nil {
 		return nil, pgerror.Wrapf(err, pgcode.CannotConnectNow,
@@ -380,9 +388,14 @@ func (s *kafkaSink) EmitResolvedTimestamp(
 	// actively working on stability. At the same time, revisit this tuning.
 	const metadataRefreshMinDuration = time.Minute
 	if timeutil.Since(s.lastMetadataRefresh) > metadataRefreshMinDuration {
-		if err := s.client.RefreshMetadata(s.topics.DisplayNamesSlice()...); err != nil {
-			return err
+		log.Infof(ctx, "HEREEEEE %+v", s.kafkaCfg)
+		log.Infof(ctx, "HEREEEEE2 %+v", s.topics.DisplayNamesSlice())
+		if s.kafkaCfg.Metadata.Full {
+			log.Info(context.Background(), "HEYYO WRONG HERE")
 		}
+		//if err := s.client.RefreshMetadata(s.topics.DisplayNamesSlice()...); err != nil {
+		//	return err
+		//}
 		s.lastMetadataRefresh = timeutil.Now()
 	}
 
@@ -635,6 +648,10 @@ func (s *kafkaSink) handleBufferedRetries(msgs []*sarama.ProducerMessage, retryE
 		default:
 		}
 
+		log.Infof(context.Background(), "HEREEEEEAGAINN3 %+v", activeConfig)
+		if activeConfig.Metadata.Full {
+			log.Info(context.Background(), "HEYYO WRONG HERE")
+		}
 		newConfig, wasReduced := reduceBatchingConfig(activeConfig)
 
 		// Surface the error if its not retryable or we weren't able to reduce the
@@ -650,6 +667,10 @@ func (s *kafkaSink) handleBufferedRetries(msgs []*sarama.ProducerMessage, retryE
 		log.Infof(s.ctx, "kafka sink retrying %d messages with reduced flush config: (%+v)", len(msgs), newConfig.Producer.Flush)
 		activeConfig = newConfig
 
+		log.Infof(context.Background(), "HEREEEEEAGAINN2 %+v", newConfig)
+		if newConfig.Metadata.Full {
+			log.Info(context.Background(), "HEYYO WRONG HERE")
+		}
 		newClient, err := s.newClient(newConfig)
 		if err != nil {
 			return err

@@ -21,12 +21,13 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"log"
 	"math/big"
 	"net"
 	"net/url"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -1437,33 +1438,27 @@ func registerCDC(r registry.Registry) {
 		Suites:           registry.Suites(registry.Nightly),
 		RequiresLicense:  true,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
-			if c.Cloud() == spec.Local && runtime.GOARCH == "arm64" {
-				// N.B. We have to skip locally since amd64 emulation may not be available everywhere.
-				t.L().PrintfCtx(ctx, "Skipping test under ARM64")
-				return
-			}
+			ct := newCDCTester(ctx, t, c)
+			defer ct.Close()
 
-			//ct := newCDCTester(ctx, t, c)
-			//defer ct.Close()
-			//
-			//// Run tpcc workload for tiny bit.  Roachtest monitor does not
-			//// like when there are no tasks that were started with the monitor
-			//// (This can be removed once #108530 resolved).
-			//ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "30s"})
+			// Run tpcc workload for tiny bit.  Roachtest monitor does not
+			// like when there are no tasks that were started with the monitor
+			// (This can be removed once #108530 resolved).
 
-			c.Run(ctx, c.All(), `mkdir -p logs`)
-
-			crdbNodes, workloadNode, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
-			c.Put(ctx, t.DeprecatedWorkload(), "./workload", workloadNode)
-			startOpts := option.DefaultStartOpts()
-			startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
-				"--vmodule=changefeed=2",
-			)
-			c.Start(ctx, t.L(), startOpts, install.MakeClusterSettings(), crdbNodes)
+			// c.Run(ctx, c.All(), `mkdir -p logs`)
 
 			// _, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
-			kafka, cleanup := setupKafka(ctx, t, c, kafkaNode)
-			defer cleanup()
+			//c.Put(ctx, t.DeprecatedWorkload(), "./workload", workloadNode)
+			//startOpts := option.DefaultStartOpts()
+			//startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
+			//	"--vmodule=changefeed=2",
+			//)
+			//c.Start(ctx, t.L(), startOpts, install.MakeClusterSettings(), crdbNodes)
+
+			// _, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
+			// kafka, cleanup := setupKafka(ctx, t, c, kafkaNode)
+			fmt.Println("FINISHED")
+			// defer cleanup()
 			//kafka := kafkaManager{
 			//	t:         ct.t,
 			//	c:         ct.cluster,
@@ -1475,32 +1470,39 @@ func registerCDC(r registry.Registry) {
 
 			// creds, kafkaEnv := kafka.configureOauth(ct.ctx)
 
-			db := c.Conn(ctx, t.L(), 1)
-			defer stopFeeds(db)
+			// db := c.Conn(ctx, t.L(), 1)
 
 			t.Status("creating kafka topic")
 			fmt.Println("creating kafka topic")
-			if err := kafka.createTopic(ctx, "bank"); err != nil {
-				t.Fatal(err)
-			}
+			// 			if err := kafka.createTopic(ctx, "bank"); err != nil {
+			//				t.Fatal(err)
+			//			}
 
-			options := map[string]string{
-				"updated":  "",
-				"resolved": "",
-				// we need to set a min_checkpoint_frequency here because if we
-				// use the default 30s duration, the test will likely not be able
-				// to finish within 30 minutes
-				"min_checkpoint_frequency": "'2s'",
-				"diff":                     "",
-			}
+			ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "1m"})
+			feed := ct.newChangefeed(feedArgs{
+				sinkType: kafkaSink,
+				targets:  allTpccTargets,
+				opts:     map[string]string{"initial_scan": "'only'"},
+			})
+			feed.waitForCompletion()
+
+			//options := map[string]string{
+			//	"updated":  "",
+			//	"resolved": "",
+			//	// we need to set a min_checkpoint_frequency here because if we
+			//	// use the default 30s duration, the test will likely not be able
+			//	// to finish within 30 minutes
+			//	"min_checkpoint_frequency": "'2s'",
+			//	"diff":                     "",
+			//}
 
 			// run with initial_scan
-			_, err := newChangefeedCreator(db, t.L(), "bank.bank", kafka.sinkURL(ctx), makeDefaultFeatureFlags()).
-				With(options).
-				Create()
-			if err != nil {
-				t.Fatal(err)
-			}
+			//_, err := newChangefeedCreator(db, t.L(), "tpcc.bank", kafka.sinkURL(ctx), makeDefaultFeatureFlags()).
+			//	With(options).
+			//	Create()
+			//if err != nil {
+			//	t.Fatal(err)
+			//}
 
 			// run workload
 			// grab cluster logs
@@ -1516,19 +1518,45 @@ func registerCDC(r registry.Registry) {
 
 			fmt.Println("DONEHERE")
 
+			// var verboseStoreLogRe = regexp.MustCompile("client/metadata fetching metadata for all topics from broker")
+			//
+			t.Status("checking for report...")
 			//testutils.SucceedsWithin(t, func() error {
-			//	for _, node := range c.All() {
+			//	for nodeID := 1; nodeID <= c.Spec().NodeCount; nodeID++ {
 			//		if err := c.RunE(ctx,
-			//			c.Node(node),
-			//			fmt.Sprintf("grep -q '%s' logs/cockroach.log"),
+			//			c.Node(nodeID),
+			//			fmt.Sprintf("grep -q '%s' logs/cockroach.log", verboseStoreLogRe),
 			//		); err == nil {
 			//			return nil
 			//		}
 			//	}
-			//	return errors.New("still waiting for decommissioning replicas report")
+			//	return errors.New("still waiting for crdb report")
 			//},
 			//	3*time.Minute,
 			//)
+			// s := fmt.Sprintf("grep -q '%s' logs/cockroach.log", verboseStoreLogRe)
+
+			//res, err := c.RunWithDetails(ctx, t.L(), c.Node(1), ...s)
+			// testutils.SucceedsWithin(t, func() error {
+			// 	for _, node := range c.All() {
+			// 		if err := c.RunE(ctx,
+			// 			c.Node(node),
+			// 			fmt.Sprintf("grep -q '%s' logs/cockroach.log", verboseStoreLogRe),
+			// 		); err == nil {
+			// 			return nil
+			// 		}
+			// 	}
+			// 	return errors.New("still waiting for decommissioning replicas report")
+			// },
+			// 	3*time.Minute,
+			// )
+			// grep -q '%s'
+			r, err := ct.cluster.RunWithDetails(ct.ctx, t.L(), ct.cluster.All(), "grep -ri client/metadata fetching metadata for all topics from broker .")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.L().Printf("RESULTS: %+v", r)
+			t.Fatal("failk to collect")
 		},
 	})
 	r.Add(registry.TestSpec{
@@ -2415,6 +2443,7 @@ func (k kafkaManager) schemaRegistryURL(ctx context.Context) string {
 func (k kafkaManager) createTopic(ctx context.Context, topic string) error {
 	kafkaAddrs := []string{k.consumerURL(ctx)}
 	config := sarama.NewConfig()
+	sarama.Logger = log.New(io.Discard, "[Sarama] ", log.LstdFlags)
 	return retry.ForDuration(kafkaCreateTopicRetryDuration, func() error {
 		admin, err := sarama.NewClusterAdmin(kafkaAddrs, config)
 		if err != nil {
@@ -2430,6 +2459,7 @@ func (k kafkaManager) createTopic(ctx context.Context, topic string) error {
 func (k kafkaManager) newConsumer(ctx context.Context, topic string) (*topicConsumer, error) {
 	kafkaAddrs := []string{k.consumerURL(ctx)}
 	config := sarama.NewConfig()
+	sarama.Logger = log.New(io.Discard, "[Sarama] ", log.LstdFlags)
 	// I was seeing "error processing FetchRequest: kafka: error decoding
 	// packet: unknown magic byte (2)" errors which
 	// https://github.com/Shopify/sarama/issues/962 identifies as the

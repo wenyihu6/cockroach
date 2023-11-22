@@ -174,7 +174,7 @@ func (tn *TopicNamer) Each(fn func(string) error) error {
 	return nil
 }
 
-// A nil topic descriptor means we're building solely from the spec
+// A nil topic descriptor means we're buildirng solely from the spec
 // and should use placeholders if necessary. Only necessary in the
 // EACH_FAMILY case as in the COLUMN_FAMILY case we know the name from
 // the spec.
