@@ -301,6 +301,9 @@ func (s *kafkaSink) newAsyncProducer(client kafkaClient) (sarama.AsyncProducer, 
 	if s.knobs.OverrideAsyncProducerFromClient != nil {
 		producer, err = s.knobs.OverrideAsyncProducerFromClient(client)
 	} else {
+		if client.Config().Metadata.Full {
+			log.Info(context.Background(), "HEYYO WRONG HERE")
+		}
 		producer, err = sarama.NewAsyncProducerFromClient(client.(sarama.Client))
 	}
 	if err != nil {
@@ -316,6 +319,9 @@ func (s *kafkaSink) newSyncProducer(client kafkaClient) (sarama.SyncProducer, er
 	if s.knobs.OverrideSyncProducerFromClient != nil {
 		producer, err = s.knobs.OverrideSyncProducerFromClient(client)
 	} else {
+		if client.Config().Metadata.Full {
+			log.Info(context.Background(), "HEYYO WRONG HERE")
+		}
 		producer, err = sarama.NewSyncProducerFromClient(client.(sarama.Client))
 	}
 	if err != nil {
@@ -710,6 +716,9 @@ func (s *kafkaSink) handleBufferedRetries(msgs []*sarama.ProducerMessage, retryE
 }
 
 func reduceBatchingConfig(c *sarama.Config) (*sarama.Config, bool) {
+	if c.Metadata.Full {
+		log.Info(context.Background(), "HEYYO WRONG HERE")
+	}
 	flooredHalve := func(num int) int {
 		if num < 2 {
 			return num
@@ -828,6 +837,10 @@ func newTokenProvider(
 
 // Apply configures provided kafka configuration struct based on this config.
 func (c *saramaConfig) Apply(kafka *sarama.Config) error {
+	if kafka.Metadata.Full {
+		log.Info(context.Background(), "HEYYO WRONG HERE")
+	}
+
 	// Sarama limits the size of each message to be MaxMessageSize (1MB) bytes.
 	// This is silly;  This sink already manages its memory, and therefore, if we
 	// had enough resources to ingest and process this message, then sarama shouldn't
