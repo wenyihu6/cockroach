@@ -1447,7 +1447,7 @@ func registerCDC(r registry.Registry) {
 
 			// c.Run(ctx, c.All(), `mkdir -p logs`)
 
-			// _, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
+			_, _, kafkaNode := c.Range(1, c.Spec().NodeCount-1), c.Node(c.Spec().NodeCount), c.Node(c.Spec().NodeCount)
 			//c.Put(ctx, t.DeprecatedWorkload(), "./workload", workloadNode)
 			//startOpts := option.DefaultStartOpts()
 			//startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
@@ -1459,14 +1459,8 @@ func registerCDC(r registry.Registry) {
 			// kafka, cleanup := setupKafka(ctx, t, c, kafkaNode)
 			fmt.Println("FINISHED")
 			// defer cleanup()
-			//kafka := kafkaManager{
-			//	t:         ct.t,
-			//	c:         ct.cluster,
-			//	nodes:     kafkaNode,
-			//	mon:       ct.mon,
-			//	useKafka2: true, // The broker-side oauth configuration used only works with Kafka 2
-			//}
-			//kafka.install(ct.ctx)
+			kafka, cleanup := setupKafka(ctx, t, c, kafkaNode)
+			defer cleanup()
 
 			// creds, kafkaEnv := kafka.configureOauth(ct.ctx)
 
@@ -1478,13 +1472,19 @@ func registerCDC(r registry.Registry) {
 			//				t.Fatal(err)
 			//			}
 
-			ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "1m"})
-			feed := ct.newChangefeed(feedArgs{
-				sinkType: kafkaSink,
-				targets:  allTpccTargets,
-				opts:     map[string]string{"initial_scan": "'only'"},
-			})
-			feed.waitForCompletion()
+			ct.runTPCCWorkload(tpccArgs{warehouses: 1, duration: "30s"})
+
+			if err := kafka.createTopic(ctx, "longgggggg name long nlong long long longer bank"); err != nil {
+				t.Fatal(err)
+			}
+
+			fmt.Println("DONEHERE")
+			//feed := ct.newChangefeed(feedArgs{
+			//	sinkType: kafkaSink,
+			//	targets:  allTpccTargets,
+			//	opts:     map[string]string{"initial_scan": "'only'"},
+			//})
+			//feed.waitForCompletion()
 
 			//options := map[string]string{
 			//	"updated":  "",
@@ -1506,17 +1506,6 @@ func registerCDC(r registry.Registry) {
 
 			// run workload
 			// grab cluster logs
-
-			//for i := 0; i < 20000; i++ {
-			//	if err := kafka.createTopic(ctx, "longgggggg name long nlong long long longer bank"+fmt.Sprintf("%v", i)); err != nil {
-			//		t.Fatal(err)
-			//	}
-			//}
-
-			// need to wait for feed to finish, run tpcc
-			//feed.waitForCompletion()
-
-			fmt.Println("DONEHERE")
 
 			// var verboseStoreLogRe = regexp.MustCompile("client/metadata fetching metadata for all topics from broker")
 			//
@@ -1553,12 +1542,14 @@ func registerCDC(r registry.Registry) {
 			// grep -q '%s'
 			// "grep -q '%s' logs/cockroach.log", verboseStoreLogRe
 			// "grep -r -w 'client/metadata fetching metadata for all topics from broker' ."
+			// grep -ri -q 'client/metadata fetching metadata for all topics from broker'
+			// grep "client/metadata fetching metadata for all topics from broker" logs/cockroach.log
 			var verboseStoreLogRe = regexp.MustCompile("client/metadata fetching metadata for all topics from broker")
-			r, err := ct.cluster.RunWithDetails(ct.ctx, t.L(), ct.cluster.All(), fmt.Sprintf("grep -r -q '%s' .", verboseStoreLogRe))
+			r, err := ct.cluster.RunWithDetails(ct.ctx, t.L(), ct.cluster.All(), fmt.Sprintf("grep -r -q '%s' logs/cockroach.log", verboseStoreLogRe))
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.L().Printf("RESULTS: %+v", r)
+			t.L().Printf("HELLLOOOO RESULTS: %+v", r)
 			t.Fatal("failk to collect")
 		},
 	})
