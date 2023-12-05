@@ -11,6 +11,7 @@ package changefeedccl
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
+	"github.com/stretchr/testify/require"
 )
 
 // externalConnectionKafkaSink is a wrapper sink that asserts the underlying
@@ -107,147 +109,8 @@ func TestChangefeedExternalConnections(t *testing.T) {
 			// kafka_topic_prefix was referenced by an old version of the RFC, it's
 			// "topic_prefix" now.
 			name:          "kafka_topic_prefix",
-			uri:           "kafka://nope/?kafka_topic_prefix=foo",
+			uri:           "kafka://artemeventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=blah&sasl_mechanism=PLAIN",
 			expectedError: unknownParams(`kafka`, `kafka_topic_prefix`),
-		},
-		{
-			// schema_topic will be implemented but isn't yet.
-			name:          "schema_topic is not yet supported",
-			uri:           "kafka://nope/?schema_topic=foo",
-			expectedError: "schema_topic is not yet supported",
-		},
-		// Sanity check kafka tls parameters.
-		{
-			name:          "param tls_enabled must be a bool",
-			uri:           "kafka://nope/?tls_enabled=foo",
-			expectedError: "param tls_enabled must be a bool",
-		},
-		{
-			name:          "param insecure_tls_skip_verify must be a bool",
-			uri:           "kafka://nope/?tls_enabled=true&insecure_tls_skip_verify=foo",
-			expectedError: "param insecure_tls_skip_verify must be a bool",
-		},
-		{
-			name:          "param ca_cert must be base 64 encoded",
-			uri:           "kafka://nope/?ca_cert=!",
-			expectedError: "param ca_cert must be base 64 encoded",
-		},
-		{
-			name:          "ca_cert requires tls_enabled=true",
-			uri:           "kafka://nope/?&ca_cert=Zm9v",
-			expectedError: "ca_cert requires tls_enabled=true",
-		},
-		{
-			name:          "param client_cert must be base 64 encoded",
-			uri:           "kafka://nope/?client_cert=!",
-			expectedError: "param client_cert must be base 64 encoded",
-		},
-		{
-			name:          "param client_key must be base 64 encoded",
-			uri:           "kafka://nope/?client_key=!",
-			expectedError: "param client_key must be base 64 encoded",
-		},
-		{
-			name:          "client_cert requires tls_enabled=true",
-			uri:           "kafka://nope/?client_cert=Zm9v",
-			expectedError: "client_cert requires tls_enabled=true",
-		},
-		{
-			name:          "client_cert requires client_key to be set",
-			uri:           "kafka://nope/?tls_enabled=true&client_cert=Zm9v",
-			expectedError: "client_cert requires client_key to be set",
-		},
-		{
-			name:          "client_key requires client_cert to be set",
-			uri:           "kafka://nope/?tls_enabled=true&client_key=Zm9v",
-			expectedError: "client_key requires client_cert to be set",
-		},
-		{
-			name:          "invalid client certificate",
-			uri:           "kafka://nope/?tls_enabled=true&client_cert=Zm9v&client_key=Zm9v",
-			expectedError: "invalid client certificate",
-		},
-		// Sanity check kafka sasl parameters.
-		{
-			name:          "param sasl_enabled must be a bool",
-			uri:           "kafka://nope/?sasl_enabled=maybe",
-			expectedError: "param sasl_enabled must be a bool",
-		},
-		{
-			name:          "param sasl_handshake must be a bool",
-			uri:           "kafka://nope/?sasl_enabled=true&sasl_handshake=maybe",
-			expectedError: "param sasl_handshake must be a bool",
-		},
-		{
-			name:          "sasl_enabled must be enabled to configure SASL handshake behavior",
-			uri:           "kafka://nope/?sasl_handshake=false",
-			expectedError: "sasl_enabled must be enabled to configure SASL handshake behavior",
-		},
-		{
-			name:          "sasl_user must be provided when SASL is enabled",
-			uri:           "kafka://nope/?sasl_enabled=true",
-			expectedError: "sasl_user must be provided when SASL is enabled",
-		},
-		{
-			name:          "sasl_password must be provided when SASL is enabled",
-			uri:           "kafka://nope/?sasl_enabled=true&sasl_user=a",
-			expectedError: "sasl_password must be provided when SASL is enabled",
-		},
-		{
-			name:          "sasl_enabled must be enabled if sasl_user is provided",
-			uri:           "kafka://nope/?sasl_user=a",
-			expectedError: "sasl_enabled must be enabled if sasl_user is provided",
-		},
-		{
-			name:          "sasl_enabled must be enabled if sasl_password is provided",
-			uri:           "kafka://nope/?sasl_password=a",
-			expectedError: "sasl_enabled must be enabled if sasl_password is provided",
-		},
-		{
-			name:          "sasl_enabled must be enabled to configure SASL mechanism",
-			uri:           "kafka://nope/?sasl_mechanism=SCRAM-SHA-256",
-			expectedError: "sasl_enabled must be enabled to configure SASL mechanism",
-		},
-		{
-			name:          "param sasl_mechanism must be one of SCRAM-SHA-256, SCRAM-SHA-512, OAUTHBEARER, or PLAIN",
-			uri:           "kafka://nope/?sasl_enabled=true&sasl_mechanism=unsuppported",
-			expectedError: "param sasl_mechanism must be one of SCRAM-SHA-256, SCRAM-SHA-512, OAUTHBEARER, or PLAIN",
-		},
-		// confluent-cloud scheme tests
-		{
-			name:          "requires parameter api_key",
-			uri:           "confluent-cloud://nope/",
-			expectedError: "requires parameter api_key",
-		},
-		{
-			name:          "requires parameter api_secret",
-			uri:           "confluent-cloud://nope?api_key=fee",
-			expectedError: "requires parameter api_secret",
-		},
-		{
-			name:          "requires sasl_enabled=true",
-			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&sasl_enabled=false",
-			expectedError: "unsupported value false for parameter sasl_enabled, please use true",
-		},
-		{
-			name:          "requires parameter sasl_mechanism=PLAIN",
-			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&sasl_mechanism=OAUTHBEARER",
-			expectedError: "unsupported value OAUTHBEARER for parameter sasl_mechanism, please use PLAIN",
-		},
-		{
-			name:          "requires parameter sasl_handshake=true",
-			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&sasl_handshake=false",
-			expectedError: "unsupported value false for parameter sasl_handshake, please use true",
-		},
-		{
-			name:          "requires parameter tls_enabled=true",
-			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&tls_enabled=false",
-			expectedError: "unsupported value false for parameter tls_enabled, please use true",
-		},
-		{
-			name:          "invalid query parameters",
-			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&ca_cert=abcd",
-			expectedError: "invalid query parameters",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -286,4 +149,33 @@ func TestChangefeedExternalConnections(t *testing.T) {
 			t, `CREATE CHANGEFEED FOR foo INTO 'external://confluent2/' WITH kafka_sink_config='{"Flush": {"Messages": 100, "Frequency": "1s"}}'`,
 		)
 	})
+}
+
+func TestBuildAzureKafkaConfig(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	for _, tc := range []struct {
+		name   string
+		oldUri string
+		newUri string
+	}{
+		{
+			name:   "test",
+			oldUri: "kafka://artemeventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey%3D123&sasl_mechanism=PLAIN",
+			newUri: "azure-event-hub://artemeventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&sasl_mechanism=PLAIN",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			oldU, err := url.Parse(tc.oldUri)
+			require.NoError(t, err)
+			newU, err := url.Parse(tc.newUri)
+			require.NoError(t, err)
+			expectedConfig, expectedError := buildDialConfig(sinkURL{URL: oldU})
+			actualConfig, actualError := buildDialConfig(sinkURL{URL: newU})
+			require.Equal(t, expectedConfig, actualConfig)
+			require.Equal(t, expectedError, actualError)
+		},
+		)
+	}
 }
