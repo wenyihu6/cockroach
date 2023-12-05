@@ -221,6 +221,10 @@ const (
 	SinkParamConfluentAPIKey    = `api_key`
 	SinkParamConfluentAPISecret = `api_secret`
 
+	SinkSchemeAzureKafka                   = `azure-event-hub`
+	SinkSchemeAzureServiceBusKafka         = `sb`
+	SinkSchemeAzureEncodedConnectionString = `encoded_connection_string`
+
 	RegistryParamCACert     = `ca_cert`
 	RegistryParamClientCert = `client_cert`
 	RegistryParamClientKey  = `client_key`

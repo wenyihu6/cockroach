@@ -338,6 +338,8 @@ type sinkURL struct {
 	q url.Values
 }
 
+// TODO(wenyihu6): add comments for these functions
+// consumeParam returns the value is found -> empty string if nothing found
 func (u *sinkURL) consumeParam(p string) string {
 	if u.q == nil {
 		u.q = u.Query()

@@ -11,6 +11,7 @@ package changefeedccl
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
+	"github.com/stretchr/testify/require"
 )
 
 // externalConnectionKafkaSink is a wrapper sink that asserts the underlying
@@ -249,6 +251,22 @@ func TestChangefeedExternalConnections(t *testing.T) {
 			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&ca_cert=abcd",
 			expectedError: "invalid query parameters",
 		},
+		// confluent-cloud scheme tests
+		{
+			name:          "con",
+			uri:           "azure-event-hub://nope/",
+			expectedError: "requires parameter encoded_connection_string",
+		},
+		{
+			name:          "con",
+			uri:           "azure-event-hub://nope/",
+			expectedError: "requires parameter encoded_connection_string",
+		},
+		{
+			name:          "con1",
+			uri:           "azure-event-hub://nope?connection_string=Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey<REDACTED>EntityPath%3Dhistory&sasl_mechanism=PLAIN",
+			expectedError: "requires parameter encoded_connection_string",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sqlDB.ExpectErr(
@@ -286,4 +304,41 @@ func TestChangefeedExternalConnections(t *testing.T) {
 			t, `CREATE CHANGEFEED FOR foo INTO 'external://confluent2/' WITH kafka_sink_config='{"Flush": {"Messages": 100, "Frequency": "1s"}}'`,
 		)
 	})
+}
+
+func TestBuildAzureKafkaConfig(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	makeKafkaConfig := func(password string, tls_skip bool) kafkaDialConfig {
+		return kafkaDialConfig{
+			tlsEnabled:    true,
+			tlsSkipVerify: tls_skip,
+			saslEnabled:   true,
+			saslHandshake: true, // TODO(wenyihu6) check if has to be true
+			saslUser:      "$CONNECTION_STRING",
+			// Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey<REDACTED>EntityPath%3Dhistory&sasl_mechanism=PLAIN"
+		}
+	}
+
+	for _, tc := range []struct {
+		name           string
+		uri            string
+		expectedConfig kafkaDialConfig
+		expectedError  error
+	}{
+		{
+			name:           "kafka_topic_prefix",
+			expectedConfig: kafkaDialConfig{},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u, err := url.Parse(tc.uri)
+			require.NoError(t, err)
+			actualConfig, actualError := buildAzureKafkaConfig(sinkURL{URL: u})
+			require.Equal(t, tc.expectedConfig, actualConfig)
+			require.Equal(t, tc.expectedError, actualError)
+		},
+		)
+	}
 }

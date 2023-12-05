@@ -40,9 +40,21 @@ import (
 	"golang.org/x/oauth2/clientcredentials"
 )
 
+func encodeURL(str string) string {
+	return url.QueryEscape(str)
+}
+
+// azure-event-hub://artemeventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=blah&sasl_mechanism=PLAIN
+func decodeURL(str string) (string, error) {
+	return url.QueryUnescape(str)
+}
+
 func isKafkaSink(u *url.URL) bool {
 	switch u.Scheme {
-	case changefeedbase.SinkSchemeConfluentKafka, changefeedbase.SinkSchemeKafka:
+	case changefeedbase.SinkSchemeConfluentKafka,
+		changefeedbase.SinkSchemeKafka,
+		changefeedbase.SinkSchemeAzureKafka,
+		changefeedbase.SinkSchemeAzureServiceBusKafka:
 		return true
 	default:
 		return false
@@ -886,8 +898,14 @@ type kafkaDialConfig struct {
 // also make sense to update the docs to reflect these cases
 // rather than having a huge table of auth params like we have now.
 func buildDialConfig(u sinkURL) (kafkaDialConfig, error) {
+	fmt.Println("q HERE: ", u.q)
 	if u.Scheme == changefeedbase.SinkSchemeConfluentKafka {
 		return buildConfluentKafkaConfig(u)
+	}
+	// (TODO wenyihu6: check if we can make this into an interface instead)
+	if u.Scheme == changefeedbase.SinkSchemeAzureKafka ||
+		u.Scheme == changefeedbase.SinkSchemeAzureServiceBusKafka {
+		return buildAzureKafkaConfig(u)
 	}
 
 	dialConfig := kafkaDialConfig{}
@@ -990,6 +1008,75 @@ func buildDialConfig(u sinkURL) (kafkaDialConfig, error) {
 	return dialConfig, nil
 }
 
+// TODO (wenyoihu6): check if we should support OAUTHBEARER https://learn.microsoft.com/en-us/azure/event-hubs/azure-event-hubs-kafka-overview#security-and-authentication
+// connection string looks like Endpoint=sb://<NamespaceName>.servicebus.windows.net/;SharedAccessKeyName=<KeyName>;SharedAccessKey=<KeyValue>
+// how we do it now: CREATE CHANGEFEED FOR TABLE history INTO "kafka://artemeventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey<REDACTED>EntityPath%3Dhistory&sasl_mechanism=PLAIN" WITH updated, format = json;
+// I am going to change it to: kafka://artemeventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey<REDACTED>EntityPath%3Dhistory&sasl_mechanism=PLAIN" WITH updated, format = json;
+// It automatically sets should also have sasl_enabled=true,
+// // sasl_mechanism=PLAIN, tls_enabled=true, and sasl_handshake=true.
+
+// design:
+func buildAzureKafkaConfig(u sinkURL) (kafkaDialConfig, error) {
+	// TODO(wenyihu6): check behaviour for kafka_sink_config
+	newMissingParameterError := func(param string) error {
+		return errors.Newf("scheme %s requires parameter %s", changefeedbase.SinkSchemeConfluentKafka, param)
+	}
+	newRequiredValueError := func(param string, unsupportedValue, allowedValue string) error {
+		return errors.Newf("unsupported value %s for parameter %s, please use %s instead", unsupportedValue,
+			param, allowedValue)
+	}
+
+	// TODO(wenyihu6): Check vehaviour on if we want to create topics using EntityPath in the path
+	dialConfig := kafkaDialConfig{}
+	if dialConfig.saslPassword = u.consumeParam(changefeedbase.SinkSchemeAzureEncodedConnectionString); dialConfig.saslUser == `` {
+		return kafkaDialConfig{}, newMissingParameterError(changefeedbase.SinkSchemeAzureEncodedConnectionString)
+	}
+
+	// If sasl_enabled is specified, it must be set to true.
+	if wasSet, err := u.consumeBool(changefeedbase.SinkParamSASLEnabled, &dialConfig.saslEnabled); err != nil {
+		return kafkaDialConfig{}, err
+	} else if wasSet && !dialConfig.saslEnabled {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamSASLEnabled, "false",
+			"true")
+	}
+	// If sasl_mechanism is specified, it must be set to PLAIN.
+	if dialConfig.saslMechanism = u.consumeParam(changefeedbase.SinkParamSASLMechanism); dialConfig.saslMechanism != `` &&
+		dialConfig.saslMechanism != sarama.SASLTypePlaintext {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamSASLMechanism, dialConfig.saslMechanism,
+			sarama.SASLTypePlaintext)
+	}
+	// If tls_enabled is specified, it must be set to true.
+	if wasSet, err := u.consumeBool(changefeedbase.SinkParamTLSEnabled, &dialConfig.tlsEnabled); err != nil {
+		return kafkaDialConfig{}, err
+	} else if wasSet && !dialConfig.tlsEnabled {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamTLSEnabled, "false", "true")
+	}
+	// If sasl_handshake is specified, it must be set to true.
+	if wasSet, err := u.consumeBool(changefeedbase.SinkParamSASLHandshake, &dialConfig.saslHandshake); err != nil {
+		return kafkaDialConfig{}, err
+	} else if wasSet && !dialConfig.saslHandshake {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamSASLHandshake, "false", "true")
+	}
+
+	if _, err := u.consumeBool(changefeedbase.SinkParamSkipTLSVerify, &dialConfig.tlsSkipVerify); err != nil {
+		return kafkaDialConfig{}, err
+	}
+
+	dialConfig.saslEnabled = true
+	dialConfig.saslMechanism = sarama.SASLTypePlaintext
+	dialConfig.tlsEnabled = true
+	dialConfig.saslHandshake = true
+	dialConfig.saslUser = "$ConnectionString"
+
+	remaining := u.remainingQueryParams()
+	if len(remaining) > 0 {
+		return kafkaDialConfig{}, errors.Newf("invalid query parameters for scheme %s", remaining, changefeedbase.SinkParamConfluentAPISecret)
+	}
+
+	// Ignore all other configurations.
+	return dialConfig, nil
+}
+
 // buildConfluentKafkaConfig constructs a simple dial config which is supported
 // by kafka on confluent cloud. The dial config should have `api_key` and
 // `api_secret`. It automatically sets should also have sasl_enabled=true,
@@ -1068,6 +1155,7 @@ func buildKafkaConfig(
 	if err != nil {
 		return nil, err
 	}
+	fmt.Printf("%+v\n", dialConfig)
 	config := sarama.NewConfig()
 	config.ClientID = `CockroachDB`
 	config.Producer.Return.Successes = true
