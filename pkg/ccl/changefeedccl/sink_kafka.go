@@ -42,7 +42,7 @@ import (
 
 func isKafkaSink(u *url.URL) bool {
 	switch u.Scheme {
-	case changefeedbase.SinkSchemeConfluentKafka, changefeedbase.SinkSchemeKafka:
+	case changefeedbase.SinkSchemeConfluentKafka, changefeedbase.SinkSchemeKafka, changefeedbase.SinkSchemeAzureKafka:
 		return true
 	default:
 		return false
