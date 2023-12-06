@@ -251,6 +251,41 @@ func TestChangefeedExternalConnections(t *testing.T) {
 			uri:           "confluent-cloud://nope?api_key=fee&api_secret=bar&ca_cert=abcd",
 			expectedError: "invalid query parameters",
 		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?",
+			expectedError: "requires parameter SharedAccessKeyName",
+		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?SharedAccessKeyName=saspolicytpcc",
+			expectedError: "requires parameter SharedAccessKey",
+		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&sasl_enabled=false",
+			expectedError: "unsupported value false for parameter sasl_enabled, please use true",
+		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&sasl_mechanism=OAUTHBEARER",
+			expectedError: "unsupported value OAUTHBEARER for parameter sasl_mechanism, please use PLAIN",
+		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&sasl_handshake=false",
+			expectedError: "unsupported value false for parameter sasl_handshake, please use true",
+		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&tls_enabled=false",
+			expectedError: "unsupported value false for parameter tls_enabled, please use true",
+		},
+		{
+			name:          "test",
+			uri:           "azure-event-hub://nope?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&ca_cert=abcd",
+			expectedError: "invalid query parameters",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sqlDB.ExpectErr(
