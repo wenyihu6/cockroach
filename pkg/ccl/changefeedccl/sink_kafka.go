@@ -42,7 +42,8 @@ import (
 
 func isKafkaSink(u *url.URL) bool {
 	switch u.Scheme {
-	case changefeedbase.SinkSchemeConfluentKafka, changefeedbase.SinkSchemeKafka, changefeedbase.SinkSchemeAzureKafka:
+	case changefeedbase.SinkSchemeConfluentKafka, changefeedbase.SinkSchemeKafka,
+		changefeedbase.SinkSchemeAzureKafka, changefeedbase.SinkSchemeAzureKafka2:
 		return true
 	default:
 		return false
@@ -877,9 +878,9 @@ type kafkaDialConfig struct {
 	saslGrantType    string
 }
 
-func buildAzureKafkaConfig(u sinkURL) (kafkaDialConfig, error) {
+func buildAzureKafkaConfig2(u sinkURL) (kafkaDialConfig, error) {
 	newMissingParameterError := func(param string) error {
-		return errors.Newf("scheme %s requires parameter %s", changefeedbase.SinkSchemeConfluentKafka, param)
+		return errors.Newf("scheme %s requires parameter %s", changefeedbase.SinkSchemeAzureKafka, param)
 	}
 	newRequiredValueError := func(param string, unsupportedValue, allowedValue string) error {
 		return errors.Newf("unsupported value %s for parameter %s, please use %s instead", unsupportedValue,
@@ -908,9 +909,106 @@ func buildAzureKafkaConfig(u sinkURL) (kafkaDialConfig, error) {
 
 	// Endpoint=sb://<NamespaceName>.servicebus.windows.net/;SharedAccessKeyName=<KeyName>;SharedAccessKey=<KeyValue>;EntityPath=<EventHubName>
 	// encode it
+	// take in url encoded string => decode it
 	dialConfig := kafkaDialConfig{}
 	dialConfig.saslUser = "$ConnectionString"
+	// the version they give us has to be encoded
+	fmt.Println("url.QueryEscape(sharedAccessKeyName)", url.QueryEscape(sharedAccessKeyName))
+	fmt.Println("url.QueryEscape(sharedAccessKey)", url.QueryEscape(sharedAccessKey))
+	fmt.Println("sharedAccessKey", sharedAccessKey)
+	//key, _ := url.QueryUnescape(sharedAccessKey)
+	//name, _ := url.QueryUnescape(sharedAccessKeyName)
 	dialConfig.saslPassword = fmt.Sprintf("Endpoint=sb://%s/;SharedAccessKeyName=%s;SharedAccessKey=%s", hostName, sharedAccessKeyName, sharedAccessKey)
+
+	// If sasl_enabled is specified, it must be set to true.
+	if wasSet, err := u.consumeBool(changefeedbase.SinkParamSASLEnabled, &dialConfig.saslEnabled); err != nil {
+		return kafkaDialConfig{}, err
+	} else if wasSet && !dialConfig.saslEnabled {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamSASLEnabled, "false",
+			"true")
+	}
+	// If sasl_mechanism is specified, it must be set to PLAIN.
+	if dialConfig.saslMechanism = u.consumeParam(changefeedbase.SinkParamSASLMechanism); dialConfig.saslMechanism != `` &&
+		dialConfig.saslMechanism != sarama.SASLTypePlaintext {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamSASLMechanism, dialConfig.saslMechanism,
+			sarama.SASLTypePlaintext)
+	}
+	// If tls_enabled is specified, it must be set to true.
+	if wasSet, err := u.consumeBool(changefeedbase.SinkParamTLSEnabled, &dialConfig.tlsEnabled); err != nil {
+		return kafkaDialConfig{}, err
+	} else if wasSet && !dialConfig.tlsEnabled {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamTLSEnabled, "false", "true")
+	}
+	// If sasl_handshake is specified, it must be set to true.
+	if wasSet, err := u.consumeBool(changefeedbase.SinkParamSASLHandshake, &dialConfig.saslHandshake); err != nil {
+		return kafkaDialConfig{}, err
+	} else if wasSet && !dialConfig.saslHandshake {
+		return kafkaDialConfig{}, newRequiredValueError(changefeedbase.SinkParamSASLHandshake, "false", "true")
+	}
+
+	if _, err := u.consumeBool(changefeedbase.SinkParamSkipTLSVerify, &dialConfig.tlsSkipVerify); err != nil {
+		return kafkaDialConfig{}, err
+	}
+
+	dialConfig.saslEnabled = true
+	dialConfig.saslMechanism = sarama.SASLTypePlaintext
+	dialConfig.tlsEnabled = true
+	dialConfig.saslHandshake = true
+
+	remaining := u.remainingQueryParams()
+	if len(remaining) > 0 {
+		return kafkaDialConfig{}, errors.Newf("invalid query parameters for scheme %s", remaining, changefeedbase.SinkParamConfluentAPISecret)
+	}
+
+	// Ignore all other configurations.
+	return dialConfig, nil
+}
+
+func buildAzureKafkaConfig(u sinkURL) (kafkaDialConfig, error) {
+	newMissingParameterError := func(param string) error {
+		return errors.Newf("scheme %s requires parameter %s", changefeedbase.SinkSchemeAzureKafka, param)
+	}
+	newRequiredValueError := func(param string, unsupportedValue, allowedValue string) error {
+		return errors.Newf("unsupported value %s for parameter %s, please use %s instead", unsupportedValue,
+			param, allowedValue)
+	}
+	// add unsupported error for EntityPath
+	//unsupportedArgumentError := func() {
+	//
+	//}
+
+	// take in azure-event-hub://artemeventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=blah&sasl_mechanism=PLAIN
+	// constructs into
+	// kafka://artemeventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey<REDACTED>EntityPath%3Dhistory&sasl_mechanism=PLAIN"
+	hostName := u.Hostname()
+	sharedAccessKeyName := u.consumeParam(changefeedbase.SinkParamAzureAccessKeyName)
+	if sharedAccessKeyName == `` {
+		return kafkaDialConfig{}, newMissingParameterError(changefeedbase.SinkParamAzureAccessKeyName)
+	}
+	sharedAccessKey := u.consumeParam(changefeedbase.SinkParamAzureAccessKey)
+	if sharedAccessKey == `` {
+		return kafkaDialConfig{}, newMissingParameterError(changefeedbase.SinkParamAzureAccessKey)
+	}
+	entityPath := u.consumeParam(changefeedbase.SinkParamAzureEntityPath)
+	if sharedAccessKey == `` {
+		return kafkaDialConfig{}, newMissingParameterError(changefeedbase.SinkParamAzureEntityPath)
+	}
+
+	// username="$ConnectionString"
+	// password="Endpoint=sb://mynamespace.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=XXXXXXXXXXXXXXXX";
+
+	// Endpoint=sb://<NamespaceName>.servicebus.windows.net/;SharedAccessKeyName=<KeyName>;SharedAccessKey=<KeyValue>;EntityPath=<EventHubName>
+	// encode it
+	// take in url encoded string => decode it
+	dialConfig := kafkaDialConfig{}
+	dialConfig.saslUser = "$ConnectionString"
+	// the version they give us has to be encoded
+	fmt.Println("url.QueryEscape(sharedAccessKeyName)", url.QueryEscape(sharedAccessKeyName))
+	fmt.Println("url.QueryEscape(sharedAccessKey)", url.QueryEscape(sharedAccessKey))
+	fmt.Println("sharedAccessKey", sharedAccessKey)
+	//key, _ := url.QueryUnescape(sharedAccessKey)
+	//name, _ := url.QueryUnescape(sharedAccessKeyName)
+	dialConfig.saslPassword = fmt.Sprintf("Endpoint=sb://%s/;SharedAccessKeyName=%s;SharedAccessKey=%s;EntityPath=%s", hostName, sharedAccessKeyName, sharedAccessKey, (entityPath))
 
 	// If sasl_enabled is specified, it must be set to true.
 	if wasSet, err := u.consumeBool(changefeedbase.SinkParamSASLEnabled, &dialConfig.saslEnabled); err != nil {
@@ -971,6 +1069,10 @@ func buildDialConfig(u sinkURL) (kafkaDialConfig, error) {
 	}
 	if u.Scheme == changefeedbase.SinkSchemeAzureKafka {
 		return buildAzureKafkaConfig(u)
+	}
+	if u.Scheme == changefeedbase.SinkSchemeAzureKafka2 {
+		fmt.Println("CALLLEDDDDD")
+		return buildAzureKafkaConfig2(u)
 	}
 	fmt.Println(u.Scheme)
 	fmt.Println(u.Opaque)

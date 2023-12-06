@@ -334,10 +334,44 @@ func TestBuildAzureKafkaConfig(t *testing.T) {
 		oldUri string
 		newUri string
 	}{
+		// Endpoint=sb://wenyieventhubs.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj+AEhBHykhg=
+		// "azure-event-hub://wenyieventhubs.servicebus.windows.net?SharedAccessKeyName=RootManageSharedAccessKey&SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj"
 		{
 			name:   "test",
 			oldUri: "kafka://artemeventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fartemeventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicytpcc%3BSharedAccessKey%3D123&sasl_mechanism=PLAIN",
-			newUri: "azure-event-hub://artemeventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&sasl_mechanism=PLAIN",
+			newUri: "azure-event-hub2://artemeventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicytpcc&SharedAccessKey=123&sasl_mechanism=PLAIN",
+		},
+		//{
+		//	name:   "test",
+		//	oldUri: "kafka://wenyieventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fwenyieventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicyhistory%3BSharedAccessKey%3D7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq%2BAEhE2eJyE%3D%3BEntityPath%3Dhistory&sasl_mechanism=PLAIN",
+		//	// sasl_password=Endpoint=sb://wenyieventhubs.servicebus.windows.net/;SharedAccessKeyName=saspolicyhistory;SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq+AEhE2eJyE=;EntityPath=history
+		//	newUri: "azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=RootManageSharedAccessKey&SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj+AEhBHykhg",
+		//	// azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=RootManageSharedAccessKey&SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj+AEhBHykhg
+		//	// azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicyhistory&SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq+AEhE2eJyE=
+		//},
+		{
+			// SharedAccessKey="encoded version" or the decoded version
+			// If we take the decoded version
+			// SharedAccessKey= consumeParam skips the +
+
+			// If we take the encoded version
+			// We need to figure out
+			// sasl_password=decoded version
+
+			name:   "test",
+			oldUri: "kafka://wenyieventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fwenyieventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3DRootManageSharedAccessKey%3BSharedAccessKey%3DBPktU5hDFhzc6v5z1grIx73en31n3tpIj%2BAEhBHykhg&sasl_mechanism=PLAIN",
+			// Endpoint=sb://wenyieventhubs.servicebus.windows.net/;SharedAccessKeyName=saspolicyhistory;SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq+AEhE2eJyE=;EntityPath=history
+			newUri: "azure-event-hub2://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=RootManageSharedAccessKey&SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj%2BAEhBHykhg",
+			// azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=RootManageSharedAccessKey&SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj+AEhBHykhg
+			// azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicyhistory&SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq+AEhE2eJyE=
+		},
+		{
+			name:   "test",
+			oldUri: "kafka://wenyieventhubs.servicebus.windows.net:9093?tls_enabled=true&sasl_enabled=true&sasl_user=$ConnectionString&sasl_password=Endpoint%3Dsb%3A%2F%2Fwenyieventhubs.servicebus.windows.net%2F%3BSharedAccessKeyName%3Dsaspolicyhistory%3BSharedAccessKey%3D7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq%2BAEhE2eJyE%3D%3BEntityPath%3Dhistory&sasl_mechanism=PLAIN",
+			// Endpoint=sb://wenyieventhubs.servicebus.windows.net/;SharedAccessKeyName=saspolicyhistory;SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq+AEhE2eJyE=;EntityPath=history
+			newUri: "azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicyhistory&SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq%2BAEhE2eJyE%3D&EntityPath=history",
+			// azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=RootManageSharedAccessKey&SharedAccessKey=BPktU5hDFhzc6v5z1grIx73en31n3tpIj+AEhBHykhg
+			// azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?SharedAccessKeyName=saspolicyhistory&SharedAccessKey=7LDWg1Cv5wiNsXXDqXFQG77LldyV97Pdq+AEhE2eJyE=
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
