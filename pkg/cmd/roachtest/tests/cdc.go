@@ -2358,7 +2358,7 @@ func (k kafkaManager) sinkURLAsAzureEventHubUrl(ctx context.Context) string {
 	// authentication (see https://docs.confluent.io/platform/current/security/security_tutorial.html#overview).
 	// Because the kafka manager has certs configured, connecting without a ca_cert will raise an error.
 	// To connect without a cert, we set insecure_tls_skip_verify=true.
-	return `azure-event-hub://` + ips[0] + `?`
+	return `azure-event-hub://` + ips[0] + `:9093`
 }
 
 func (k kafkaManager) sinkURLOAuth(ctx context.Context, creds clientcredentials.Config) string {

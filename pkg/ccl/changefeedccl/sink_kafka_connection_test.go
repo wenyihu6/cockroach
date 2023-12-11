@@ -365,22 +365,22 @@ func TestBuildAzureKafkaConfig(t *testing.T) {
 	}{
 		{
 			name:                    "test basic key/password with sasl_mechanism",
-			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&sasl_mechanism=PLAIN",
+			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?shared_access_key_name=saspolicytpcc&shared_access_key=123&sasl_mechanism=PLAIN",
 			expectedKafkaDialConfig: makeKafkaDialConfig("wenyieventhubs.servicebus.windows.net", "saspolicytpcc", "123"),
 		},
 		{
 			name:                    "test basic key/password with sasl_enabled",
-			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&sasl_enabled=true",
+			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?shared_access_key_name=saspolicytpcc&shared_access_key=123&sasl_enabled=true",
 			expectedKafkaDialConfig: makeKafkaDialConfig("wenyieventhubs.servicebus.windows.net", "saspolicytpcc", "123"),
 		},
 		{
 			name:                    "test basic key/password with tls_enabled",
-			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&tls_enabled=true",
+			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?shared_access_key_name=saspolicytpcc&shared_access_key=123&tls_enabled=true",
 			expectedKafkaDialConfig: makeKafkaDialConfig("wenyieventhubs.servicebus.windows.net", "saspolicytpcc", "123"),
 		},
 		{
 			name:                    "test basic key/password with sasl_handshake",
-			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&sasl_enabled=true&tls_enabled=true&sasl_handshake=true",
+			uri:                     "azure-event-hub://wenyieventhubs.servicebus.windows.net:9093?shared_access_key_name=saspolicytpcc&shared_access_key=123&sasl_enabled=true&tls_enabled=true&sasl_handshake=true",
 			expectedKafkaDialConfig: makeKafkaDialConfig("wenyieventhubs.servicebus.windows.net", "saspolicytpcc", "123"),
 		},
 		{
