@@ -313,11 +313,11 @@ func TestChangefeedExternalConnections(t *testing.T) {
 		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION confluent2 AS 'confluent-cloud://nope?api_key=fee&api_secret=bar&`+
 			`sasl_mechanism=PLAIN&tls_enabled=true&topic_prefix=foo&sasl_enabled=true&sasl_handshake=true&`+
 			`insecure_tls_skip_verify=true'`)
-		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION azure1 AS 'azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&`+
+		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION azure1 AS 'azure-event-hub://nope?shared_access_key_name=saspolicytpcc&shared_access_key=123&`+
 			`sasl_mechanism=PLAIN&tls_enabled=true&topic_prefix=foo&sasl_enabled=true&sasl_handshake=true'`)
-		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION azure2 AS 'azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&`+
+		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION azure2 AS 'azure-event-hub://ope?shared_access_key_name=saspolicytpcc&shared_access_key=123&`+
 			`sasl_mechanism=PLAIN&tls_enabled=true&topic_prefix=foo&sasl_enabled=true&sasl_handshake=true'`)
-		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION azure3 AS 'azure-event-hub://wenyieventhubs.servicebus.windows.net?shared_access_key_name=saspolicytpcc&shared_access_key=123&`+
+		sqlDB.Exec(t, `CREATE EXTERNAL CONNECTION azure3 AS 'azure-event-hub://ope?shared_access_key_name=saspolicytpcc&shared_access_key=123&`+
 			`sasl_mechanism=PLAIN&tls_enabled=true&topic_name=foo&sasl_enabled=true&sasl_handshake=true'`)
 
 		sqlDB.Exec(t, `CREATE CHANGEFEED FOR foo INTO 'external://nope'`)

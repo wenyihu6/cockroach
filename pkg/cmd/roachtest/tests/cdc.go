@@ -1023,7 +1023,7 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 		},
 		{
 			"create changefeed with azure-event-hub scheme",
-			fmt.Sprintf("%sshared_access_key_name=plain&shared_access_key=plain-secret", kafka.sinkURLAsAzureEventHubUrl(ctx)),
+			fmt.Sprintf("%s&shared_access_key_name=plain&shared_access_key=plain-secret", kafka.sinkURLAsAzureEventHubUrl(ctx)),
 		},
 	}
 
@@ -2354,11 +2354,7 @@ func (k kafkaManager) sinkURLAsAzureEventHubUrl(ctx context.Context) string {
 	if err != nil {
 		k.t.Fatal(err)
 	}
-	// Confluent cloud does not use TLS 1.2 and instead uses PLAIN username/password
-	// authentication (see https://docs.confluent.io/platform/current/security/security_tutorial.html#overview).
-	// Because the kafka manager has certs configured, connecting without a ca_cert will raise an error.
-	// To connect without a cert, we set insecure_tls_skip_verify=true.
-	return `azure-event-hub://` + ips[0] + `:9093`
+	return `azure-event-hub://` + ips[0] + `:9094?insecure_tls_skip_verify=true`
 }
 
 func (k kafkaManager) sinkURLOAuth(ctx context.Context, creds clientcredentials.Config) string {

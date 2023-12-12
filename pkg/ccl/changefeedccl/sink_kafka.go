@@ -1200,6 +1200,9 @@ func buildAzureKafkaConfig(u sinkURL) (dialConfig kafkaDialConfig, _ error) {
 	if err != nil {
 		return kafkaDialConfig{}, err
 	}
+	if _, err := u.consumeBool(changefeedbase.SinkParamSkipTLSVerify, &dialConfig.tlsSkipVerify); err != nil {
+		return kafkaDialConfig{}, err
+	}
 
 	remaining := u.remainingQueryParams()
 	if len(remaining) > 0 {
