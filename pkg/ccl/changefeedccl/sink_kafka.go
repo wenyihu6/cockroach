@@ -257,7 +257,7 @@ func (s *kafkaSink) Dial() error {
 		return err
 	}
 
-	if err = client.RefreshMetadata(); err != nil {
+	if err = client.RefreshMetadata(s.Topics()...); err != nil {
 		// Now that we do not fetch metadata for all topics by default, we try
 		// RefreshMetadata manually to check for any connection error.
 		if !errors.Is(err, sarama.ErrLeaderNotAvailable) && !errors.Is(err, sarama.ErrReplicaNotAvailable) && !errors.Is(err, sarama.ErrTopicAuthorizationFailed) && !errors.Is(err, sarama.ErrClusterAuthorizationFailed) {
@@ -1085,6 +1085,7 @@ func buildKafkaConfig(
 	config.Producer.Partitioner = newChangefeedPartitioner
 	// Do not fetch metadata for all topics but just for the necessary ones.
 	config.Metadata.Full = false
+	config.Metadata.AllowAutoTopicCreation = false
 
 	if dialConfig.tlsEnabled {
 		config.Net.TLS.Enable = true
