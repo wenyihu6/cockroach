@@ -256,6 +256,7 @@ func (s *kafkaSink) Dial() error {
 	if err != nil {
 		return err
 	}
+	log.Infof(context.Background(), "topics hereeee %v", s.Topics())
 
 	if err = client.RefreshMetadata(s.Topics()...); err != nil {
 		// Now that we do not fetch metadata for all topics by default, we try

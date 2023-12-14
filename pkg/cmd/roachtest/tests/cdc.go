@@ -962,20 +962,25 @@ func runCDCSchemaRegistry(ctx context.Context, t test.Test, c cluster.Cluster) {
 }
 
 func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
+	// do something similar to oauth insteda here
+	ct := newCDCTester(ctx, t, c)
+	defer ct.Close()
+
 	lastCrdbNode := c.Spec().NodeCount - 1
 	if lastCrdbNode == 0 {
 		lastCrdbNode = 1
 	}
 
-	crdbNodes, kafkaNode := c.Range(1, lastCrdbNode), c.Node(c.Spec().NodeCount)
-	c.Start(ctx, t.L(), option.DefaultStartOpts(), install.MakeClusterSettings(), crdbNodes)
-
+	kafkaNode := ct.kafkaSinkNode()
 	kafka := kafkaManager{
-		t:     t,
-		c:     c,
-		nodes: kafkaNode,
+		t:         ct.t,
+		c:         ct.cluster,
+		nodes:     kafkaNode,
+		mon:       ct.mon,
+		useKafka2: true, // The broker-side oauth configuration used only works with Kafka 2
 	}
-	kafka.install(ctx)
+	kafka.install(ct.ctx)
+
 	testCerts := kafka.configureAuth(ctx)
 	kafka.start(ctx, "kafka")
 	kafka.addSCRAMUsers(ctx)
@@ -1468,10 +1473,8 @@ func registerCDC(r registry.Registry) {
 				t.L().PrintfCtx(ctx, "Skipping test under ARM64")
 				return
 			}
-
 			ct := newCDCTester(ctx, t, c)
 			defer ct.Close()
-
 			// Run tpcc workload for tiny bit.  Roachtest monitor does not
 			// like when there are no tasks that were started with the monitor
 			// (This can be removed once #108530 resolved).
