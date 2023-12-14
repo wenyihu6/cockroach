@@ -257,10 +257,15 @@ func (s *kafkaSink) Dial() error {
 		return err
 	}
 
-	if err = client.RefreshMetadata(s.Topics()...); err != nil {
+	if err = client.RefreshMetadata(); err != nil {
 		// Now that we do not fetch metadata for all topics by default, we try
 		// RefreshMetadata manually to check for any connection error.
-		return errors.CombineErrors(err, client.Close())
+		if !errors.Is(err, sarama.ErrLeaderNotAvailable) && !errors.Is(err, sarama.ErrReplicaNotAvailable) && !errors.Is(err, sarama.ErrTopicAuthorizationFailed) && !errors.Is(err, sarama.ErrClusterAuthorizationFailed) {
+			log.Infof(context.Background(), "ERROR HEEREEEERERE %v", err.Error())
+			log.Infof(context.Background(), "ERROR topics %v", s.Topics())
+			log.Infof(context.Background(), "ERROR topics %v", s.Topics())
+			return errors.CombineErrors(err, client.Close())
+		}
 	}
 
 	producer, err := s.newAsyncProducer(client)

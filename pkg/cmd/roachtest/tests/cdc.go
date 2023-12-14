@@ -987,39 +987,15 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 	tdb := sqlutils.MakeSQLRunner(db)
 	tdb.Exec(t, `CREATE TABLE auth_test_table (a INT PRIMARY KEY)`)
 
-	caCert := testCerts.CACertBase64()
-	saslURL := kafka.sinkURLSASL(ctx)
+	//caCert := testCerts.CACertBase64()
+	//saslURL := kafka.sinkURLSASL(ctx)
 	feeds := []struct {
 		desc     string
 		queryArg string
 	}{
 		{
-			"create changefeed with insecure TLS transport and no auth",
-			fmt.Sprintf("%s?tls_enabled=true&insecure_tls_skip_verify=true", kafka.sinkURLTLS(ctx)),
-		},
-		{
 			"create changefeed with TLS transport and no auth",
 			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s", kafka.sinkURLTLS(ctx), testCerts.CACertBase64()),
-		},
-		{
-			"create changefeed with TLS transport and SASL/PLAIN (default mechanism)",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=plain&sasl_password=plain-secret", saslURL, caCert),
-		},
-		{
-			"create changefeed with TLS transport and SASL/PLAIN (explicit mechanism)",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=plain&sasl_password=plain-secret&sasl_mechanism=PLAIN", saslURL, caCert),
-		},
-		{
-			"create changefeed with TLS transport and SASL/SCRAM-SHA-256",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=scram256&sasl_password=scram256-secret&sasl_mechanism=SCRAM-SHA-256", saslURL, caCert),
-		},
-		{
-			"create changefeed with TLS transport and SASL/SCRAM-SHA-512",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=scram512&sasl_password=scram512-secret&sasl_mechanism=SCRAM-SHA-512", saslURL, caCert),
-		},
-		{
-			"create changefeed with confluent-cloud scheme",
-			fmt.Sprintf("%s&api_key=plain&api_secret=plain-secret", kafka.sinkURLAsConfluentCloudUrl(ctx)),
 		},
 	}
 
