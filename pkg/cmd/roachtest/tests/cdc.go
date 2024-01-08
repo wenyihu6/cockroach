@@ -15,6 +15,7 @@ import (
 	"context"
 	cryptorand "crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	gosql "database/sql"
@@ -57,6 +58,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -1003,7 +1005,6 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 	kafka.install(ctx)
 	testCerts := kafka.configureAuth(ctx)
 	kafka.start(ctx, "kafka")
-	kafka.addSCRAMUsers(ctx)
 	defer kafka.stop(ctx)
 
 	db := c.Conn(ctx, t.L(), 1)
@@ -1013,30 +1014,17 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 	tdb.Exec(t, `CREATE TABLE auth_test_table (a INT PRIMARY KEY)`)
 
 	caCert := testCerts.CACertBase64()
-
-	// saslURL := kafka.sinkURLSASL(ctx)
-
+	clientCertPEM, clientKeyPEM, err := cdctest.GenerateClientCertAndKey(testCerts.cert)
+	require.NoError(t, err)
 	sqlDB := sqlutils.MakeSQLRunner(db)
 	sqlDB.Exec(t, `CREATE TABLE foo (a INT PRIMARY KEY, b STRING)`)
-	// cert, certBase64, err := cdctest.NewCACertBase64Encoded()
-	// require.NoError(t, err)
 	params := url.Values{}
 	params.Add("ca_cert", caCert)
-	// clientCertPEM, clientKeyPEM, err := cdctest.GenerateClientCertAndKey(cert)
-	// require.NoError(t, err)
-	params.Add("client_cert", testCerts.SinkCert)
-	params.Add("client_key", testCerts.SinkKey)
 
-	//cert, certBase64, err := cdctest.NewCACertBase64Encoded()
-	//// require.NoError(t, err)
-	//params := url.Values{}
-	//params.Add("ca_cert", caCert)
-	//clientCertPEM, clientKeyPEM, err := cdctest.GenerateClientCertAndKey(cert)
-	//require.NoError(t, err)
-	//params.Add("client_cert", base64.StdEncoding.EncodeToString(clientCertPEM))
-	//params.Add("client_key", base64.StdEncoding.EncodeToString(clientKeyPEM))
+	params.Add("client_cert", base64.StdEncoding.EncodeToString(clientCertPEM))
+	params.Add("client_key", base64.StdEncoding.EncodeToString(clientKeyPEM))
+
 	str := kafka.sinkURLTLS(context.Background())
-	// %s?tls_enabled=true&ca_cert=%s
 	uri := fmt.Sprintf("%s?tls_enabled=true&%s", str, params.Encode())
 	// CREATE EXTERNAL CONNECTION '%s' AS '%s'`, tc.name, tc.uri
 	stmt := fmt.Sprintf(`CREATE EXTERNAL CONNECTION '%s' AS '%s'`, uri, uri)
@@ -1627,6 +1615,7 @@ type testCerts struct {
 	CAKey    string
 	SinkCert string
 	SinkKey  string
+	cert     *tls.Certificate
 }
 
 func (t *testCerts) CACertBase64() string {
@@ -1674,11 +1663,17 @@ func makeTestCerts(sinkNodeIP string) (*testCerts, error) {
 		return nil, errors.Wrap(err, "pem encode sink cert")
 	}
 
+	cert, err := tls.X509KeyPair([]byte(CACertPEM), []byte(CAKeyPEM))
+	if err != nil {
+		return nil, errors.Wrap(err, "CA cert parse from PEM")
+	}
+
 	return &testCerts{
 		CACert:   CACertPEM,
 		CAKey:    CAKeyPEM,
 		SinkCert: SinkCertPEM,
 		SinkKey:  SinkKeyPEM,
+		cert:     &cert,
 	}, nil
 }
 
