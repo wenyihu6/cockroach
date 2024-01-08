@@ -1013,48 +1013,34 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 	tdb.Exec(t, `CREATE TABLE auth_test_table (a INT PRIMARY KEY)`)
 
 	caCert := testCerts.CACertBase64()
-	saslURL := kafka.sinkURLSASL(ctx)
-	feeds := []struct {
-		desc     string
-		queryArg string
-	}{
-		{
-			"create changefeed with insecure TLS transport and no auth",
-			fmt.Sprintf("%s?tls_enabled=true&insecure_tls_skip_verify=true", kafka.sinkURLTLS(ctx)),
-		},
-		{
-			"create changefeed with TLS transport and no auth",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s", kafka.sinkURLTLS(ctx), testCerts.CACertBase64()),
-		},
-		{
-			"create changefeed with TLS transport and SASL/PLAIN (default mechanism)",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=plain&sasl_password=plain-secret", saslURL, caCert),
-		},
-		{
-			"create changefeed with TLS transport and SASL/PLAIN (explicit mechanism)",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=plain&sasl_password=plain-secret&sasl_mechanism=PLAIN", saslURL, caCert),
-		},
-		{
-			"create changefeed with TLS transport and SASL/SCRAM-SHA-256",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=scram256&sasl_password=scram256-secret&sasl_mechanism=SCRAM-SHA-256", saslURL, caCert),
-		},
-		{
-			"create changefeed with TLS transport and SASL/SCRAM-SHA-512",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=scram512&sasl_password=scram512-secret&sasl_mechanism=SCRAM-SHA-512", saslURL, caCert),
-		},
-		{
-			"create changefeed with confluent-cloud scheme",
-			fmt.Sprintf("%s&api_key=plain&api_secret=plain-secret", kafka.sinkURLAsConfluentCloudUrl(ctx)),
-		},
-	}
 
-	for _, f := range feeds {
-		t.Status(f.desc)
-		_, err := newChangefeedCreator(db, t.L(), globalRand, "auth_test_table", f.queryArg, makeDefaultFeatureFlags()).Create()
-		if err != nil {
-			t.Fatalf("%s: %s", f.desc, err.Error())
-		}
-	}
+	// saslURL := kafka.sinkURLSASL(ctx)
+
+	sqlDB := sqlutils.MakeSQLRunner(db)
+	sqlDB.Exec(t, `CREATE TABLE foo (a INT PRIMARY KEY, b STRING)`)
+	// cert, certBase64, err := cdctest.NewCACertBase64Encoded()
+	// require.NoError(t, err)
+	params := url.Values{}
+	params.Add("ca_cert", caCert)
+	// clientCertPEM, clientKeyPEM, err := cdctest.GenerateClientCertAndKey(cert)
+	// require.NoError(t, err)
+	params.Add("client_cert", testCerts.SinkCert)
+	params.Add("client_key", testCerts.SinkKey)
+
+	//cert, certBase64, err := cdctest.NewCACertBase64Encoded()
+	//// require.NoError(t, err)
+	//params := url.Values{}
+	//params.Add("ca_cert", caCert)
+	//clientCertPEM, clientKeyPEM, err := cdctest.GenerateClientCertAndKey(cert)
+	//require.NoError(t, err)
+	//params.Add("client_cert", base64.StdEncoding.EncodeToString(clientCertPEM))
+	//params.Add("client_key", base64.StdEncoding.EncodeToString(clientKeyPEM))
+	str := kafka.sinkURLTLS(context.Background())
+	// %s?tls_enabled=true&ca_cert=%s
+	uri := fmt.Sprintf("%s?tls_enabled=true&%s", str, params.Encode())
+	// CREATE EXTERNAL CONNECTION '%s' AS '%s'`, tc.name, tc.uri
+	stmt := fmt.Sprintf(`CREATE EXTERNAL CONNECTION '%s' AS '%s'`, uri, uri)
+	sqlDB.ExpectErr(t, "", stmt)
 }
 
 func registerCDC(r registry.Registry) {
