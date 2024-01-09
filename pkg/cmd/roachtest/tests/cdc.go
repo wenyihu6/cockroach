@@ -1027,8 +1027,10 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 	str := kafka.sinkURLTLS(context.Background())
 	uri := fmt.Sprintf("%s?tls_enabled=true&%s", str, params.Encode())
 	// CREATE EXTERNAL CONNECTION '%s' AS '%s'`, tc.name, tc.uri
-	stmt := fmt.Sprintf(`CREATE EXTERNAL CONNECTION '%s' AS '%s'`, uri, uri)
+	sqlDB.Exec(t, "SET CLUSTER SETTING kv.rangefeed.enabled = true")
+	stmt := fmt.Sprintf(`CREATE EXTERNAL CONNECTION kafka_sink AS '%s'`, uri)
 	sqlDB.ExpectErr(t, "", stmt)
+	sqlDB.ExpectErr(t, "", `CREATE CHANGEFEED FOR TABLE foo INTO 'external://kafka_sink' WITH resolved`)
 }
 
 func registerCDC(r registry.Registry) {
