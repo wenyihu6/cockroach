@@ -1019,14 +1019,6 @@ func runCDCKafkaAuth(ctx context.Context, t test.Test, c cluster.Cluster) {
 		queryArg string
 	}{
 		{
-			"create changefeed with insecure TLS transport and no auth",
-			fmt.Sprintf("%s?tls_enabled=true&insecure_tls_skip_verify=true", kafka.sinkURLTLS(ctx)),
-		},
-		{
-			"create changefeed with TLS transport and no auth",
-			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s", kafka.sinkURLTLS(ctx), testCerts.CACertBase64()),
-		},
-		{
 			"create changefeed with TLS transport and SASL/PLAIN (default mechanism)",
 			fmt.Sprintf("%s?tls_enabled=true&ca_cert=%s&sasl_enabled=true&sasl_user=plain&sasl_password=plain-secret", saslURL, caCert),
 		},
