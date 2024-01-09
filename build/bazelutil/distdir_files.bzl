@@ -194,7 +194,6 @@ DISTDIR_FILES = {
     "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/SAP/go-hdb/com_github_sap_go_hdb-v0.14.1.zip": "273de28a254c39e9f24293b864c1d664488e4a5d44d535755a5e5b68ae7eed8d",
     "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/Shopify/goreferrer/com_github_shopify_goreferrer-v0.0.0-20220729165902-8cddb4f5de06.zip": "280a2f55812e8b475cfd9d467a3b3d5859315788e68592a8fc5d6cedadc0503f",
     "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/Shopify/logrus-bugsnag/com_github_shopify_logrus_bugsnag-v0.0.0-20171204204709-577dee27f20d.zip": "a4cc3fa4b7b493b36b96ea035caa7afcf7307b0c4efc5e523a46597e171b95ce",
-    "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/Shopify/sarama/com_github_shopify_sarama-v1.22.2-0.20190604114437-cd910a683f9f.zip": "ca251ac94fc78893afd2c2debf9ae061223ff4cb174daa508e2b0146f66de40e",
     "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/Shopify/toxiproxy/com_github_shopify_toxiproxy-v2.1.4+incompatible.zip": "9427e70698ee6a906904dfa0652624f640619acef40652a1e5490e13b31e7f61",
     "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/TomiHiltunen/geohash-golang/com_github_tomihiltunen_geohash_golang-v0.0.0-20150112065804-b3e4e625abfb.zip": "508c58cbcd4d2cec576cfd3450077413ba31cac31f825d8660d8d11c783501a0",
     "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/VividCortex/ewma/com_github_vividcortex_ewma-v1.1.1.zip": "eebee7c0f20e96abbda1611ed2a3d26b4c2c10393caa6a2dfd1605763a5c1a12",

@@ -7875,6 +7875,14 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_shopify_sarama",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/Shopify/sarama",
+        # TODO: mirror this repo (to fix, run `./dev generate bazel --mirror`)
+        sum = "h1:SgZvxOvp9NLnAjkIiby0LQgXH0yQNTk2eDzbYPVoTA4=",
+        version = "v1.22.2-0.20190604114437-cd910a683f9f",
+    )
+    go_repository(
         name = "com_github_shopify_toxiproxy",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/Shopify/toxiproxy",
