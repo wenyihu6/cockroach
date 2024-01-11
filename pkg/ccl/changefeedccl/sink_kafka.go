@@ -36,6 +36,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/logtags"
+	"github.com/rcrowley/go-metrics"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/clientcredentials"
 )
@@ -1090,6 +1091,7 @@ func buildKafkaConfig(
 	config.Producer.Partitioner = newChangefeedPartitioner
 	// Do not fetch metadata for all topics but just for the necessary ones.
 	config.Metadata.Full = false
+	config.MetricRegistry = newMetricsRegistryInterceptor()
 
 	if dialConfig.tlsEnabled {
 		config.Net.TLS.Enable = true
@@ -1233,4 +1235,29 @@ func (s *kafkaStats) String() string {
 		atomic.LoadInt64(&s.outstandingBytes),
 		atomic.LoadInt64(&s.largestMessageSize),
 	)
+}
+
+type metricsRegistryInterceptor struct {
+	metrics.Registry
+	// do we want to implement the histogram interface so that it gets called when update is called
+	throttleTimeMs metrics.Histogram
+}
+
+var _ metrics.Registry = (*metricsRegistryInterceptor)(nil)
+
+func newMetricsRegistryInterceptor() *metricsRegistryInterceptor {
+	return &metricsRegistryInterceptor{
+		Registry:       metrics.NewRegistry(),
+		// TODO: make a way to pass cdc histogram down here?
+		throttleTimeMs: ,
+	}
+}
+
+func (mri *metricsRegistryInterceptor) GetOrRegister(name string, i interface{}) interface{} {
+	const throttleTimeMsMetricsPrefix = "throttle-time-in-ms"
+	if strings.HasPrefix(name, throttleTimeMsMetricsPrefix) {
+		return mri.throttleTimeMs
+	} else {
+		return mri.Registry.GetOrRegister(name, i)
+	}
 }

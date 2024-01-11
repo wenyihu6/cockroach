@@ -47,6 +47,7 @@ const defaultSLIScope = "default"
 // AggMetrics are aggregated metrics keeping track of aggregated changefeed performance
 // indicators, combined with a limited number of per-changefeed indicators.
 type AggMetrics struct {
+	ThrottlingTimeMs            *aggmetric.AggHistogram
 	EmittedMessages             *aggmetric.AggCounter
 	EmittedBatchSizes           *aggmetric.AggHistogram
 	FilteredMessages            *aggmetric.AggCounter
@@ -116,6 +117,7 @@ func (a *AggMetrics) MetricStruct() {}
 
 // sliMetrics holds all SLI related metrics aggregated into AggMetrics.
 type sliMetrics struct {
+	ThrottlingTimeMs            *aggmetric.Histogram
 	EmittedMessages             *aggmetric.Counter
 	EmittedBatchSizes           *aggmetric.Histogram
 	FilteredMessages            *aggmetric.Counter
@@ -548,6 +550,13 @@ func newAggregateMetrics(histogramWindow time.Duration) *AggMetrics {
 		Measurement: "Messages",
 		Unit:        metric.Unit_COUNT,
 	}
+	metaThrottleTimeInMs := metric.Metadata{
+		// TODO(wenyihu): add ms to ns conversion
+		Name:        "changefeed.throttle_time_in_ms",
+		Help:        "Throttling tims spent in ms due to kafka quota",
+		Measurement: "Milliseconds",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
 	metaChangefeedEmittedBatchSizes := metric.Metadata{
 		Name:        "changefeed.emitted_batch_sizes",
 		Help:        "Size of batches emitted emitted by all feeds",
@@ -736,6 +745,13 @@ func newAggregateMetrics(histogramWindow time.Duration) *AggMetrics {
 	// retain significant figures of 2.
 	b := aggmetric.MakeBuilder("scope")
 	a := &AggMetrics{
+		ThrottlingTimeMs: b.Histogram(metric.HistogramOptions{
+			Metadata:     metaThrottleTimeInMs,
+			Duration:     histogramWindow,
+			MaxVal:       16e6, // TODO(wenyihu): check the options here
+			SigFigs:      1,
+			BucketConfig: metric.DataCount16MBuckets,
+		}),
 		ErrorRetries:    b.Counter(metaChangefeedErrorRetries),
 		EmittedMessages: b.Counter(metaChangefeedEmittedMessages),
 		EmittedBatchSizes: b.Histogram(metric.HistogramOptions{
@@ -851,6 +867,7 @@ func (a *AggMetrics) getOrCreateScope(scope string) (*sliMetrics, error) {
 	}
 
 	sm := &sliMetrics{
+		ThrottlingTimeMs:            a.ThrottlingTimeMs.AddChild(scope),
 		EmittedMessages:             a.EmittedMessages.AddChild(scope),
 		EmittedBatchSizes:           a.EmittedBatchSizes.AddChild(scope),
 		FilteredMessages:            a.FilteredMessages.AddChild(scope),
