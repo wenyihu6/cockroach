@@ -560,6 +560,11 @@ func (s *kafkaSink) workerLoop() {
 			return
 		case m := <-s.producer.Successes():
 			ackMsg = m
+			if ackMsg != nil {
+				log.Infof(s.ctx, "ackMsg is not nil: %v", ackMsg)
+			} else {
+				log.Info(s.ctx, "ackMsg is not nil")
+			}
 		case err := <-s.producer.Errors():
 			ackMsg, ackError = err.Msg, err.Err
 			if ackError != nil {
@@ -571,6 +576,9 @@ func (s *kafkaSink) workerLoop() {
 						"while sending message with key=%s, size=%d, stats=%s",
 						err.Msg.Key, err.Msg.Key.Length()+err.Msg.Value.Length(), s.stats.String())
 				}
+				log.Infof(s.ctx, "ackError is not nil: %v", ackError.Error())
+			} else {
+				log.Info(s.ctx, "ackError is not nil")
 			}
 		}
 
