@@ -4527,11 +4527,9 @@ def go_deps():
         name = "com_github_ibm_sarama",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/IBM/sarama",
-        sha256 = "8d4bc76db8c94cd58f8ccb962892bab41d373623296cf18e5df7117bf3ec0546",
-        strip_prefix = "github.com/IBM/sarama@v1.42.1",
-        urls = [
-            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/IBM/sarama/com_github_ibm_sarama-v1.42.1.zip",
-        ],
+        vcs = "git",
+        remote = "https://github.com/wenyihu6/sarama.git",  # Custom fork.
+        commit = "4a49bc7f29e656b58abcd6f572b65138851a71a6",  # Custom commit.
     )
     go_repository(
         name = "com_github_icrowley_fake",
