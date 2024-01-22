@@ -32,6 +32,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/bufalloc"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/metric/aggmetric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
@@ -1087,7 +1088,10 @@ func buildConfluentKafkaConfig(u sinkURL) (kafkaDialConfig, error) {
 }
 
 func buildKafkaConfig(
-	ctx context.Context, u sinkURL, jsonStr changefeedbase.SinkSpecificJSONConfig,
+	ctx context.Context,
+	u sinkURL,
+	jsonStr changefeedbase.SinkSpecificJSONConfig,
+	throttleTimeMs *aggmetric.Histogram,
 ) (*sarama.Config, error) {
 	dialConfig, err := buildDialConfig(u)
 	if err != nil {
@@ -1099,7 +1103,7 @@ func buildKafkaConfig(
 	config.Producer.Partitioner = newChangefeedPartitioner
 	// Do not fetch metadata for all topics but just for the necessary ones.
 	config.Metadata.Full = false
-	config.MetricRegistry = newMetricsRegistryInterceptor()
+	config.MetricRegistry = newMetricsRegistryInterceptor(throttleTimeMs)
 
 	if dialConfig.tlsEnabled {
 		config.Net.TLS.Enable = true
@@ -1186,7 +1190,8 @@ func makeKafkaSink(
 		return nil, errors.Errorf(`%s is not yet supported`, changefeedbase.SinkParamSchemaTopic)
 	}
 
-	config, err := buildKafkaConfig(ctx, u, jsonStr)
+	m := mb(requiresResourceAccounting)
+	config, err := buildKafkaConfig(ctx, u, jsonStr, m.getThrottlingMetrics())
 	if err != nil {
 		return nil, err
 	}
@@ -1205,7 +1210,7 @@ func makeKafkaSink(
 		ctx:                  ctx,
 		kafkaCfg:             config,
 		bootstrapAddrs:       u.Host,
-		metrics:              mb(requiresResourceAccounting),
+		metrics:              m,
 		topics:               topics,
 		disableInternalRetry: !internalRetryEnabled,
 	}
@@ -1253,11 +1258,12 @@ type metricsRegistryInterceptor struct {
 
 var _ metrics.Registry = (*metricsRegistryInterceptor)(nil)
 
-func newMetricsRegistryInterceptor() *metricsRegistryInterceptor {
+func newMetricsRegistryInterceptor(
+	throttleTimeMs *aggmetric.Histogram,
+) *metricsRegistryInterceptor {
 	return &metricsRegistryInterceptor{
 		Registry:       metrics.NewRegistry(),
-		// TODO: make a way to pass cdc histogram down here?
-		throttleTimeMs: ,
+		throttleTimeMs: throttleTimeMs,
 	}
 }
 

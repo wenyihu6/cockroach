@@ -107,6 +107,7 @@ type metricsRecorder interface {
 	newParallelIOMetricsRecorder() parallelIOMetricsRecorder
 	recordSinkIOInflightChange(int64)
 	makeCloudstorageFileAllocCallback() func(delta int64)
+	getThrottlingMetrics() *aggmetric.Histogram
 }
 
 var _ metricsRecorder = (*sliMetrics)(nil)
@@ -327,6 +328,13 @@ func (m *sliMetrics) recordSizeBasedFlush() {
 	m.SizeBasedFlushes.Inc(1)
 }
 
+func (m *sliMetrics) getThrottlingMetrics() *aggmetric.Histogram {
+	if m != nil {
+		return m.ThrottlingTimeMs
+	}
+	return nil
+}
+
 type parallelIOMetricsRecorder interface {
 	recordPendingQueuePush(numKeys int64)
 	recordPendingQueuePop(numKeys int64, latency time.Duration)
@@ -470,6 +478,10 @@ func (w *wrappingCostController) recordSinkIOInflightChange(delta int64) {
 
 func (w *wrappingCostController) newParallelIOMetricsRecorder() parallelIOMetricsRecorder {
 	return w.inner.newParallelIOMetricsRecorder()
+}
+
+func (w *wrappingCostController) getThrottlingMetrics() *aggmetric.Histogram {
+	return w.inner.getThrottlingMetrics()
 }
 
 var (

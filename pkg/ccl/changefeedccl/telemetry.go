@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/log/eventpb"
+	"github.com/cockroachdb/cockroach/pkg/util/metric/aggmetric"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
@@ -214,6 +215,10 @@ func (r *telemetryMetricsRecorder) recordSinkIOInflightChange(delta int64) {
 
 func (r *telemetryMetricsRecorder) newParallelIOMetricsRecorder() parallelIOMetricsRecorder {
 	return r.inner.newParallelIOMetricsRecorder()
+}
+
+func (r *telemetryMetricsRecorder) getThrottlingMetrics() *aggmetric.Histogram {
+	return r.inner.getThrottlingMetrics()
 }
 
 // continuousTelemetryInterval determines the interval at which each node emits telemetry events
