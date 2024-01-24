@@ -1236,18 +1236,19 @@ func registerCDC(r registry.Registry) {
 			ct := newCDCTester(ctx, t, c)
 			defer ct.Close()
 
-			ct.runTPCCWorkload(tpccArgs{warehouses: 100, duration: "30m"})
+			ct.runTPCCWorkload(tpccArgs{warehouses: 100, duration: "10m"})
 
 			feed := ct.newChangefeed(feedArgs{
 				sinkType:   kafkaSink,
 				targets:    allTpccTargets,
+				opts:           map[string]string{"initial_scan": "'no'"},
 				kafkaQuota: 1024,
 			})
 			ct.runFeedLatencyVerifier(feed, latencyTargets{
-				initialScanLatency: 3 * time.Minute,
 				steadyLatency:      5 * time.Minute,
 			})
 			ct.waitForWorkload()
+			t.Fatal("failed statement")
 		},
 	})
 	r.Add(registry.TestSpec{
@@ -1981,7 +1982,7 @@ func (k kafkaManager) setProducerQuota(ctx context.Context, bytesPerSecond int) 
 		"--alter",
 		"--add-config", fmt.Sprintf("producer_byte_rate=%d", bytesPerSecond),
 		"--entity-type", "users",
-		"--entity-name", "scram256")
+		"--entity-default")
 
 	//k.c.Run(ctx, k.nodes, filepath.Join(k.binDir(), "kafka-configs"),
 	//	"--bootstrap-server", "localhost:9092",

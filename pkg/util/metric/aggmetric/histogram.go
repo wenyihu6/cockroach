@@ -199,5 +199,6 @@ func (g *Histogram) RecordValue(v int64) {
 }
 
 func (g *Histogram) Update(v int64) {
+	log.Infof("Update is called for updating throttling metrics with %v", v)
 	g.RecordValue(v)
 }

@@ -4529,7 +4529,7 @@ def go_deps():
         importpath = "github.com/IBM/sarama",
         vcs = "git",
         remote = "https://github.com/wenyihu6/sarama.git",  # Custom fork.
-        commit = "4a49bc7f29e656b58abcd6f572b65138851a71a6",  # Custom commit.
+        commit = "d8f1dee7204eb120db075509aa1a89db2deb10d4",  # Custom commit.
     )
     go_repository(
         name = "com_github_icrowley_fake",
