@@ -1182,7 +1182,13 @@ func makeKafkaSink(
 	}
 
 	m := mb(requiresResourceAccounting)
-	config, err := buildKafkaConfig(ctx, u, jsonStr, m.newKafkaMetricsGetter())
+	var config *sarama.Config
+	var err error
+	if m != nil {
+		config, err = buildKafkaConfig(ctx, u, jsonStr, m.newKafkaMetricsGetter())
+	} else {
+		config, err = buildKafkaConfig(ctx, u, jsonStr, m.newKafkaMetricsGetter())
+	}
 	if err != nil {
 		return nil, err
 	}
