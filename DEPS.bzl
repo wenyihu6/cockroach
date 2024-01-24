@@ -4527,9 +4527,9 @@ def go_deps():
         name = "com_github_ibm_sarama",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/IBM/sarama",
-        vcs = "git",
-        remote = "https://github.com/wenyihu6/sarama.git",  # Custom fork.
-        commit = "d8f1dee7204eb120db075509aa1a89db2deb10d4",  # Custom commit.
+        # TODO: mirror this repo (to fix, run `./dev generate bazel --mirror`)
+        sum = "h1:wugyWa15TDEHh2kvq2gAy1IHLjEjuYOYgXz/ruC/OSQ=",
+        version = "v1.42.1",
     )
     go_repository(
         name = "com_github_icrowley_fake",

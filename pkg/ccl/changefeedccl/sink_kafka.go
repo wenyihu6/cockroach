@@ -1090,7 +1090,7 @@ func buildKafkaConfig(
 	ctx context.Context,
 	u sinkURL,
 	jsonStr changefeedbase.SinkSpecificJSONConfig,
-	kafkaMetricsGetter kafkaMetricsGetter,
+	kafkaMetricsGetter KafkaMetricsGetter,
 ) (*sarama.Config, error) {
 	dialConfig, err := buildDialConfig(u)
 	if err != nil {
@@ -1190,7 +1190,7 @@ func makeKafkaSink(
 	}
 
 	m := mb(requiresResourceAccounting)
-	config, err := buildKafkaConfig(ctx, u, jsonStr, m.getKafkaMatrics())
+	config, err := buildKafkaConfig(ctx, u, jsonStr, m.newKafkaMetricsGetter())
 	if err != nil {
 		return nil, err
 	}

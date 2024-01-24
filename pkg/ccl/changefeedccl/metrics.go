@@ -108,8 +108,7 @@ type metricsRecorder interface {
 	newParallelIOMetricsRecorder() parallelIOMetricsRecorder
 	recordSinkIOInflightChange(int64)
 	makeCloudstorageFileAllocCallback() func(delta int64)
-	getThrottlingMetrics() *aggmetric.Histogram
-	getKafkaMatrics() kafkaMetricsGetter
+	newKafkaMetricsGetter() KafkaMetricsGetter
 }
 
 var _ metricsRecorder = (*sliMetrics)(nil)
@@ -330,17 +329,6 @@ func (m *sliMetrics) recordSizeBasedFlush() {
 	m.SizeBasedFlushes.Inc(1)
 }
 
-func (m *sliMetrics) getThrottlingMetrics() *aggmetric.Histogram {
-	if m != nil {
-		return m.ThrottlingTimeMs
-	}
-	return nil
-}
-
-type kafkaMetricsRecorder interface {
-	recordKafkaThrottlingTime(int64)
-}
-
 type kafkaHistogramAdapter struct {
 	wrapped *aggmetric.Histogram
 }
@@ -468,7 +456,7 @@ func (m *sliMetrics) newParallelIOMetricsRecorder() parallelIOMetricsRecorder {
 	}
 }
 
-func (m *sliMetrics) newKafkaMetricsGetter() kafkaMetricsGetter {
+func (m *sliMetrics) newKafkaMetricsGetter() KafkaMetricsGetter {
 	if m == nil {
 		return (*kafkaMetricsGetterImpl)(nil)
 	}
@@ -569,8 +557,8 @@ func (w *wrappingCostController) newParallelIOMetricsRecorder() parallelIOMetric
 	return w.inner.newParallelIOMetricsRecorder()
 }
 
-func (w *wrappingCostController) getThrottlingMetrics() *aggmetric.Histogram {
-	return w.inner.getThrottlingMetrics()
+func (w *wrappingCostController) newKafkaMetricsGetter() KafkaMetricsGetter {
+	return w.inner.newKafkaMetricsGetter()
 }
 
 var (

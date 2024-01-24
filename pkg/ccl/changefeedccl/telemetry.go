@@ -20,7 +20,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/log/eventpb"
-	"github.com/cockroachdb/cockroach/pkg/util/metric/aggmetric"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
@@ -217,8 +216,8 @@ func (r *telemetryMetricsRecorder) newParallelIOMetricsRecorder() parallelIOMetr
 	return r.inner.newParallelIOMetricsRecorder()
 }
 
-func (r *telemetryMetricsRecorder) getThrottlingMetrics() *aggmetric.Histogram {
-	return r.inner.getThrottlingMetrics()
+func (w *wrappingCostController) newKafkaMetricsGetter() KafkaMetricsGetter {
+	return w.inner.newKafkaMetricsGetter()
 }
 
 // continuousTelemetryInterval determines the interval at which each node emits telemetry events
