@@ -26,6 +26,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/metric/aggmetric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/rcrowley/go-metrics"
 )
 
 const (
@@ -108,6 +109,7 @@ type metricsRecorder interface {
 	recordSinkIOInflightChange(int64)
 	makeCloudstorageFileAllocCallback() func(delta int64)
 	getThrottlingMetrics() *aggmetric.Histogram
+	getKafkaMatrics() kafkaMetricsGetter
 }
 
 var _ metricsRecorder = (*sliMetrics)(nil)
@@ -335,6 +337,82 @@ func (m *sliMetrics) getThrottlingMetrics() *aggmetric.Histogram {
 	return nil
 }
 
+type kafkaMetricsRecorder interface {
+	recordKafkaThrottlingTime(int64)
+}
+
+type kafkaHistogramAdapter struct {
+	wrapped *aggmetric.Histogram
+}
+
+func (k *kafkaHistogramAdapter) Clear() {
+	panic("clear is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Count() int64 {
+	panic("count is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Max() int64 {
+	panic("max is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Mean() float64 {
+	panic("mean is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Min() int64 {
+	panic("min is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Percentile(float64) float64 {
+	panic("percentile is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Percentiles([]float64) []float64 {
+	panic("percentiles is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Sample() metrics.Sample {
+	panic("sample is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Snapshot() metrics.Histogram {
+	panic("snapshot is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) StdDev() float64 {
+	panic("stdDev is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Sum() int64 {
+	panic("sum is not expected to be called on kafkaHistogramAdapter")
+}
+
+func (k *kafkaHistogramAdapter) Variance() float64 {
+	panic("variance is not expected to be called on kafkaHistogramAdapter")
+}
+
+var _ metrics.Histogram = (*kafkaHistogramAdapter)(nil)
+
+func (k *kafkaHistogramAdapter) Update(v int64) {
+	if k != nil {
+		k.wrapped.RecordValue(v)
+	}
+}
+
+type KafkaMetricsGetter interface {
+	GetThrottlingTimeInMs() *kafkaHistogramAdapter
+}
+
+type kafkaMetricsGetterImpl struct {
+	throttlingTimeInMs *kafkaHistogramAdapter
+}
+
+func (kg *kafkaMetricsGetterImpl) GetThrottlingTimeInMs() *kafkaHistogramAdapter {
+	return kg.throttlingTimeInMs
+}
+
 type parallelIOMetricsRecorder interface {
 	recordPendingQueuePush(numKeys int64)
 	recordPendingQueuePop(numKeys int64, latency time.Duration)
@@ -387,6 +465,17 @@ func (m *sliMetrics) newParallelIOMetricsRecorder() parallelIOMetricsRecorder {
 		pendingRows:       m.ParallelIOPendingRows,
 		resultQueueNanos:  m.ParallelIOResultQueueNanos,
 		inFlight:          m.ParallelIOInFlightKeys,
+	}
+}
+
+func (m *sliMetrics) newKafkaMetricsGetter() kafkaMetricsGetter {
+	if m == nil {
+		return (*kafkaMetricsGetterImpl)(nil)
+	}
+	return &kafkaMetricsGetterImpl{
+		throttlingTimeInMs: &kafkaHistogramAdapter{
+			wrapped: m.ThrottlingTimeMs,
+		},
 	}
 }
 

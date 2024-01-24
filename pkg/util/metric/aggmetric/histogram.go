@@ -20,7 +20,6 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/google/btree"
 	prometheusgo "github.com/prometheus/client_model/go"
-	"github.com/rcrowley/go-metrics"
 )
 
 var now = timeutil.Now
@@ -165,13 +164,10 @@ func (a *AggHistogram) AddChild(labelVals ...string) *Histogram {
 // appear with a distinct label, however, when cockroach internally collects
 // metrics, only the parent is collected.
 type Histogram struct {
-	metrics.Histogram
 	parent *AggHistogram
 	labelValuesSlice
 	h metric.IHistogram
 }
-
-var _ metrics.Histogram = (*Histogram)(nil)
 
 // ToPrometheusMetric constructs a prometheus metric for this Histogram.
 func (g *Histogram) ToPrometheusMetric() *prometheusgo.Metric {
@@ -196,9 +192,4 @@ func (g *Histogram) RecordValue(v int64) {
 	defer g.parent.ticker.RUnlock()
 	g.h.RecordValue(v)
 	g.parent.h.RecordValue(v)
-}
-
-func (g *Histogram) Update(v int64) {
-	log.Infof("Update is called for updating throttling metrics with %v", v)
-	g.RecordValue(v)
 }

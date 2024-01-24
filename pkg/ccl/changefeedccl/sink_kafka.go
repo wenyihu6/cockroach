@@ -32,7 +32,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/bufalloc"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/cockroach/pkg/util/metric/aggmetric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
@@ -1091,7 +1090,7 @@ func buildKafkaConfig(
 	ctx context.Context,
 	u sinkURL,
 	jsonStr changefeedbase.SinkSpecificJSONConfig,
-	throttleTimeMs *aggmetric.Histogram,
+	kafkaMetricsGetter kafkaMetricsGetter,
 ) (*sarama.Config, error) {
 	dialConfig, err := buildDialConfig(u)
 	if err != nil {
@@ -1103,7 +1102,7 @@ func buildKafkaConfig(
 	config.Producer.Partitioner = newChangefeedPartitioner
 	// Do not fetch metadata for all topics but just for the necessary ones.
 	config.Metadata.Full = false
-	config.MetricRegistry = newMetricsRegistryInterceptor(throttleTimeMs)
+	config.MetricRegistry = newMetricsRegistryInterceptor(kafkaMetricsGetter)
 
 	if dialConfig.tlsEnabled {
 		config.Net.TLS.Enable = true
@@ -1191,7 +1190,7 @@ func makeKafkaSink(
 	}
 
 	m := mb(requiresResourceAccounting)
-	config, err := buildKafkaConfig(ctx, u, jsonStr, m.getThrottlingMetrics())
+	config, err := buildKafkaConfig(ctx, u, jsonStr, m.getKafkaMatrics())
 	if err != nil {
 		return nil, err
 	}
@@ -1258,12 +1257,10 @@ type metricsRegistryInterceptor struct {
 
 var _ metrics.Registry = (*metricsRegistryInterceptor)(nil)
 
-func newMetricsRegistryInterceptor(
-	throttleTimeMs *aggmetric.Histogram,
-) *metricsRegistryInterceptor {
+func newMetricsRegistryInterceptor(kafkaMetrics KafkaMetricsGetter) *metricsRegistryInterceptor {
 	return &metricsRegistryInterceptor{
 		Registry:       metrics.NewRegistry(),
-		throttleTimeMs: throttleTimeMs,
+		throttleTimeMs: kafkaMetrics.GetThrottlingTimeInMs(),
 	}
 }
 
