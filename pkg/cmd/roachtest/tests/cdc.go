@@ -1268,7 +1268,19 @@ func registerCDC(r registry.Registry) {
 				opts:       map[string]string{"initial_scan": "'no'"},
 				kafkaQuota: 1024,
 			})
+
+			feed2 := ct.newChangefeed(feedArgs{
+				sinkType:   kafkaSink,
+				targets:    allTpccTargets,
+				opts:       map[string]string{"initial_scan": "'no'"},
+				kafkaQuota: 1024,
+			})
+
 			ct.runFeedLatencyVerifier(feed, latencyTargets{
+				steadyLatency: 5 * time.Minute,
+			})
+
+			ct.runFeedLatencyVerifier(feed2, latencyTargets{
 				steadyLatency: 5 * time.Minute,
 			})
 			ct.waitForWorkload()
