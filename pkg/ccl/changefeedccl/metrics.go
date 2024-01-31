@@ -48,7 +48,7 @@ const defaultSLIScope = "default"
 // AggMetrics are aggregated metrics keeping track of aggregated changefeed performance
 // indicators, combined with a limited number of per-changefeed indicators.
 type AggMetrics struct {
-	ThrottlingTimeMs            *aggmetric.AggHistogram
+	KafkaThrottlingNanos        *aggmetric.AggHistogram
 	EmittedMessages             *aggmetric.AggCounter
 	EmittedBatchSizes           *aggmetric.AggHistogram
 	FilteredMessages            *aggmetric.AggCounter
@@ -119,7 +119,7 @@ func (a *AggMetrics) MetricStruct() {}
 
 // sliMetrics holds all SLI related metrics aggregated into AggMetrics.
 type sliMetrics struct {
-	ThrottlingTimeMs            *aggmetric.Histogram
+	KafkaThrottlingNanos        *aggmetric.Histogram
 	EmittedMessages             *aggmetric.Counter
 	EmittedBatchSizes           *aggmetric.Histogram
 	FilteredMessages            *aggmetric.Counter
@@ -337,6 +337,8 @@ var _ metrics.Histogram = (*kafkaHistogramAdapter)(nil)
 
 func (k *kafkaHistogramAdapter) Update(valueInMs int64) {
 	if k != nil {
+		// valueInMs is passed in from sarama with a unit of milliseconds. To
+		// convert this value to nanoseconds, valueInMs * 10^6 is recorded here.
 		k.wrapped.RecordValue(valueInMs * 1000000)
 	}
 }
@@ -390,18 +392,18 @@ func (k *kafkaHistogramAdapter) Variance() float64 {
 }
 
 type KafkaMetricsGetter interface {
-	GetThrottlingTimeInMs() *kafkaHistogramAdapter
+	GetKafkaThrottlingNanos() *kafkaHistogramAdapter
 }
 
 type kafkaMetricsGetterImpl struct {
-	throttlingTimeInMs *kafkaHistogramAdapter
+	kafkaThrottlingNanos *kafkaHistogramAdapter
 }
 
-func (kg *kafkaMetricsGetterImpl) GetThrottlingTimeInMs() *kafkaHistogramAdapter {
+func (kg *kafkaMetricsGetterImpl) GetKafkaThrottlingNanos() *kafkaHistogramAdapter {
 	if kg == nil {
 		return (*kafkaHistogramAdapter)(nil)
 	}
-	return kg.throttlingTimeInMs
+	return kg.kafkaThrottlingNanos
 }
 
 type parallelIOMetricsRecorder interface {
@@ -464,8 +466,8 @@ func (m *sliMetrics) newKafkaMetricsGetter() KafkaMetricsGetter {
 		return (*kafkaMetricsGetterImpl)(nil)
 	}
 	return &kafkaMetricsGetterImpl{
-		throttlingTimeInMs: &kafkaHistogramAdapter{
-			wrapped: m.ThrottlingTimeMs,
+		kafkaThrottlingNanos: &kafkaHistogramAdapter{
+			wrapped: m.KafkaThrottlingNanos,
 		},
 	}
 }
@@ -642,9 +644,9 @@ func newAggregateMetrics(histogramWindow time.Duration) *AggMetrics {
 		Measurement: "Messages",
 		Unit:        metric.Unit_COUNT,
 	}
-	metaThrottleTimeInMs := metric.Metadata{
-		Name:        "changefeed.throttle_time_in_ns",
-		Help:        "Throttling tims spent in ms due to kafka quota",
+	metaThrottleNanos := metric.Metadata{
+		Name:        "changefeed.throttle_time_nanos",
+		Help:        "Throttling tims spent in ns due to kafka quota",
 		Measurement: "Nanoseconds",
 		Unit:        metric.Unit_NANOSECONDS,
 	}
@@ -836,8 +838,8 @@ func newAggregateMetrics(histogramWindow time.Duration) *AggMetrics {
 	// retain significant figures of 2.
 	b := aggmetric.MakeBuilder("scope")
 	a := &AggMetrics{
-		ThrottlingTimeMs: b.Histogram(metric.HistogramOptions{
-			Metadata:     metaThrottleTimeInMs,
+		KafkaThrottlingNanos: b.Histogram(metric.HistogramOptions{
+			Metadata:     metaThrottleNanos,
 			Duration:     histogramWindow,
 			MaxVal:       16e6, // TODO(wenyihu): check the options here
 			SigFigs:      1,
@@ -958,7 +960,7 @@ func (a *AggMetrics) getOrCreateScope(scope string) (*sliMetrics, error) {
 	}
 
 	sm := &sliMetrics{
-		ThrottlingTimeMs:            a.ThrottlingTimeMs.AddChild(scope),
+		KafkaThrottlingNanos:        a.KafkaThrottlingNanos.AddChild(scope),
 		EmittedMessages:             a.EmittedMessages.AddChild(scope),
 		EmittedBatchSizes:           a.EmittedBatchSizes.AddChild(scope),
 		FilteredMessages:            a.FilteredMessages.AddChild(scope),

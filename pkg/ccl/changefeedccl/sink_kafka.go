@@ -1243,22 +1243,22 @@ func (s *kafkaStats) String() string {
 
 type metricsRegistryInterceptor struct {
 	metrics.Registry
-	throttleTimeMs metrics.Histogram
+	kafkaThrottlingNanos metrics.Histogram
 }
 
 var _ metrics.Registry = (*metricsRegistryInterceptor)(nil)
 
 func newMetricsRegistryInterceptor(kafkaMetrics KafkaMetricsGetter) *metricsRegistryInterceptor {
 	return &metricsRegistryInterceptor{
-		Registry:       metrics.NewRegistry(),
-		throttleTimeMs: kafkaMetrics.GetThrottlingTimeInMs(),
+		Registry:             metrics.NewRegistry(),
+		kafkaThrottlingNanos: kafkaMetrics.GetKafkaThrottlingNanos(),
 	}
 }
 
 func (mri *metricsRegistryInterceptor) GetOrRegister(name string, i interface{}) interface{} {
 	const throttleTimeMsMetricsPrefix = "throttle-time-in-ms"
 	if strings.HasPrefix(name, throttleTimeMsMetricsPrefix) {
-		return mri.throttleTimeMs
+		return mri.kafkaThrottlingNanos
 	} else {
 		return mri.Registry.GetOrRegister(name, i)
 	}
