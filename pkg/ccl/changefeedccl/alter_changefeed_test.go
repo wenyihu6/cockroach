@@ -626,7 +626,7 @@ func TestAlterChangefeedNewBug(t *testing.T) {
 
 		schemaReg := cdctest.StartTestSchemaRegistry()
 		defer schemaReg.Close()
-		str := fmt.Sprintf(`CREATE CHANGEFEED FOR TABLE test1 WITH OPTIONS (avro_schema_prefix = 'crdb_cdc_', confluent_schema_registry ="%s", diff, format = 'avro', on_error = 'pause', updated);`, schemaReg.URL())
+		str := fmt.Sprintf(`CREATE CHANGEFEED FOR TABLE test1 WITH OPTIONS (confluent_schema_registry ="%s", diff, format = 'avro', on_error = 'pause', updated);`, schemaReg.URL())
 		testFeed := feed(t, f, str)
 		defer closeFeed(t, testFeed)
 
