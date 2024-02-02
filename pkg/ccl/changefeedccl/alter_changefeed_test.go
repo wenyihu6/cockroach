@@ -615,6 +615,31 @@ func TestAlterChangefeedErrors(t *testing.T) {
 	cdcTest(t, testFn, feedTestEnterpriseSinks, feedTestNoExternalConnection)
 }
 
+func TestAlterChangefeedNewBug(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
+		sqlDB := sqlutils.MakeSQLRunner(s.DB)
+		sqlDB.Exec(t, `CREATE TABLE test1 (c1 INT PRIMARY KEY, c2 INT)`)
+		sqlDB.Exec(t, `INSERT INTO test1 VALUES (1,1),(2,2);`)
+
+		schemaReg := cdctest.StartTestSchemaRegistry()
+		defer schemaReg.Close()
+		str := fmt.Sprintf(`CREATE CHANGEFEED FOR TABLE test1 WITH OPTIONS (avro_schema_prefix = 'crdb_cdc_', confluent_schema_registry ="%s", diff, format = 'avro', on_error = 'pause', updated);`, schemaReg.URL())
+		testFeed := feed(t, f, str)
+		defer closeFeed(t, testFeed)
+
+		_, ok := testFeed.(cdctest.EnterpriseTestFeed)
+		require.True(t, ok)
+
+		sqlDB.Exec(t, `ALTER TABLE test1 ADD c3 DECIMAL(19,0);`)
+		sqlDB.Exec(t, `INSERT INTO test1 VALUES (3,3,100.1);`)
+	}
+
+	cdcTest(t, testFn, feedTestForceSink("kafka"))
+}
+
 func TestAlterChangefeedDropAllTargetsError(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
