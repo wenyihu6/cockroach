@@ -19,16 +19,13 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/ccl/changefeedccl/schemafeed"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
 	"github.com/cockroachdb/cockroach/pkg/multitenant"
-	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
-	"github.com/cockroachdb/cockroach/pkg/util/log/logcrash"
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/metric/aggmetric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/rcrowley/go-metrics"
 )
 
 const (
@@ -81,6 +78,7 @@ type AggMetrics struct {
 	LaggingRanges               *aggmetric.AggGauge
 	CloudstorageBufferedBytes   *aggmetric.AggGauge
 	KafkaThrottlingNanos        *aggmetric.AggHistogram
+	KafkaOutgoingBytes          *aggmetric.AggCounter
 
 	// There is always at least 1 sliMetrics created for defaultSLI scope.
 	mu struct {
@@ -111,7 +109,7 @@ type metricsRecorder interface {
 	newParallelIOMetricsRecorder() parallelIOMetricsRecorder
 	recordSinkIOInflightChange(int64)
 	makeCloudstorageFileAllocCallback() func(delta int64)
-	getKafkaThrottlingMetrics(*cluster.Settings) metrics.Histogram
+	newKafkaMetricsGetter() KafkaMetricsGetter
 }
 
 var _ metricsRecorder = (*sliMetrics)(nil)
@@ -152,6 +150,7 @@ type sliMetrics struct {
 	LaggingRanges               *aggmetric.Gauge
 	CloudstorageBufferedBytes   *aggmetric.Gauge
 	KafkaThrottlingNanos        *aggmetric.Histogram
+	KafkaOutgoingBytes          *aggmetric.Counter
 
 	mu struct {
 		syncutil.Mutex
@@ -332,78 +331,33 @@ func (m *sliMetrics) recordSizeBasedFlush() {
 	m.SizeBasedFlushes.Inc(1)
 }
 
-type kafkaHistogramAdapter struct {
-	settings *cluster.Settings
-	wrapped  *aggmetric.Histogram
+type KafkaMetricsGetter interface {
+	GetKafkaThrottlingNanos() *kafkaHistogramAdapter
+	GetKafkaOutgoingBytes() *kafkaMeterAdapter
 }
 
-var _ metrics.Histogram = (*kafkaHistogramAdapter)(nil)
+type kafkaMetricsGetterImpl struct {
+	kafkaThrottlingNanos  *kafkaHistogramAdapter
+	kafkaOutgoingByteRate *kafkaMeterAdapter
+}
 
-func (k *kafkaHistogramAdapter) Update(valueInMs int64) {
-	if k != nil {
-		// valueInMs is passed in from sarama with a unit of milliseconds. To
-		// convert this value to nanoseconds, valueInMs * 10^6 is recorded here.
-		k.wrapped.RecordValue(valueInMs * 1000000)
+func (kg *kafkaMetricsGetterImpl) GetKafkaOutgoingBytes() *kafkaMeterAdapter {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (kg *kafkaMetricsGetterImpl) GetKafkaThrottlingNanos() *kafkaHistogramAdapter {
+	if kg == nil {
+		return (*kafkaHistogramAdapter)(nil)
 	}
+	return kg.kafkaThrottlingNanos
 }
 
-func (k *kafkaHistogramAdapter) Clear() {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Sum on kafkaHistogramAdapter")
-}
-
-func (k *kafkaHistogramAdapter) Count() (_ int64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Count on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Max() (_ int64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Max on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Mean() (_ float64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Mean on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Min() (_ int64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Min on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Percentile(float64) (_ float64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Percentile on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Percentiles([]float64) (_ []float64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Percentiles on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Sample() (_ metrics.Sample) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Sample on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Snapshot() (_ metrics.Histogram) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Snapshot on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) StdDev() (_ float64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to StdDev on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Sum() (_ int64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Sum on kafkaHistogramAdapter")
-	return
-}
-
-func (k *kafkaHistogramAdapter) Variance() (_ float64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Variance on kafkaHistogramAdapter")
-	return
+func (kg *kafkaMetricsGetterImpl) GetKafkaOutgoingByteRate() *kafkaMeterAdapter {
+	if kg == nil {
+		return (*kafkaMeterAdapter)(nil)
+	}
+	return kg.kafkaOutgoingByteRate
 }
 
 type parallelIOMetricsRecorder interface {
@@ -461,13 +415,17 @@ func (m *sliMetrics) newParallelIOMetricsRecorder() parallelIOMetricsRecorder {
 	}
 }
 
-func (m *sliMetrics) getKafkaThrottlingMetrics(settings *cluster.Settings) metrics.Histogram {
+func (m *sliMetrics) newKafkaMetricsGetter() KafkaMetricsGetter {
 	if m == nil {
-		return (*kafkaHistogramAdapter)(nil)
+		return (*kafkaMetricsGetterImpl)(nil)
 	}
-	return &kafkaHistogramAdapter{
-		settings: settings,
-		wrapped:  m.KafkaThrottlingNanos,
+	return &kafkaMetricsGetterImpl{
+		kafkaThrottlingNanos: &kafkaHistogramAdapter{
+			wrapped: m.KafkaThrottlingNanos,
+		},
+		kafkaOutgoingByteRate: &kafkaMeterAdapter{
+			wrapped: m.KafkaOutgoingBytes,
+		},
 	}
 }
 
@@ -561,10 +519,8 @@ func (w *wrappingCostController) newParallelIOMetricsRecorder() parallelIOMetric
 	return w.inner.newParallelIOMetricsRecorder()
 }
 
-func (w *wrappingCostController) getKafkaThrottlingMetrics(
-	settings *cluster.Settings,
-) metrics.Histogram {
-	return w.inner.getKafkaThrottlingMetrics(settings)
+func (w *wrappingCostController) newKafkaMetricsGetter() KafkaMetricsGetter {
+	return w.inner.newKafkaMetricsGetter()
 }
 
 var (
@@ -824,6 +780,12 @@ func newAggregateMetrics(histogramWindow time.Duration) *AggMetrics {
 		Measurement: "Nanoseconds",
 		Unit:        metric.Unit_NANOSECONDS,
 	}
+	metaChangefeedKafkaOutgoingBytes := metric.Metadata{
+		Name:        "changefeed.kafka_outgoing_bytes",
+		Help:        "Number of bytes outgoing sent to kafka",
+		Measurement: "Bytes",
+		Unit:        metric.Unit_COUNT,
+	}
 
 	functionalGaugeMinFn := func(childValues []int64) int64 {
 		var min int64
@@ -923,6 +885,7 @@ func newAggregateMetrics(histogramWindow time.Duration) *AggMetrics {
 			SigFigs:      2,
 			BucketConfig: metric.BatchProcessLatencyBuckets,
 		}),
+		KafkaOutgoingBytes: b.Counter(metaChangefeedKafkaOutgoingBytes),
 	}
 	a.mu.sliMetrics = make(map[string]*sliMetrics)
 	_, err := a.getOrCreateScope(defaultSLIScope)
