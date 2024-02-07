@@ -423,7 +423,7 @@ func (m *sliMetrics) newKafkaMetricsGetter() KafkaMetricsGetter {
 		kafkaThrottlingNanos: &kafkaHistogramAdapter{
 			wrapped: m.KafkaThrottlingNanos,
 		},
-		kafkaOutgoingByteRate: &kafkaMeterAdapter{
+		kafkaOutgoingBytes: &kafkaMeterAdapter{
 			wrapped: m.KafkaOutgoingBytes,
 		},
 	}
@@ -952,6 +952,7 @@ func (a *AggMetrics) getOrCreateScope(scope string) (*sliMetrics, error) {
 		LaggingRanges:               a.LaggingRanges.AddChild(scope),
 		CloudstorageBufferedBytes:   a.CloudstorageBufferedBytes.AddChild(scope),
 		KafkaThrottlingNanos:        a.KafkaThrottlingNanos.AddChild(scope),
+		KafkaOutgoingBytes:          a.KafkaOutgoingBytes.AddChild(scope),
 	}
 	sm.mu.resolved = make(map[int64]hlc.Timestamp)
 	sm.mu.checkpoint = make(map[int64]hlc.Timestamp)
