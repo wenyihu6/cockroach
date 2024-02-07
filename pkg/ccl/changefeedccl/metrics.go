@@ -19,6 +19,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/ccl/changefeedccl/schemafeed"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
 	"github.com/cockroachdb/cockroach/pkg/multitenant"
+	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
@@ -109,7 +110,7 @@ type metricsRecorder interface {
 	newParallelIOMetricsRecorder() parallelIOMetricsRecorder
 	recordSinkIOInflightChange(int64)
 	makeCloudstorageFileAllocCallback() func(delta int64)
-	newKafkaMetricsGetter() KafkaMetricsGetter
+	newKafkaMetricsGetter(*cluster.Settings) KafkaMetricsGetter
 }
 
 var _ metricsRecorder = (*sliMetrics)(nil)
@@ -337,13 +338,15 @@ type KafkaMetricsGetter interface {
 }
 
 type kafkaMetricsGetterImpl struct {
-	kafkaThrottlingNanos  *kafkaHistogramAdapter
-	kafkaOutgoingByteRate *kafkaMeterAdapter
+	kafkaThrottlingNanos *kafkaHistogramAdapter
+	kafkaOutgoingBytes   *kafkaMeterAdapter
 }
 
 func (kg *kafkaMetricsGetterImpl) GetKafkaOutgoingBytes() *kafkaMeterAdapter {
-	//TODO implement me
-	panic("implement me")
+	if kg == nil {
+		return (*kafkaMeterAdapter)(nil)
+	}
+	return kg.kafkaOutgoingBytes
 }
 
 func (kg *kafkaMetricsGetterImpl) GetKafkaThrottlingNanos() *kafkaHistogramAdapter {
@@ -351,13 +354,6 @@ func (kg *kafkaMetricsGetterImpl) GetKafkaThrottlingNanos() *kafkaHistogramAdapt
 		return (*kafkaHistogramAdapter)(nil)
 	}
 	return kg.kafkaThrottlingNanos
-}
-
-func (kg *kafkaMetricsGetterImpl) GetKafkaOutgoingByteRate() *kafkaMeterAdapter {
-	if kg == nil {
-		return (*kafkaMeterAdapter)(nil)
-	}
-	return kg.kafkaOutgoingByteRate
 }
 
 type parallelIOMetricsRecorder interface {
@@ -415,16 +411,18 @@ func (m *sliMetrics) newParallelIOMetricsRecorder() parallelIOMetricsRecorder {
 	}
 }
 
-func (m *sliMetrics) newKafkaMetricsGetter() KafkaMetricsGetter {
+func (m *sliMetrics) newKafkaMetricsGetter(settings *cluster.Settings) KafkaMetricsGetter {
 	if m == nil {
 		return (*kafkaMetricsGetterImpl)(nil)
 	}
 	return &kafkaMetricsGetterImpl{
 		kafkaThrottlingNanos: &kafkaHistogramAdapter{
-			wrapped: m.KafkaThrottlingNanos,
+			wrapped:  m.KafkaThrottlingNanos,
+			settings: settings,
 		},
 		kafkaOutgoingBytes: &kafkaMeterAdapter{
-			wrapped: m.KafkaOutgoingBytes,
+			wrapped:  m.KafkaOutgoingBytes,
+			settings: settings,
 		},
 	}
 }
@@ -519,8 +517,10 @@ func (w *wrappingCostController) newParallelIOMetricsRecorder() parallelIOMetric
 	return w.inner.newParallelIOMetricsRecorder()
 }
 
-func (w *wrappingCostController) newKafkaMetricsGetter() KafkaMetricsGetter {
-	return w.inner.newKafkaMetricsGetter()
+func (w *wrappingCostController) newKafkaMetricsGetter(
+	settings *cluster.Settings,
+) KafkaMetricsGetter {
+	return w.inner.newKafkaMetricsGetter(settings)
 }
 
 var (

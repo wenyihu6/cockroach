@@ -1078,7 +1078,7 @@ func buildKafkaConfig(
 	ctx context.Context,
 	u sinkURL,
 	jsonStr changefeedbase.SinkSpecificJSONConfig,
-	kafkaThrottlingMetrics metrics.Histogram,
+	kafkaMetricsGetter KafkaMetricsGetter,
 ) (*sarama.Config, error) {
 	dialConfig, err := buildDialConfig(u)
 	if err != nil {
@@ -1089,7 +1089,7 @@ func buildKafkaConfig(
 	config.Producer.Partitioner = newChangefeedPartitioner
 	// Do not fetch metadata for all topics but just for the necessary ones.
 	config.Metadata.Full = false
-	config.MetricRegistry = newMetricsRegistryInterceptor(kafkaThrottlingMetrics)
+	config.MetricRegistry = newMetricsRegistryInterceptor(kafkaMetricsGetter)
 
 	if dialConfig.tlsEnabled {
 		config.Net.TLS.Enable = true
@@ -1185,7 +1185,7 @@ func makeKafkaSink(
 	}
 
 	m := mb(requiresResourceAccounting)
-	config, err := buildKafkaConfig(ctx, u, jsonStr, m.getKafkaThrottlingMetrics(settings))
+	config, err := buildKafkaConfig(ctx, u, jsonStr, m.newKafkaMetricsGetter(settings))
 	if err != nil {
 		return nil, err
 	}
@@ -1247,14 +1247,18 @@ func (s *kafkaStats) String() string {
 type metricsRegistryInterceptor struct {
 	metrics.Registry
 	kafkaThrottlingNanos metrics.Histogram
+	kafkaOutgoingBytes   metrics.Meter
 }
 
 var _ metrics.Registry = (*metricsRegistryInterceptor)(nil)
 
-func newMetricsRegistryInterceptor(kafkaMetrics metrics.Histogram) *metricsRegistryInterceptor {
+func newMetricsRegistryInterceptor(
+	kafkaMetricsGetter KafkaMetricsGetter,
+) *metricsRegistryInterceptor {
 	return &metricsRegistryInterceptor{
 		Registry:             metrics.NewRegistry(),
-		kafkaThrottlingNanos: kafkaMetrics,
+		kafkaThrottlingNanos: kafkaMetricsGetter.GetKafkaThrottlingNanos(),
+		kafkaOutgoingBytes:   kafkaMetricsGetter.GetKafkaOutgoingBytes(),
 	}
 }
 
@@ -1262,6 +1266,8 @@ func (mri *metricsRegistryInterceptor) GetOrRegister(name string, i interface{})
 	const throttleTimeMsMetricsPrefix = "throttle-time-in-ms"
 	if strings.HasPrefix(name, throttleTimeMsMetricsPrefix) {
 		return mri.kafkaThrottlingNanos
+	} else if name == "outgoing-byte-rate" {
+		return mri.kafkaOutgoingBytes
 	} else {
 		return mri.Registry.GetOrRegister(name, i)
 	}
