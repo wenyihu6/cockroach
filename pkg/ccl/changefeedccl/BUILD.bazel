@@ -19,6 +19,7 @@ go_library(
         "encoder_json.go",
         "event_processing.go",
         "metrics.go",
+        "metrics_kafka.go",
         "name.go",
         "parallel_io.go",
         "parquet.go",
