@@ -1,0 +1,3 @@
+drop_tenant_stmt ::=
+	'DROP' 'TENANT' tenant_spec opt_immediate
+	| 'DROP' 'TENANT' 'IF' 'EXISTS' tenant_spec opt_immediate
