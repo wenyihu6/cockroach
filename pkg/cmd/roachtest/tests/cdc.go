@@ -1328,7 +1328,7 @@ func registerCDC(r registry.Registry) {
 					"initial_scan":      "'no'",
 					"kafka_sink_config": `'{"ClientID": "quota2"}'`,
 				},
-				kafkaQuota: 1024,
+				kafkaQuotaBytesPerSec: 1024,
 			})
 			ct.runFeedLatencyVerifier(feed2, latencyTargets{
 				steadyLatency: 5 * time.Minute,
