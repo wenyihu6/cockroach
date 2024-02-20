@@ -104,7 +104,7 @@ func (k *kafkaMeterAdapter) Count() (_ int64) {
 }
 
 func (k *kafkaMeterAdapter) Mark(i int64) {
-	logcrash.ReportOrPanic(context.Background(), &k.settings.SV /*settings.Values*/, "unexpected call to Mark on kafkaMeterAdapter")
+	k.wrapped.Inc(i)
 }
 
 func (k *kafkaMeterAdapter) Rate1() (_ float64) {
