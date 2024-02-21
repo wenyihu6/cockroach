@@ -242,10 +242,8 @@ func (ct *cdcTester) setupSink(args feedArgs) string {
 		}
 		kafka.install(ct.ctx)
 		kafka.start(ct.ctx, "kafka")
-
-		if args.kafkaQuotaBytesPerSec > 0 {
-			kafka.setProducerQuota(ct.ctx, args.kafkaQuotaBytesPerSec)
-		}
+		// it doesn't work well with multiple changefeeds cuz we are starting over kafka nodes for different changefeeds
+		kafka.setProducerQuota(ct.ctx)
 
 		if args.kafkaChaos {
 			ct.mon.Go(func(ctx context.Context) error {
@@ -504,14 +502,13 @@ func makeDefaultFeatureFlags() cdcFeatureFlags {
 }
 
 type feedArgs struct {
-	sinkType              sinkType
-	targets               []string
-	opts                  map[string]string
-	kafkaChaos            bool
-	assumeRole            string
-	tolerateErrors        bool
-	sinkURIOverride       string
-	kafkaQuotaBytesPerSec int
+	sinkType        sinkType
+	targets         []string
+	opts            map[string]string
+	kafkaChaos      bool
+	assumeRole      string
+	tolerateErrors  bool
+	sinkURIOverride string
 	cdcFeatureFlags
 }
 
@@ -1314,7 +1311,6 @@ func registerCDC(r registry.Registry) {
 					// '{"Flush": {"MaxMessages": 1, "Frequency": "1s"}, "RequiredAcks": "ONE"}'
 					"kafka_sink_config": `'{"ClientID": "quota1"}'`,
 				},
-				kafkaQuotaBytesPerSec: 1024,
 			})
 			ct.runFeedLatencyVerifier(feed, latencyTargets{
 				steadyLatency: 5 * time.Minute,
@@ -1328,7 +1324,6 @@ func registerCDC(r registry.Registry) {
 					"initial_scan":      "'no'",
 					"kafka_sink_config": `'{"ClientID": "quota2"}'`,
 				},
-				kafkaQuotaBytesPerSec: 1024,
 			})
 			ct.runFeedLatencyVerifier(feed2, latencyTargets{
 				steadyLatency: 5 * time.Minute,
@@ -2091,22 +2086,23 @@ type kafkaManager struct {
 	useKafka2 bool
 }
 
-func (k kafkaManager) setProducerQuota(ctx context.Context, bytesPerSecond int) {
-	k.t.Status("setting producer quota to %d bytes per second for all users", bytesPerSecond)
+// if we are going to actually publish in PR refactor the code here for bytesPerSecond
+func (k kafkaManager) setProducerQuota(ctx context.Context) {
+	k.t.Status("setting producer quota")
 	//> bin/kafka-configs.sh  --bootstrap-server localhost:9092 --alter
 	// --add-config 'producer_byte_rate=1024,consumer_byte_rate=2048,request_percentage=200' --entity-type clients --entity-name clientA
 	//Updated config for entity: client-id 'clientA'.
 	k.c.Run(ctx, option.WithNodes(k.kafkaSinkNode), filepath.Join(k.binDir(), "kafka-configs"),
 		"--bootstrap-server", "localhost:9092",
 		"--alter",
-		"--add-config", fmt.Sprintf("producer_byte_rate=%d", bytesPerSecond),
+		"--add-config", "producer_byte_rate=1024",
 		"--entity-type", "clients",
 		"--entity-name", "quota1")
 
 	k.c.Run(ctx, option.WithNodes(k.kafkaSinkNode), filepath.Join(k.binDir(), "kafka-configs"),
 		"--bootstrap-server", "localhost:9092",
 		"--alter",
-		"--add-config", "producer_byte_rate=10000000",
+		"--add-config", "producer_byte_rate=100000000",
 		"--entity-type", "clients",
 		"--entity-name", "quota2")
 }
