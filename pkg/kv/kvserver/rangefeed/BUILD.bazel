@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "budget.go",
         "catchup_scan.go",
+        "event_size.go",
         "filter.go",
         "metrics.go",
         "processor.go",
