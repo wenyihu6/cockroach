@@ -180,6 +180,7 @@ func (p *ScheduledProcessor) processEvents(ctx context.Context) {
 				// data since registrations already have errors set.
 				p.consumeEvent(ctx, e)
 			}
+			e.alloc.AdjustMemUsage(ctx)
 			e.alloc.Release(ctx)
 			putPooledEvent(e)
 		default:
@@ -483,6 +484,7 @@ func (p *ScheduledProcessor) enqueueEventInternal(
 			}()
 		}
 	}
+	alloc.TrackUsage(ctx, &e, nil)
 	ev := getPooledEvent(e)
 	ev.alloc = alloc
 	if timeout == 0 {

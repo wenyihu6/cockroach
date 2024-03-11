@@ -13,13 +13,316 @@ package rangefeed
 import (
 	"context"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
+	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
+	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/mon"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMemoryAdjuster(t *testing.T) {
+	ctx := context.Background()
+	t.Run("empty initialization", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		require.Equal(t, int64(1000), a.allocated())
+		require.Equal(t, int64(1000), a.unusedMem())
+		require.Equal(t, int64(0), a.used)
+	})
+	t.Run("track usage", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 200)
+		require.Equal(t, int64(1000), a.allocated())
+		require.Equal(t, int64(800), a.unusedMem())
+		require.Equal(t, int64(200), a.used)
+	})
+	t.Run("free unused memory", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 200)
+		require.Equal(t, int64(1000), a.allocated())
+		require.Equal(t, int64(800), a.unusedMem())
+		require.Equal(t, int64(200), a.used)
+		a.free(ctx, a.unusedMem())                // should free 800
+		require.Equal(t, int64(0), a.unusedMem()) // 0 unused
+		require.Equal(t, int64(200), a.used)
+		require.Equal(t, int64(200), a.allocated())
+	})
+	t.Run("overused memory", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 1200)
+		require.Equal(t, int64(1000), a.allocated())
+		require.Equal(t, int64(0), a.unusedMem())
+		require.Equal(t, int64(1000), a.used) // overused but do not overflow used over the budget
+		a.free(ctx, a.unusedMem())
+		require.Equal(t, int64(0), a.unusedMem())
+		require.Equal(t, int64(1000), a.used)
+		require.Equal(t, int64(1000), a.allocated())
+	})
+	t.Run("overuse memory and free more than allocated", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 1200)
+		require.Equal(t, int64(1000), a.allocated())
+		require.Equal(t, int64(0), a.unusedMem())
+		require.Equal(t, int64(1000), a.used)
+		a.free(ctx, int64(1100)) // freed more than allocated, used should still be held
+		require.Equal(t, int64(1000), a.used)
+		require.Equal(t, int64(1000), a.allocated())
+		require.Equal(t, int64(0), a.unusedMem())
+	})
+	t.Run("overuse memory and free more than used and allocated", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 1200)
+		require.Equal(t, int64(0), a.unusedMem())
+		a.free(ctx, int64(1300)) // freed more than used and allocated
+		require.Equal(t, int64(0), a.unusedMem())
+		require.Equal(t, int64(1000), a.used)
+		require.Equal(t, int64(1000), a.allocated())
+	})
+	t.Run("free more than used but less than allocated", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 200)
+		require.Equal(t, int64(800), a.unusedMem())
+		a.free(ctx, int64(800))
+		require.Equal(t, int64(0), a.unusedMem())
+		require.Equal(t, int64(200), a.used)
+		require.Equal(t, int64(200), a.allocated())
+	})
+	t.Run("free less than allocated and used", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 200)
+		require.Equal(t, int64(800), a.unusedMem())
+		a.free(ctx, int64(100))
+		require.Equal(t, int64(700), a.unusedMem())
+		require.Equal(t, int64(200), a.used)
+		require.Equal(t, int64(900), a.allocated())
+	})
+	t.Run("nil handling", func(t *testing.T) {
+		var a *memoryAdjuster
+		require.NotPanics(t, func() { a.trackUsage(ctx, 100) })
+		require.NotPanics(t, func() { a.free(ctx, 100) })
+		require.NotPanics(t, func() { _ = a.unusedMem() })
+		require.NotPanics(t, func() { _ = a.allocated() })
+	})
+	t.Run("concurrent access handling for trackUsage", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		wg := sync.WaitGroup{}
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.trackUsage(ctx, 10)
+			}()
+		}
+		wg.Wait()
+		assert.Equal(t, int64(1000), a.used)
+	})
+	t.Run("concurrent access handling for unused", func(t *testing.T) {
+		a := newMemoryAdjuster(1000)
+		a.trackUsage(ctx, 200)
+		wg := sync.WaitGroup{}
+		unusedTotals := make(chan int64, 100)
+
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				unused := a.unusedMem()
+				unusedTotals <- unused
+			}()
+		}
+
+		wg.Wait()
+		close(unusedTotals)
+
+		for unused := range unusedTotals {
+			assert.Equal(t, int64(800), unused)
+		}
+	})
+	t.Run("concurrent access handling for free", func(t *testing.T) {
+		a := newMemoryAdjuster(1500)
+		a.trackUsage(ctx, 200) // 1300 unused
+		wg := sync.WaitGroup{}
+
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.free(ctx, 5)
+			}()
+		}
+
+		wg.Wait()
+		expectedFreed := 100 * 5
+		expectedAllocatedSize := int64(1500 - expectedFreed)
+		assert.Equal(t, expectedAllocatedSize, a.allocated())
+		assert.Equal(t, int64(200), a.used)
+		assert.Equal(t, expectedAllocatedSize-200, a.unusedMem())
+	})
+}
+
+func TestFeedBudgetMemoryAdjustment(t *testing.T) {
+	makeBudgetWithSize := func(poolSize, budgetSize int64) (
+		*FeedBudget, *mon.BytesMonitor, *mon.BoundAccount,
+	) {
+		m := mon.NewMonitor("rangefeed", mon.MemoryResource, nil, nil, 1, math.MaxInt64, nil)
+		m.Start(context.Background(), nil, mon.NewStandaloneBudget(poolSize))
+		b := m.MakeBoundAccount()
+
+		s := cluster.MakeTestingClusterSettings()
+		f := NewFeedBudget(&b, budgetSize, &s.SV)
+		return f, m, &b
+	}
+	ctx := context.Background()
+
+	t.Run("allocate and adjust memory usage", func(t *testing.T) {
+		f, _, b := makeBudgetWithSize(40, 0)
+		a, err := f.TryGet(ctx, 13)
+		require.NoError(t, err)
+		_, err = f.TryGet(ctx, 20)
+		require.NoError(t, err)
+		require.Equal(t, int64(33), b.Used())
+		a.AdjustMemUsage(ctx) // should free 13
+		require.Equal(t, int64(20), b.Used())
+	})
+
+	t.Run("track usage with event", func(t *testing.T) {
+		f, _, b := makeBudgetWithSize(10000, 0)
+		ev := event{ops: []enginepb.MVCCLogicalOp{
+			{
+				WriteValue: &enginepb.MVCCWriteValueOp{
+					Key:       roachpb.Key("/db1"),
+					Timestamp: hlc.Timestamp{WallTime: 10, Logical: 4},
+				},
+			},
+		}}
+		evMemUsage := ev.MemUsage()
+		// Check evMemUsage < 1000.
+		require.Greater(t, int64(1000), evMemUsage)
+		a, err := f.TryGet(ctx, int64(1000))
+		require.NoError(t, err)
+		a.TrackUsage(ctx, &ev, nil)
+		require.Equal(t, int64(1000), b.Used())
+		a.AdjustMemUsage(ctx) // free 1000-evMemUsage
+		require.Equal(t, evMemUsage, b.Used())
+	})
+
+	t.Run("overuse alloc", func(t *testing.T) {
+		f, _, b := makeBudgetWithSize(10000, 0)
+		ev := event{ops: []enginepb.MVCCLogicalOp{
+			{
+				WriteValue: &enginepb.MVCCWriteValueOp{
+					Key:       roachpb.Key("/db1"),
+					Timestamp: hlc.Timestamp{WallTime: 10, Logical: 4},
+				},
+			},
+		}}
+		evMemUsage := ev.MemUsage()
+		require.Less(t, int64(100), evMemUsage)
+
+		a, err := f.TryGet(ctx, 100)
+		require.NoError(t, err)
+
+		a.TrackUsage(ctx, &ev, nil) // overused by evMemUsage
+		a.AdjustMemUsage(ctx)       // should free 0
+		require.Equal(t, int64(100), b.Used())
+	})
+
+	t.Run("track usage with rangefeed event", func(t *testing.T) {
+		f, _, b := makeBudgetWithSize(10000, 0)
+		ev := event{ops: []enginepb.MVCCLogicalOp{
+			{
+				WriteValue: &enginepb.MVCCWriteValueOp{
+					Key:       roachpb.Key("/db1"),
+					Timestamp: hlc.Timestamp{WallTime: 10, Logical: 4},
+				},
+			},
+		}}
+		evMemUsage := ev.MemUsage()
+
+		var futureEvent kvpb.RangeFeedEvent
+		futureEvent.MustSetValue(&kvpb.RangeFeedValue{
+			Key: testKey,
+			Value: roachpb.Value{
+				Timestamp: testTxnTS,
+			},
+		})
+		futureEventMemUsage := RangefeedEventMemUsage(&futureEvent)
+		require.Greater(t, int64(600), evMemUsage+futureEventMemUsage)
+
+		a, err := f.TryGet(ctx, 600)
+		require.NoError(t, err)
+
+		a.TrackUsage(ctx, &ev, nil)
+		a.TrackUsage(ctx, nil, &futureEvent)
+		a.AdjustMemUsage(ctx) // should free 600-evMemUsage-futureEventMemUsage
+		require.Equal(t, evMemUsage+futureEventMemUsage, b.Used())
+	})
+	t.Run("concurrent access handling for TrackUsage", func(t *testing.T) {
+		f, _, b := makeBudgetWithSize(math.MaxInt64, 0)
+		a, err := f.TryGet(ctx, 1000000)
+		require.NoError(t, err)
+		ev := event{ops: []enginepb.MVCCLogicalOp{{WriteValue: &enginepb.MVCCWriteValueOp{}}}}
+		evMemUsage := ev.MemUsage()
+
+		var futureEvent kvpb.RangeFeedEvent
+		futureEvent.MustSetValue(&kvpb.RangeFeedValue{})
+		futureEventMemUsage := RangefeedEventMemUsage(&futureEvent)
+
+		wg := sync.WaitGroup{}
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.TrackUsage(ctx, &ev, nil)
+			}()
+
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.TrackUsage(ctx, nil, &futureEvent)
+			}()
+		}
+
+		wg.Wait()
+		require.Greater(t, int64(1000000), evMemUsage*100+futureEventMemUsage*100)
+		a.AdjustMemUsage(ctx) // should free 10000-evMemUsage*100-futureEventMemUsage*100
+		require.Equal(t, evMemUsage*100+futureEventMemUsage*100, b.Used())
+	})
+	t.Run("concurrent access handling for AdjustMemUsage", func(t *testing.T) {
+		f, _, b := makeBudgetWithSize(10000, 0)
+		ev := event{ops: []enginepb.MVCCLogicalOp{
+			{
+				WriteValue: &enginepb.MVCCWriteValueOp{
+					Key:       roachpb.Key("/db1"),
+					Timestamp: hlc.Timestamp{WallTime: 10, Logical: 4},
+				},
+			},
+		}}
+		evMemUsage := ev.MemUsage()
+		require.Greater(t, int64(600), evMemUsage)
+
+		a, err := f.TryGet(ctx, 600)
+		require.NoError(t, err)
+
+		a.TrackUsage(ctx, &ev, nil) // overused by evMemUsage
+		a.AdjustMemUsage(ctx)
+		wg := sync.WaitGroup{}
+		for i := 0; i < 100; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				a.AdjustMemUsage(ctx) // should free 600-evMemUsage*100
+			}()
+		}
+		require.Equal(t, evMemUsage, b.Used())
+	})
+}
 
 func TestFeedBudget(t *testing.T) {
 	makeBudgetWithSize := func(poolSize, budgetSize int64) (
@@ -76,13 +379,13 @@ func TestFeedBudget(t *testing.T) {
 			if err != nil {
 				result <- err
 			} else {
-				f.returnAllocation(ctx2, a.size)
+				f.returnAllocation(ctx2, a.memoryAdjuster.allocated())
 				result <- nil
 			}
 		}()
 		<-started
 		require.Equal(t, int64(30), b.Used(), "allocated budget")
-		f.returnAllocation(ctx, a1.size)
+		f.returnAllocation(ctx, a1.memoryAdjuster.allocated())
 		err = <-result
 		require.NoError(t, err)
 		require.Equal(t, int64(0), b.Used(), "used budget after free")
@@ -128,12 +431,12 @@ func TestFeedBudget(t *testing.T) {
 			if err != nil {
 				result <- err
 			} else {
-				f.returnAllocation(ctx, a.size)
+				f.returnAllocation(ctx, a.memoryAdjuster.allocated())
 				result <- nil
 			}
 		}()
 		<-started
-		f.returnAllocation(ctx, a1.size)
+		f.returnAllocation(ctx, a1.memoryAdjuster.allocated())
 		err = <-result
 		require.NoError(t, err, "waiting for budget with indefinite timeout")
 		require.Equal(t, int64(0), b.Used(), "used budget after free")
@@ -161,7 +464,7 @@ func TestFeedBudget(t *testing.T) {
 		err = <-result
 		require.NoError(t, err, "waiting for budget with indefinite timeout")
 
-		f.returnAllocation(ctx, a1.size)
+		f.returnAllocation(ctx, a1.memoryAdjuster.allocated())
 		require.Equal(t, int64(0), m.AllocBytes(), "used budget after free")
 	})
 

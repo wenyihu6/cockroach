@@ -106,7 +106,8 @@ func sstRangeFeedEvent(sst []byte, sstSpan roachpb.Span, sstWTS hlc.Timestamp) k
 }
 
 func (ct ctEvent) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
-	return rangefeedEventMemUsage(checkpointRangeFeedEvent(span, rts))
+	e := checkpointRangeFeedEvent(span, rts)
+	return RangefeedEventMemUsage(&e)
 }
 
 func (ct ctEvent) memUsage() int64 {
@@ -119,7 +120,8 @@ func (initRTS initRTSEvent) memUsage() int64 {
 
 func (initRTS initRTSEvent) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
 	// May or may not publish it
-	return rangefeedEventMemUsage(checkpointRangeFeedEvent(span, rts))
+	e := checkpointRangeFeedEvent(span, rts)
+	return RangefeedEventMemUsage(&e)
 }
 
 func (sst sstEvent) memUsage() int64 {
@@ -127,7 +129,8 @@ func (sst sstEvent) memUsage() int64 {
 }
 
 func (sst sstEvent) futureMemUsage() int64 {
-	return rangefeedEventMemUsage(sstRangeFeedEvent(sst.data, sst.span, sst.ts))
+	e := sstRangeFeedEvent(sst.data, sst.span, sst.ts)
+	return RangefeedEventMemUsage(&e)
 }
 
 func (sync syncEvent) memUsage() int64 {
@@ -143,13 +146,17 @@ func (ops opsEvent) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) in
 	for _, op := range ops {
 		switch t := op.GetValue().(type) {
 		case *enginepb.MVCCWriteValueOp:
-			futureMemUsage += rangefeedEventMemUsage(valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue))
+			e := valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue)
+			futureMemUsage += RangefeedEventMemUsage(&e)
 		case *enginepb.MVCCDeleteRangeOp:
-			futureMemUsage += rangefeedEventMemUsage(deleteRangeFeedEvent(t.StartKey, t.EndKey, t.Timestamp))
+			e := deleteRangeFeedEvent(t.StartKey, t.EndKey, t.Timestamp)
+			futureMemUsage += RangefeedEventMemUsage(&e)
 		case *enginepb.MVCCCommitIntentOp:
-			futureMemUsage += rangefeedEventMemUsage(valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue))
+			e := valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue)
+			futureMemUsage += RangefeedEventMemUsage(&e)
 		}
-		futureMemUsage += rangefeedEventMemUsage(checkpointRangeFeedEvent(span, rts))
+		e := checkpointRangeFeedEvent(span, rts)
+		futureMemUsage += RangefeedEventMemUsage(&e)
 	}
 	return futureMemUsage
 }
@@ -178,7 +185,7 @@ func (ops opsEvent) memUsage() int64 {
 	return currMemUsage
 }
 
-func rangefeedEventMemUsage(re kvpb.RangeFeedEvent) int64 {
+func RangefeedEventMemUsage(re *kvpb.RangeFeedEvent) int64 {
 	memUsage := futureEventBaseOverhead
 	switch re.GetValue().(type) {
 	case *kvpb.RangeFeedValue:

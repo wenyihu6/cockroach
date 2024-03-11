@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -175,7 +176,7 @@ func (f *FeedBudget) TryGet(ctx context.Context, amount int64) (*SharedBudgetAll
 	if err = f.mu.memBudget.Grow(ctx, amount); err != nil {
 		return nil, err
 	}
-	return getPooledBudgetAllocation(SharedBudgetAllocation{size: amount, refCount: 1, feed: f}), nil
+	return getPooledBudgetAllocation(NewSharedBudgetAllocation(f, amount)), nil
 }
 
 // WaitAndGet waits for replenish channel to return any allocations back to the
@@ -240,12 +241,96 @@ func (f *FeedBudget) Close(ctx context.Context) {
 	})
 }
 
+// memoryAdjuster helps in tracking and adjusting memory allocations and actual usage.
+type memoryAdjuster struct {
+	syncutil.Mutex
+	unused int64
+	used   int64
+}
+
+// newMemoryAdjuster creates a new memoryAdjuster with a specified initial
+// memory allocation.
+func newMemoryAdjuster(initialAllocatedSize int64) *memoryAdjuster {
+	return &memoryAdjuster{unused: initialAllocatedSize}
+}
+
+// trackUsage tracks the actual memory usage of the token. We expect that the
+// memory usage is under the token budget and should not exceed unused memory.
+func (ma *memoryAdjuster) trackUsage(ctx context.Context, memoryUsageIncrement int64) {
+	if ma == nil {
+		return
+	}
+	ma.Lock()
+	defer ma.Unlock()
+
+	if ma.unused >= memoryUsageIncrement {
+		// Go ahead and use the unused memory.
+		ma.used += memoryUsageIncrement
+		ma.unused -= memoryUsageIncrement
+	} else {
+		// Warn about inaccurate memory usage, but do not go negative.
+		log.VErrorf(ctx, 3, "memory allocated exceeded by %d bytes", -ma.unused)
+		ma.used += ma.unused
+		ma.unused = 0
+	}
+}
+
+// unused returns the amount of unused memory that could be freed to the budget.
+// Note that the caller is responsible for freeing up the memory to the feed.
+func (ma *memoryAdjuster) unusedMem() int64 {
+	if ma == nil {
+		return 0
+	}
+	ma.Lock()
+	defer ma.Unlock()
+	return ma.unused
+}
+
+// free should be called after returning the amount of unused memory to the
+// budget to update memoryAdjuster with new state. We expect tha the amount is
+// always the amount unused just returned.
+func (ma *memoryAdjuster) free(ctx context.Context, unusedAmount int64) {
+	if ma == nil {
+		return
+	}
+	ma.Lock()
+	defer ma.Unlock()
+	if unusedAmount > ma.unused {
+		// Warn about inaccurate memory usage but do not go negative.
+		log.VErrorf(ctx, 3, "internal error memory freed exceeded by %d bytes", -ma.unused)
+		ma.unused = 0
+	} else {
+		ma.unused -= unusedAmount
+	}
+}
+
+// allocated returns the total memory currently allocated.
+func (ma *memoryAdjuster) allocated() int64 {
+	if ma == nil {
+		return 0
+	}
+	ma.Lock()
+	defer ma.Unlock()
+	return ma.unused + ma.used
+}
+
 // SharedBudgetAllocation is a token that is passed around with range events
 // to registrations to maintain RangeFeed memory budget across shared queues.
 type SharedBudgetAllocation struct {
-	refCount int32
-	size     int64
-	feed     *FeedBudget
+	syncutil.Mutex
+	refCount       int32
+	memoryAdjuster *memoryAdjuster
+	feed           *FeedBudget
+}
+
+// NewSharedBudgetAllocation creates a new SharedBudgetAllocation with an
+// initial allocation.
+func NewSharedBudgetAllocation(feed *FeedBudget, amount int64) SharedBudgetAllocation {
+	return SharedBudgetAllocation{
+		refCount:       1,
+		memoryAdjuster: newMemoryAdjuster(amount),
+		feed:           feed,
+	}
 }
 
 // Use increases usage count for the allocation. It should be called by each
@@ -259,10 +344,44 @@ func (a *SharedBudgetAllocation) Use(ctx context.Context) {
 	}
 }
 
+// TrackUsage updates the memory usage of the allocation based on the event
+// received.
+func (a *SharedBudgetAllocation) TrackUsage(
+	ctx context.Context, ev *event, re *kvpb.RangeFeedEvent,
+) {
+	if a == nil {
+		return
+	}
+	a.Lock()
+	defer a.Unlock()
+	if ev != nil {
+		a.memoryAdjuster.trackUsage(ctx, ev.MemUsage())
+	}
+	if re != nil {
+		a.memoryAdjuster.trackUsage(ctx, RangefeedEventMemUsage(re))
+	}
+}
+
+// AdjustMemUsage checks for unused memory and returns it to the budget if any.
+func (a *SharedBudgetAllocation) AdjustMemUsage(ctx context.Context) {
+	if a == nil {
+		return
+	}
+	a.Lock()
+	defer a.Unlock()
+
+	if unused := a.memoryAdjuster.unusedMem(); unused > 0 {
+		a.feed.returnAllocation(ctx, unused)
+		a.memoryAdjuster.free(ctx, unused)
+	}
+}
+
 // Release decreases ref count and returns true if budget could be released.
 func (a *SharedBudgetAllocation) Release(ctx context.Context) {
 	if a != nil && atomic.AddInt32(&a.refCount, -1) == 0 {
-		a.feed.returnAllocation(ctx, a.size)
+		a.feed.returnAllocation(ctx, a.memoryAdjuster.allocated())
+		// No longer need to free memory for a.memoryAdjuster since we are putting a
+		// back to the pool.
 		putPooledBudgetAllocation(a)
 	}
 }
