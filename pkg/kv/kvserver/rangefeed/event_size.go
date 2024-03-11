@@ -14,7 +14,9 @@ import (
 	"unsafe"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
+	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
+	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
 const (
@@ -53,78 +55,179 @@ const (
 	syncEventOverhead = int64(unsafe.Sizeof(syncEvent{}))
 )
 
-func estimateCheckpointEventMemUsage() (futureMemUsage int64) {
-	// eventOverhead should have included the overhead of the ctEvent{} already.
-	// account for checkpoint event: it is possible that new checkpoint event is needed to be published, but we overaccount for now and release later on.
-	return futureEventBaseOverhead + rangefeedCheckpointOverhead
+func deleteRangeFeedEvent(
+	startKey, endKey roachpb.Key, timestamp hlc.Timestamp,
+) kvpb.RangeFeedEvent {
+	span := roachpb.Span{Key: startKey, EndKey: endKey}
+	var event kvpb.RangeFeedEvent
+	event.MustSetValue(&kvpb.RangeFeedDeleteRange{
+		Span:      span,
+		Timestamp: timestamp,
+	})
+	return event
 }
 
-func estimateSSTEventMemUsage() (currMemUsage, futureMemUsage int64) {
-	currMemUsage += sstEventOverhead
-	futureMemUsage += futureEventBaseOverhead + rangefeedSSTTableOverhead
-	return currMemUsage, futureMemUsage
+func valueRangeFeedEvent(
+	key roachpb.Key, timestamp hlc.Timestamp, value, prevValue []byte,
+) kvpb.RangeFeedEvent {
+	var prevVal roachpb.Value
+	if prevValue != nil {
+		prevVal.RawBytes = prevValue
+	}
+	var event kvpb.RangeFeedEvent
+	event.MustSetValue(&kvpb.RangeFeedValue{
+		Key: key,
+		Value: roachpb.Value{
+			RawBytes:  value,
+			Timestamp: timestamp,
+		},
+		PrevValue: prevVal,
+	})
+	return event
 }
 
-func estimateSyncEventMemUsage() (currMemUsage int64) {
+func checkpointRangeFeedEvent(span roachpb.RSpan, ts resolvedTimestamp) kvpb.RangeFeedEvent {
+	var event kvpb.RangeFeedEvent
+	event.MustSetValue(&kvpb.RangeFeedCheckpoint{
+		Span:       span.AsRawSpanWithNoLocals(),
+		ResolvedTS: ts.Get(),
+	})
+	return event
+}
+
+func sstRangeFeedEvent(sst []byte, sstSpan roachpb.Span, sstWTS hlc.Timestamp) kvpb.RangeFeedEvent {
+	var event kvpb.RangeFeedEvent
+	event.MustSetValue(&kvpb.RangeFeedSSTable{
+		Data:    sst,
+		Span:    sstSpan,
+		WriteTS: sstWTS,
+	})
+	return event
+}
+
+func (ct ctEvent) FutureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
+	return RangefeedEventMemUsage(checkpointRangeFeedEvent(span, rts))
+}
+
+func (ct ctEvent) MemUsage() int64 {
+	return 0
+}
+
+func (initRTS initRTSEvent) MemUsage() int64 {
+	return 0
+}
+
+func (initRTS initRTSEvent) FutureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
+	return RangefeedEventMemUsage(checkpointRangeFeedEvent(span, rts))
+}
+
+func (sst sstEvent) MemUsage() int64 {
+	return sstEventOverhead + int64(cap(sst.data)+(sst.span.Size()))
+}
+
+func (sst sstEvent) FutureMemUsage() int64 {
+	return RangefeedEventMemUsage(sstRangeFeedEvent(sst.data, sst.span, sst.ts))
+}
+
+func (sync syncEvent) MemUsage() int64 {
 	return syncEventOverhead
 }
 
-// can free more once we finish current
-func estimateOpsMemUsage(ops opsEvent, spanSize int64) (currMemUsage, futureMemUsage int64) {
-	// ops: []enginepb.MVCCLogicalOp
-	currMemUsage += mvccLogicalOp * int64(cap(ops))
-	// For each op, some probability to publish checkpoint
-	// TODO(wenyihu6): this memory is over-held if no checkpoint events and they
-	// should be separated out fromn the other events budget
-	futureMemUsage += estimateCheckpointEventMemUsage() * int64(len(ops))
-	for _, op := range ops {
-		// May publish checkpoint (add a probability) and adjust the budget
-		switch op.GetValue().(type) {
-		case *enginepb.MVCCWriteValueOp:
-			currMemUsage += mvccWriteValueOp + int64(op.Size())
-			futureMemUsage += futureEventBaseOverhead + rangefeedValueOverhead + int64(op.Size())
-		case *enginepb.MVCCDeleteRangeOp:
-			currMemUsage += mvccDeleteRangeOp + int64(op.Size())
-			futureMemUsage += futureEventBaseOverhead + rangefeedDeleteRangeOverhead + int64(op.Size())
-		case *enginepb.MVCCWriteIntentOp:
-			currMemUsage += mvccWriteIntentOp + int64(op.Size())
-			// No updates to publish.
-		case *enginepb.MVCCUpdateIntentOp:
-			currMemUsage += mvccUpdateIntentOp + int64(op.Size())
-			// No updates to publish.
-		case *enginepb.MVCCCommitIntentOp:
-			currMemUsage += mvccCommitIntentOp + int64(op.Size())
-			futureMemUsage += futureEventBaseOverhead + rangefeedValueOverhead + int64(op.Size())
-		case *enginepb.MVCCAbortIntentOp:
-			currMemUsage += mvccAbortIntentOp + int64(op.Size())
-			// No updates to publish.
-		case *enginepb.MVCCAbortTxnOp:
-			currMemUsage += mvccAbortTxnOp + int64(op.Size())
-			// No updates to publish.
-		}
-	}
-	return currMemUsage, futureMemUsage
+func (sync syncEvent) FutureMemUsage() int64 {
+	return 0
 }
 
-func estimateEventMemUsage(e event, spanSize int64) int64 {
-	currMemUsage, futureMemUsage := int64(0), int64(0)
+func (ops opsEvent) FutureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
+	futureMemUsage := (RangefeedEventMemUsage(checkpointRangeFeedEvent(span, rts))) * int64(len(ops))
+	for _, op := range ops {
+		// May publish checkpoint (add a probability) and adjust the budget
+		switch t := op.GetValue().(type) {
+		case *enginepb.MVCCWriteValueOp:
+			futureMemUsage += RangefeedEventMemUsage(valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue))
+		case *enginepb.MVCCDeleteRangeOp:
+			futureMemUsage += RangefeedEventMemUsage(deleteRangeFeedEvent(t.StartKey, t.EndKey, t.Timestamp))
+		case *enginepb.MVCCCommitIntentOp:
+			futureMemUsage += RangefeedEventMemUsage(valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue))
+		}
+	}
+	return futureMemUsage
+}
+
+func (ops opsEvent) MemUsage() int64 {
+	// ops: []enginepb.MVCCLogicalOp
+	currMemUsage := mvccLogicalOp * int64(cap(ops))
+	for _, op := range ops {
+		// May publish checkpoint (add a probability) and adjust the budget
+		currMemUsage += int64(op.Size())
+		switch op.GetValue().(type) {
+		case *enginepb.MVCCWriteValueOp:
+			currMemUsage += mvccWriteValueOp
+		case *enginepb.MVCCDeleteRangeOp:
+			currMemUsage += mvccDeleteRangeOp
+		case *enginepb.MVCCWriteIntentOp:
+			currMemUsage += mvccWriteIntentOp
+		case *enginepb.MVCCUpdateIntentOp:
+			currMemUsage += mvccUpdateIntentOp
+		case *enginepb.MVCCCommitIntentOp:
+			currMemUsage += mvccCommitIntentOp
+			// create a future event
+		case *enginepb.MVCCAbortIntentOp:
+			currMemUsage += mvccAbortIntentOp
+		case *enginepb.MVCCAbortTxnOp:
+			currMemUsage += mvccAbortTxnOp
+		}
+	}
+	return currMemUsage
+}
+
+func RangefeedEventMemUsage(re kvpb.RangeFeedEvent) int64 {
+	memUsage := futureEventBaseOverhead
+	switch re.GetValue().(type) {
+	case *kvpb.RangeFeedValue:
+		memUsage += rangefeedValueOverhead + int64(re.Size())
+	case *kvpb.RangeFeedDeleteRange:
+		memUsage += rangefeedDeleteRangeOverhead + int64(re.Size())
+	case *kvpb.RangeFeedSSTable:
+		memUsage += rangefeedSSTTableOverhead + int64(re.Size())
+	case *kvpb.RangeFeedCheckpoint:
+		memUsage += rangefeedCheckpointOverhead + int64(re.Size())
+	}
+	return memUsage
+}
+
+func (e *event) MemUsage() int64 {
+	currMemUsage := eventOverhead
 	switch {
 	case e.ops != nil:
-		currMemUsage, futureMemUsage = estimateOpsMemUsage(e.ops, spanSize)
+		currMemUsage += e.ops.MemUsage()
 	case !e.ct.IsEmpty():
 		// no current extra memory usage
-		futureMemUsage = estimateCheckpointEventMemUsage() + spanSize
 	case bool(e.initRTS):
 		// no current extra memory usage
 		// may publish checkpoint but we overaccount for now and release later on right after we know we dont need it.
-		futureMemUsage = estimateCheckpointEventMemUsage() + spanSize
 	case e.sst != nil:
-		underlyingDataSize := int64(len(e.sst.data)) + spanSize
-		currMemUsage, futureMemUsage = estimateSSTEventMemUsage()
-		currMemUsage += underlyingDataSize
-		futureMemUsage += underlyingDataSize
+		currMemUsage += e.sst.MemUsage()
 	case e.sync != nil:
-		currMemUsage = estimateSyncEventMemUsage()
+		currMemUsage += e.sync.MemUsage()
 	}
-	return max(currMemUsage+eventOverhead, futureMemUsage)
+	return currMemUsage
+}
+
+func (e *event) FutureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
+	switch {
+	case e.ops != nil:
+		return e.ops.FutureMemUsage(span, rts)
+	case !e.ct.IsEmpty():
+		// no current extra memory usage
+		return e.ct.FutureMemUsage(span, rts)
+	case bool(e.initRTS):
+		// no current extra memory usage
+		// may publish checkpoint but we overaccount for now and release later on right after we know we dont need it.
+		return e.initRTS.FutureMemUsage(span, rts)
+	case e.sst != nil:
+		return e.sst.FutureMemUsage()
+	case e.sync != nil:
+		return e.sync.FutureMemUsage()
+	}
+	return 0
 }
