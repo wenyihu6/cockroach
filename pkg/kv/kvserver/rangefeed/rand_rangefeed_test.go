@@ -249,6 +249,11 @@ func runBenchmarkRandomizedRangefeed(b *testing.B, opts benchmarkRangefeedOpts) 
 		require.True(b, ok)
 	}
 
+	f, ok := p.(*ScheduledProcessor)
+	require.True(b, ok)
+	f.sendEvent(ctx, &event{t: time.Now(), typ: eventCheckpoint}
+
+
 	// Wait for catchup scans and flush checkpoint events.
 	h.syncEventAndRegistrations()
 
