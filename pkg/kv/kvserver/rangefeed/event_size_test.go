@@ -284,94 +284,94 @@ func TestBasicEventSizeCalculation(t *testing.T) {
 	t.Run("empty_event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev := event{}
-		require.Equal(t, eventOverhead, ev.MemUsage())
-		require.Equal(t, int64(0), ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, eventOverhead, ev.currMemUsage())
+		require.Equal(t, int64(0), ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("write_value event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("write_value", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("delete_range event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("delete_range", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("write_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("write_intent", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("update_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("update_intent", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("commit_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("commit_intent", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("abort_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("abort_intent", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("abort_txn event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("abort_txn", testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("ct event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateCtEvent(testRSpan, rts, testNewClosedTs)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("initRTS event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		generateLogicalOpEvent("write_intent", testRSpan, rts)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateInitRTSEvent(testRSpan, rts)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("sst event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		sst, _, _ := storageutils.MakeSST(t, st, sstKVs)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateSSTEvent(sst)
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("sync event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateSyncEvent()
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 
 	t.Run("sync event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateSyncEvent()
-		require.Equal(t, expectedMemUsage, ev.MemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.FutureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedMemUsage, ev.currMemUsage())
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
 	})
 }
 

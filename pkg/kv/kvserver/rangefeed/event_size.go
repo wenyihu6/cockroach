@@ -55,7 +55,7 @@ const (
 	syncEventOverhead = int64(unsafe.Sizeof(syncEvent{}))
 )
 
-func deleteRangeFeedEvent(
+func newDeleteRangeFeedEvent(
 	startKey, endKey roachpb.Key, timestamp hlc.Timestamp,
 ) kvpb.RangeFeedEvent {
 	span := roachpb.Span{Key: startKey, EndKey: endKey}
@@ -67,7 +67,7 @@ func deleteRangeFeedEvent(
 	return event
 }
 
-func valueRangeFeedEvent(
+func newValueRangeFeedEvent(
 	key roachpb.Key, timestamp hlc.Timestamp, value, prevValue []byte,
 ) kvpb.RangeFeedEvent {
 	var prevVal roachpb.Value
@@ -86,7 +86,7 @@ func valueRangeFeedEvent(
 	return event
 }
 
-func checkpointRangeFeedEvent(span roachpb.RSpan, ts resolvedTimestamp) kvpb.RangeFeedEvent {
+func newCheckpointRangeFeedEvent(span roachpb.RSpan, ts resolvedTimestamp) kvpb.RangeFeedEvent {
 	var event kvpb.RangeFeedEvent
 	event.MustSetValue(&kvpb.RangeFeedCheckpoint{
 		Span:       span.AsRawSpanWithNoLocals(),
@@ -95,7 +95,9 @@ func checkpointRangeFeedEvent(span roachpb.RSpan, ts resolvedTimestamp) kvpb.Ran
 	return event
 }
 
-func sstRangeFeedEvent(sst []byte, sstSpan roachpb.Span, sstWTS hlc.Timestamp) kvpb.RangeFeedEvent {
+func newSSTRangeFeedEvent(
+	sst []byte, sstSpan roachpb.Span, sstWTS hlc.Timestamp,
+) kvpb.RangeFeedEvent {
 	var event kvpb.RangeFeedEvent
 	event.MustSetValue(&kvpb.RangeFeedSSTable{
 		Data:    sst,
@@ -106,34 +108,33 @@ func sstRangeFeedEvent(sst []byte, sstSpan roachpb.Span, sstWTS hlc.Timestamp) k
 }
 
 func (ct ctEvent) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
-	e := checkpointRangeFeedEvent(span, rts)
+	e := newCheckpointRangeFeedEvent(span, rts)
 	return RangefeedEventMemUsage(&e)
 }
 
-func (ct ctEvent) memUsage() int64 {
+func (ct ctEvent) currMemUsage() int64 {
 	return 0
 }
 
-func (initRTS initRTSEvent) memUsage() int64 {
+func (initRTS initRTSEvent) currMemUsage() int64 {
 	return 0
 }
 
 func (initRTS initRTSEvent) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
-	// May or may not publish it
-	e := checkpointRangeFeedEvent(span, rts)
+	e := newCheckpointRangeFeedEvent(span, rts)
 	return RangefeedEventMemUsage(&e)
 }
 
-func (sst sstEvent) memUsage() int64 {
+func (sst sstEvent) currMemUsage() int64 {
 	return sstEventOverhead + int64(cap(sst.data)+cap(sst.span.Key)+cap(sst.span.EndKey))
 }
 
 func (sst sstEvent) futureMemUsage() int64 {
-	e := sstRangeFeedEvent(sst.data, sst.span, sst.ts)
+	e := newSSTRangeFeedEvent(sst.data, sst.span, sst.ts)
 	return RangefeedEventMemUsage(&e)
 }
 
-func (sync syncEvent) memUsage() int64 {
+func (sync syncEvent) currMemUsage() int64 {
 	return syncEventOverhead
 }
 
@@ -146,22 +147,22 @@ func (ops opsEvent) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) in
 	for _, op := range ops {
 		switch t := op.GetValue().(type) {
 		case *enginepb.MVCCWriteValueOp:
-			e := valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue)
+			e := newValueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue)
 			futureMemUsage += RangefeedEventMemUsage(&e)
 		case *enginepb.MVCCDeleteRangeOp:
-			e := deleteRangeFeedEvent(t.StartKey, t.EndKey, t.Timestamp)
+			e := newDeleteRangeFeedEvent(t.StartKey, t.EndKey, t.Timestamp)
 			futureMemUsage += RangefeedEventMemUsage(&e)
 		case *enginepb.MVCCCommitIntentOp:
-			e := valueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue)
+			e := newValueRangeFeedEvent(t.Key, t.Timestamp, t.Value, t.PrevValue)
 			futureMemUsage += RangefeedEventMemUsage(&e)
 		}
-		e := checkpointRangeFeedEvent(span, rts)
+		e := newCheckpointRangeFeedEvent(span, rts)
 		futureMemUsage += RangefeedEventMemUsage(&e)
 	}
 	return futureMemUsage
 }
 
-func (ops opsEvent) memUsage() int64 {
+func (ops opsEvent) currMemUsage() int64 {
 	currMemUsage := mvccLogicalOp * int64(cap(ops))
 	for _, op := range ops {
 		currMemUsage += int64(op.Size())
@@ -186,38 +187,45 @@ func (ops opsEvent) memUsage() int64 {
 }
 
 func RangefeedEventMemUsage(re *kvpb.RangeFeedEvent) int64 {
-	memUsage := futureEventBaseOverhead
+	currMemUsage := futureEventBaseOverhead
 	switch re.GetValue().(type) {
 	case *kvpb.RangeFeedValue:
-		memUsage += rangefeedValueOverhead + int64(re.Size())
+		currMemUsage += rangefeedValueOverhead + int64(re.Size())
 	case *kvpb.RangeFeedDeleteRange:
-		memUsage += rangefeedDeleteRangeOverhead + int64(re.Size())
+		currMemUsage += rangefeedDeleteRangeOverhead + int64(re.Size())
 	case *kvpb.RangeFeedSSTable:
-		memUsage += rangefeedSSTTableOverhead + int64(re.Size())
+		currMemUsage += rangefeedSSTTableOverhead + int64(re.Size())
 	case *kvpb.RangeFeedCheckpoint:
-		memUsage += rangefeedCheckpointOverhead + int64(re.Size())
-	}
-	return memUsage
-}
-
-func (e *event) MemUsage() int64 {
-	currMemUsage := eventOverhead
-	switch {
-	case e.ops != nil:
-		currMemUsage += e.ops.memUsage()
-	case !e.ct.IsEmpty():
-		currMemUsage += e.ct.memUsage()
-	case bool(e.initRTS):
-		currMemUsage += e.initRTS.memUsage()
-	case e.sst != nil:
-		currMemUsage += e.sst.memUsage()
-	case e.sync != nil:
-		currMemUsage += e.sync.memUsage()
+		currMemUsage += rangefeedCheckpointOverhead + int64(re.Size())
 	}
 	return currMemUsage
 }
 
-func (e *event) FutureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
+// currMemUsage returns the current memory usage of event.
+func (e event) currMemUsage() int64 {
+	currMemUsage := eventOverhead
+	switch {
+	case e.ops != nil:
+		currMemUsage += e.ops.currMemUsage()
+	case !e.ct.IsEmpty():
+		currMemUsage += e.ct.currMemUsage()
+	case bool(e.initRTS):
+		currMemUsage += e.initRTS.currMemUsage()
+	case e.sst != nil:
+		currMemUsage += e.sst.currMemUsage()
+	case e.sync != nil:
+		currMemUsage += e.sync.currMemUsage()
+	}
+	return currMemUsage
+}
+
+// futureMemUsage returns the predicted memory usage created in the future by
+// event. Note that we are not sure if the checkpoint events will be published.
+// Our strategy is to overaccount since it will be released soon after
+// consumeEvent returns in processEvents and no other registrations have a
+// reference to alloc. We determine the future memory usage by following the
+// same code path and creating mock rangefeed events.
+func (e event) futureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 {
 	switch {
 	case e.ops != nil:
 		return e.ops.futureMemUsage(span, rts)
@@ -233,4 +241,8 @@ func (e *event) FutureMemUsage(span roachpb.RSpan, rts resolvedTimestamp) int64 
 		return e.sync.futureMemUsage()
 	}
 	return 0
+}
+
+func EventMemUsage(e event, span roachpb.RSpan, rts resolvedTimestamp) int64 {
+	return max(e.futureMemUsage(span, rts), e.currMemUsage())
 }
