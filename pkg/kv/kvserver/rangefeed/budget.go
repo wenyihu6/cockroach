@@ -241,7 +241,9 @@ func (f *FeedBudget) Close(ctx context.Context) {
 	})
 }
 
-// memoryAdjuster helps in tracking and adjusting memory allocations and actual usage.
+// memoryAdjuster helps in tracking actual usage and adjusting memory
+// allocations within SharedBudgetAllocation. We expect sum(unused,used) to
+// always equal to the total memory initially allocated.
 type memoryAdjuster struct {
 	syncutil.Mutex
 	unused int64
@@ -317,7 +319,6 @@ func (ma *memoryAdjuster) allocated() int64 {
 // SharedBudgetAllocation is a token that is passed around with range events
 // to registrations to maintain RangeFeed memory budget across shared queues.
 type SharedBudgetAllocation struct {
-	syncutil.Mutex
 	refCount       int32
 	memoryAdjuster *memoryAdjuster
 	feed           *FeedBudget
@@ -352,8 +353,6 @@ func (a *SharedBudgetAllocation) TrackUsage(
 	if a == nil {
 		return
 	}
-	a.Lock()
-	defer a.Unlock()
 	if ev != nil {
 		a.memoryAdjuster.trackUsage(ctx, ev.currMemUsage())
 	}
@@ -367,9 +366,9 @@ func (a *SharedBudgetAllocation) AdjustMemUsage(ctx context.Context) {
 	if a == nil {
 		return
 	}
-	a.Lock()
-	defer a.Unlock()
-
+	// TODO(wenyihu6): Make sure no mutex is fine here. Putting a mutext doesn't
+	// work because we need to putPooledSharedEvent + if we move memoryAdjuster to
+	// feed, we are just rewriting it for every alloca.
 	if unused := a.memoryAdjuster.unusedMem(); unused > 0 {
 		a.feed.returnAllocation(ctx, unused)
 		a.memoryAdjuster.free(ctx, unused)

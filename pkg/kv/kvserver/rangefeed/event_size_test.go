@@ -11,16 +11,23 @@
 package rangefeed
 
 import (
-	"fmt"
+	"math/rand"
 	"testing"
 
+	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency/isolation"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/sql/randgen"
+	"github.com/cockroachdb/cockroach/pkg/sql/rowenc/keyside"
+	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
+	"github.com/cockroachdb/cockroach/pkg/sql/types"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
 	"github.com/cockroachdb/cockroach/pkg/testutils/storageutils"
+	"github.com/cockroachdb/cockroach/pkg/util/encoding"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/cockroachdb/cockroach/pkg/util/uuid"
 	"github.com/stretchr/testify/require"
 )
@@ -36,14 +43,12 @@ var (
 	testTxnID          = uuid.MakeV4()
 	testIsolationLevel = isolation.Serializable
 	testTxnTS          = hlc.Timestamp{WallTime: 10, Logical: 4}
-	testNewClosedTs    = hlc.Timestamp{WallTime: 15}
-	testRSpan          = roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("z")}
 	testSpan           = roachpb.Span{Key: roachpb.Key("a"), EndKey: roachpb.Key("z")}
 	testTs             = hlc.Timestamp{WallTime: 1}
 	testStartKey       = roachpb.Key("a")
 	testEndKey         = roachpb.Key("z")
 	testValue          = []byte("1")
-	sstKVs             = kvs{
+	testSSTKVs         = kvs{
 		pointKV("a", 1, "1"),
 		pointKV("b", 1, "2"),
 		pointKV("c", 1, "3"),
@@ -51,20 +56,120 @@ var (
 	}
 )
 
-func writeValueOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	op = makeLogicalOp(&enginepb.MVCCWriteValueOp{
-		Key:       testKey,
-		Timestamp: testTxnTS,
-	})
+type testData struct {
+	kvs              []interface{}
+	span             roachpb.Span
+	key              roachpb.Key
+	timestamp        hlc.Timestamp
+	value            []byte
+	startKey, endKey roachpb.Key
+	txnID            uuid.UUID
+	txnKey           []byte
+	txnIsoLevel      isolation.Level
+	txnMinTimestamp  hlc.Timestamp
+	omitInRangefeeds bool
+}
+
+func generateRandomizedTs(rand *rand.Rand) hlc.Timestamp {
+	// Avoid generating zero timestamp which will equal to an empty event.
+	return hlc.Timestamp{WallTime: int64(rand.Intn(100)) + 1}
+}
+func generateRandomizedRawBytes(rand *rand.Rand) []byte {
+	const valSize = 16 << 10
+	return randutil.RandBytes(rand, valSize)
+}
+
+func generateRandomizedBytes(rand *rand.Rand) []byte {
+	const tableID = 42
+	dataTypes := []*types.T{types.String, types.Int, types.Decimal, types.Bytes, types.Bool, types.Date, types.Timestamp, types.Float}
+	randType := dataTypes[rand.Intn(len(dataTypes))]
+
+	key, err := keyside.Encode(
+		keys.SystemSQLCodec.TablePrefix(tableID),
+		randgen.RandDatumSimple(rand, randType),
+		encoding.Ascending,
+	)
+	if err != nil {
+		panic(err)
+	}
+	return key
+}
+
+func generateStartAndEndKey(rand *rand.Rand) (roachpb.Key, roachpb.Key) {
+	start := rand.Intn(2 << 20)
+	end := start + rand.Intn(2<<20)
+	startDatum := tree.NewDInt(tree.DInt(start))
+	endDatum := tree.NewDInt(tree.DInt(end))
+	const tableID = 42
+
+	startKey, err := keyside.Encode(
+		keys.SystemSQLCodec.TablePrefix(tableID),
+		startDatum,
+		encoding.Ascending,
+	)
+	if err != nil {
+		panic(err)
+	}
+
+	endKey, err := keyside.Encode(
+		keys.SystemSQLCodec.TablePrefix(tableID),
+		endDatum,
+		encoding.Ascending,
+	)
+	if err != nil {
+		panic(err)
+	}
+	return startKey, endKey
+}
+
+func generateRandomizedTxnId(rand *rand.Rand) uuid.UUID {
+	var txnID uuid.UUID
+	n := rand.Intn(100)
+	if n == 0 {
+		// rand.Intn(0) panics
+		n = 1
+	}
+	i := rand.Intn(n)
+	txnID.DeterministicV4(uint64(i), uint64(n))
+	return txnID
+}
+
+func generateRandomizedSpan(rand *rand.Rand) roachpb.RSpan {
+	startKey, endKey := generateStartAndEndKey(rand)
+	return roachpb.RSpan{
+		Key:    roachpb.RKey(startKey),
+		EndKey: roachpb.RKey(endKey),
+	}
+}
+
+func generateRandomTestData(rand *rand.Rand) testData {
+	startKey, endkey := generateStartAndEndKey(rand)
+	return testData{
+		kvs:              testSSTKVs,
+		span:             generateRandomizedSpan(rand).AsRawSpanWithNoLocals(),
+		key:              generateRandomizedBytes(rand),
+		timestamp:        generateRandomizedTs(rand),
+		value:            generateRandomizedBytes(rand),
+		startKey:         startKey,
+		endKey:           endkey,
+		txnID:            generateRandomizedTxnId(rand),
+		txnKey:           generateRandomizedBytes(rand),
+		txnIsoLevel:      isolation.Levels()[rand.Intn(len(isolation.Levels()))],
+		txnMinTimestamp:  generateRandomizedTs(rand),
+		omitInRangefeeds: rand.Intn(2) == 1,
+	}
+}
+
+func newWriteValueOpEvent(
+	key roachpb.Key, timestamp hlc.Timestamp, value []byte,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = writeValueOpWithKV(key, timestamp, value)
 	var futureEvent kvpb.RangeFeedEvent
 	futureEvent.MustSetValue(&kvpb.RangeFeedValue{
-		Key: testKey,
+		Key: key,
 		Value: roachpb.Value{
-			Timestamp: testTxnTS,
+			RawBytes:  value,
+			Timestamp: timestamp,
 		},
 	})
 	expectedMemUsage += mvccLogicalOp + mvccWriteValueOp + int64(op.Size())
@@ -72,19 +177,13 @@ func writeValueOpEvent() (
 	return op, expectedMemUsage, expectedFutureMemUsage
 }
 
-func deleteRangeOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	op = makeLogicalOp(&enginepb.MVCCDeleteRangeOp{
-		StartKey:  testStartKey,
-		EndKey:    testEndKey,
-		Timestamp: testTs,
-	})
+func deleteRangeOpEvent(
+	startKey, endKey roachpb.Key, timestamp hlc.Timestamp,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = deleteRangeOp(startKey, endKey, timestamp)
 	var futureEvent kvpb.RangeFeedEvent
 	futureEvent.MustSetValue(&kvpb.RangeFeedDeleteRange{
-		Span:      roachpb.Span{Key: testStartKey, EndKey: testEndKey},
+		Span:      roachpb.Span{Key: startKey, EndKey: endKey},
 		Timestamp: testTs,
 	})
 	expectedMemUsage += mvccLogicalOp + mvccDeleteRangeOp + int64(op.Size())
@@ -92,60 +191,44 @@ func deleteRangeOpEvent() (
 	return op, expectedMemUsage, expectedFutureMemUsage
 }
 
-func writeIntentOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	fmt.Println(testTxnID)
-	op = makeLogicalOp(&enginepb.MVCCWriteIntentOp{
-		TxnID:       testTxnID,
-		TxnKey:      testKey,
-		TxnIsoLevel: testIsolationLevel,
-		Timestamp:   testTxnTS,
-	})
+func writeIntentOpEvent(
+	txnID uuid.UUID,
+	txnKey []byte,
+	txnIsoLevel isolation.Level,
+	txnMinTimestamp hlc.Timestamp,
+	timestamp hlc.Timestamp,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = writeIntentOpWithDetails(txnID, txnKey, txnIsoLevel, txnMinTimestamp, timestamp)
 	expectedMemUsage += mvccLogicalOp + mvccWriteIntentOp + int64(op.Size())
-	// no future event to publish
+	// No future event to publish.
 	return op, expectedMemUsage, 0
 }
 
-func updateIntentOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	fmt.Println(testTxnID)
-	op = makeLogicalOp(&enginepb.MVCCUpdateIntentOp{
-		TxnID:     testTxnID,
-		Timestamp: hlc.Timestamp{Logical: 3},
-	})
+func updateIntentOpEvent(
+	txnID uuid.UUID, timestamp hlc.Timestamp,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = updateIntentOp(txnID, timestamp)
 	expectedMemUsage += mvccLogicalOp + mvccUpdateIntentOp + int64(op.Size())
-	// no future event to publish
+	// No future event to publish.
 	return op, expectedMemUsage, 0
 }
 
-func commitIntentOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	op = makeLogicalOp(&enginepb.MVCCCommitIntentOp{
-		Key:       testKey,
-		Timestamp: hlc.Timestamp{Logical: 4},
-		PrevValue: testValue,
-	})
+func commitIntentOpEvent(
+	txnID uuid.UUID,
+	key roachpb.Key,
+	timestamp hlc.Timestamp,
+	value, prevValue []byte,
+	omitInRangefeeds bool,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = commitIntentOpWithKV(txnID, key, timestamp, value, omitInRangefeeds)
 
-	var prevVal roachpb.Value
-	if op.CommitIntent.PrevValue != nil {
-		prevVal.RawBytes = op.CommitIntent.PrevValue
-	}
 	var futureEvent kvpb.RangeFeedEvent
 	futureEvent.MustSetValue(&kvpb.RangeFeedValue{
-		Key: testKey,
+		Key: key,
 		Value: roachpb.Value{
-			Timestamp: op.CommitIntent.Timestamp,
+			RawBytes:  value,
+			Timestamp: timestamp,
 		},
-		PrevValue: prevVal,
 	})
 
 	expectedMemUsage += mvccLogicalOp + mvccCommitIntentOp + int64(op.Size())
@@ -153,54 +236,44 @@ func commitIntentOpEvent() (
 	return op, expectedMemUsage, expectedFutureMemUsage
 }
 
-func abortIntentOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	fmt.Println(testTxnID)
-	op = makeLogicalOp(&enginepb.MVCCAbortIntentOp{
-		TxnID: testTxnID,
-	})
+func abortIntentOpEvent(
+	txnID uuid.UUID,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = abortIntentOp(txnID)
 	expectedMemUsage += mvccLogicalOp + mvccAbortIntentOp + int64(op.Size())
-	// no future event to publish
+	// No future event to publish.
 	return op, expectedMemUsage, 0
 }
 
-func abortTxnOpEvent() (
-	op enginepb.MVCCLogicalOp,
-	expectedMemUsage int64,
-	expectedFutureMemUsage int64,
-) {
-	fmt.Println(testTxnID)
-	op = makeLogicalOp(&enginepb.MVCCAbortTxnOp{
-		TxnID: testTxnID,
-	})
+func abortTxnOpEvent(
+	txnID uuid.UUID,
+) (op enginepb.MVCCLogicalOp, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	op = abortTxnOp(txnID)
 	expectedMemUsage += mvccLogicalOp + mvccAbortTxnOp + int64(op.Size())
-	// no future event to publish
+	// No future event to publish.
 	return op, expectedMemUsage, 0
 }
 
 func generateLogicalOpEvent(
-	typesOfOps string, span roachpb.RSpan, rts resolvedTimestamp,
+	typesOfOps string, data testData, span roachpb.RSpan, rts resolvedTimestamp,
 ) (ev event, expectedMemUsage int64, expectedFutureMemUsage int64) {
 	var op enginepb.MVCCLogicalOp
 	var mem, futureMem int64
 	switch typesOfOps {
 	case "write_value":
-		op, mem, futureMem = writeValueOpEvent()
+		op, mem, futureMem = newWriteValueOpEvent(data.key, data.timestamp, data.value)
 	case "delete_range":
-		op, mem, futureMem = deleteRangeOpEvent()
+		op, mem, futureMem = deleteRangeOpEvent(data.startKey, data.endKey, data.timestamp)
 	case "write_intent":
-		op, mem, futureMem = writeIntentOpEvent()
+		op, mem, futureMem = writeIntentOpEvent(data.txnID, data.txnKey, data.txnIsoLevel, data.txnMinTimestamp, data.timestamp)
 	case "update_intent":
-		op, mem, futureMem = updateIntentOpEvent()
+		op, mem, futureMem = updateIntentOpEvent(data.txnID, data.timestamp)
 	case "commit_intent":
-		op, mem, futureMem = commitIntentOpEvent()
+		op, mem, futureMem = commitIntentOpEvent(data.txnID, data.key, data.timestamp, data.value, data.value, data.omitInRangefeeds)
 	case "abort_intent":
-		op, mem, futureMem = abortIntentOpEvent()
+		op, mem, futureMem = abortIntentOpEvent(data.txnID)
 	case "abort_txn":
-		op, mem, futureMem = abortTxnOpEvent()
+		op, mem, futureMem = abortTxnOpEvent(data.txnID)
 	}
 
 	ev = event{
@@ -208,12 +281,12 @@ func generateLogicalOpEvent(
 	}
 	expectedMemUsage += eventOverhead + mem
 	expectedFutureMemUsage += futureMem
-	ce := checkpointEvent(span, rts)
+	ce := newCheckpointEvent(span, rts)
 	expectedFutureMemUsage += futureEventBaseOverhead + rangefeedCheckpointOverhead + int64(ce.Size())
 	return
 }
 
-func checkpointEvent(span roachpb.RSpan, rts resolvedTimestamp) kvpb.RangeFeedEvent {
+func newCheckpointEvent(span roachpb.RSpan, rts resolvedTimestamp) kvpb.RangeFeedEvent {
 	var event kvpb.RangeFeedEvent
 	event.MustSetValue(&kvpb.RangeFeedCheckpoint{
 		Span:       span.AsRawSpanWithNoLocals(),
@@ -223,15 +296,15 @@ func checkpointEvent(span roachpb.RSpan, rts resolvedTimestamp) kvpb.RangeFeedEv
 }
 
 func generateCtEvent(
-	span roachpb.RSpan, rts resolvedTimestamp, ctEventTimestamp hlc.Timestamp,
+	data testData, span roachpb.RSpan, rts resolvedTimestamp,
 ) (ev event, expectedMemUsage int64, expectedFutureMemUsage int64) {
 	ev = event{
 		ct: ctEvent{
-			Timestamp: ctEventTimestamp,
+			Timestamp: data.timestamp,
 		},
 	}
 	expectedMemUsage += eventOverhead
-	ce := checkpointEvent(span, rts)
+	ce := newCheckpointEvent(span, rts)
 	expectedFutureMemUsage += futureEventBaseOverhead + rangefeedCheckpointOverhead + int64(ce.Size())
 	return
 }
@@ -243,29 +316,30 @@ func generateInitRTSEvent(
 		initRTS: true,
 	}
 	expectedMemUsage += eventOverhead
-	ce := checkpointEvent(span, rts)
+	ce := newCheckpointEvent(span, rts)
 	expectedFutureMemUsage += futureEventBaseOverhead + rangefeedCheckpointOverhead + int64(ce.Size())
 	return
 }
 
 func generateSSTEvent(
-	data []byte,
+	t *testing.T, data testData, st *cluster.Settings,
 ) (ev event, expectedMemUsage int64, expectedFutureMemUsage int64) {
+	sst, _, _ := storageutils.MakeSST(t, st, data.kvs)
 	ev = event{
 		sst: &sstEvent{
-			data: data,
-			span: testSpan,
-			ts:   testTs,
+			data: sst,
+			span: data.span,
+			ts:   data.timestamp,
 		},
 	}
 
 	var futureEvent kvpb.RangeFeedEvent
 	futureEvent.MustSetValue(&kvpb.RangeFeedSSTable{
-		Data:    data,
-		Span:    testSpan,
-		WriteTS: testTs,
+		Data:    sst,
+		Span:    data.span,
+		WriteTS: data.timestamp,
 	})
-	expectedMemUsage += eventOverhead + sstEventOverhead + int64(cap(data)+cap(testSpan.Key)+cap(testSpan.EndKey))
+	expectedMemUsage += eventOverhead + sstEventOverhead + int64(cap(sst)+cap(data.span.Key)+cap(data.span.EndKey))
 	expectedFutureMemUsage += futureEventBaseOverhead + rangefeedSSTTableOverhead + int64(futureEvent.Size())
 	return
 }
@@ -278,101 +352,187 @@ func generateSyncEvent() (ev event, expectedMemUsage int64, expectedFutureMemUsa
 	return
 }
 
+func generateRandomizedEventAndSend(
+	rand *rand.Rand, rSpan roachpb.RSpan, rts resolvedTimestamp,
+) (
+	ev event,
+	expectedMemUsage int64,
+	expectedFutureMemUsage int64,
+	randomlyChosenEvent string,
+	randomlyChosenLogicalOp string,
+) {
+	// Opt out sst event since it requires testing.T to call
+	// storageutils.MakeSST(t, st, data.kvs)
+	typesOfEvents := []string{"logicalsOps", "ct", "initRTS", "sync"}
+	logicalOps := []string{"write_value", "delete_range", "write_intent", "update_intent", "commit_intent", "abort_intent", "abort_txn"}
+	randomlyChosenEvent = typesOfEvents[rand.Intn(len(typesOfEvents))]
+	randomlyChosenLogicalOp = logicalOps[rand.Intn(len(logicalOps))]
+	data := generateRandomTestData(rand)
+	switch randomlyChosenEvent {
+	case "logicalsOps":
+		ev, expectedMemUsage, expectedFutureMemUsage = generateLogicalOpEvent(randomlyChosenLogicalOp, data, rSpan, rts)
+	case "ct":
+		ev, expectedMemUsage, expectedFutureMemUsage = generateCtEvent(data, rSpan, rts)
+	case "initRTS":
+		ev, expectedMemUsage, expectedFutureMemUsage = generateInitRTSEvent(rSpan, rts)
+	case "sync":
+		ev, expectedMemUsage, expectedFutureMemUsage = generateSyncEvent()
+	}
+	return ev, expectedMemUsage, expectedFutureMemUsage, randomlyChosenEvent, randomlyChosenLogicalOp
+}
+
+func generateStaticTestdata() testData {
+	return testData{
+		kvs:              testSSTKVs,
+		span:             testSpan,
+		key:              testKey,
+		timestamp:        testTs,
+		value:            testValue,
+		startKey:         testStartKey,
+		endKey:           testEndKey,
+		txnID:            testTxnID,
+		txnKey:           testKey,
+		txnIsoLevel:      testIsolationLevel,
+		txnMinTimestamp:  testTs,
+		omitInRangefeeds: false,
+	}
+}
+
 func TestBasicEventSizeCalculation(t *testing.T) {
 	st := cluster.MakeTestingClusterSettings()
+	data := generateStaticTestdata()
+	rSpan := roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("z")}
 
 	t.Run("empty_event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev := event{}
 		require.Equal(t, eventOverhead, ev.currMemUsage())
-		require.Equal(t, int64(0), ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, int64(0), ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("write_value event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("write_value", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("write_value", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("delete_range event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("delete_range", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("delete_range", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("write_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("write_intent", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("write_intent", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("update_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("update_intent", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("update_intent", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("commit_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("commit_intent", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("commit_intent", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("abort_intent event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("abort_intent", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("abort_intent", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("abort_txn event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("abort_txn", testRSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateLogicalOpEvent("abort_txn", data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("ct event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateCtEvent(testRSpan, rts, testNewClosedTs)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateCtEvent(data, rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("initRTS event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		generateLogicalOpEvent("write_intent", testRSpan, rts)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateInitRTSEvent(testRSpan, rts)
+		generateLogicalOpEvent("write_intent", data, rSpan, rts)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateInitRTSEvent(rSpan, rts)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("sst event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
-		sst, _, _ := storageutils.MakeSST(t, st, sstKVs)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateSSTEvent(sst)
+		ev, expectedMemUsage, expectedFutureMemUsage := generateSSTEvent(t, data, st)
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 
 	t.Run("sync event", func(t *testing.T) {
 		rts := makeResolvedTimestamp(st)
 		ev, expectedMemUsage, expectedFutureMemUsage := generateSyncEvent()
 		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
-	})
-
-	t.Run("sync event", func(t *testing.T) {
-		rts := makeResolvedTimestamp(st)
-		ev, expectedMemUsage, expectedFutureMemUsage := generateSyncEvent()
-		require.Equal(t, expectedMemUsage, ev.currMemUsage())
-		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(testRSpan, rts))
+		require.Equal(t, expectedFutureMemUsage, ev.futureMemUsage(rSpan, rts))
 	})
 }
 
-// TODO(wenyihu6): add randomized event and benchmark
+// BenchmarkMemoryAccounting benchmarks the memory accounting of the event
+// struct.
+func BenchmarkMemoryAccounting(b *testing.B) {
+	b.Run("memory_calculation", func(b *testing.B) {
+		st := cluster.MakeTestingClusterSettings()
+		rSpan := roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("z")}
+		rts := makeResolvedTimestamp(st)
+
+		rand, _ := randutil.NewTestRand()
+		events := []event{}
+		type res struct {
+			currMemUsages   int64
+			futureMemUsages int64
+			chosenEvent     string
+			chosenOp        string
+		}
+		expectedRes := []res{}
+		for i := 0; i < b.N; i++ {
+			ev, mem, futureMem, chosenEvent, chosenOp := generateRandomizedEventAndSend(rand, rSpan, rts)
+			expectedRes = append(expectedRes, res{
+				currMemUsages:   mem,
+				futureMemUsages: futureMem,
+				chosenEvent:     chosenEvent,
+				chosenOp:        chosenOp,
+			})
+			events = append(events, ev)
+		}
+
+		// Reset the timer without the cost of generating the events.
+		b.ResetTimer()
+
+		actualMemUsage := int64(0)
+		actualFutureMemUsage := int64(0)
+		for _, ev := range events {
+			actualMemUsage += ev.currMemUsage()
+			actualFutureMemUsage += ev.futureMemUsage(rSpan, rts)
+		}
+
+		b.StopTimer()
+		for i := 0; i < b.N; i++ {
+			b.Logf("event %d: %+v\n", i+1, events[i])
+			b.Logf("chosen event: %s, %s\n", expectedRes[i].chosenEvent, expectedRes[i].chosenOp)
+			require.Equal(b, expectedRes[i].currMemUsages, events[i].currMemUsage())
+			require.Equal(b, expectedRes[i].futureMemUsages, events[i].futureMemUsage(rSpan, rts))
+		}
+	})
+}

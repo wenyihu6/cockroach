@@ -48,6 +48,14 @@ func makeLogicalOp(val interface{}) enginepb.MVCCLogicalOp {
 	return op
 }
 
+func deleteRangeOp(startKey, endKey roachpb.Key, timestamp hlc.Timestamp) enginepb.MVCCLogicalOp {
+	return makeLogicalOp(&enginepb.MVCCDeleteRangeOp{
+		StartKey:  startKey,
+		EndKey:    endKey,
+		Timestamp: timestamp,
+	})
+}
+
 func writeValueOpWithKV(key roachpb.Key, ts hlc.Timestamp, val []byte) enginepb.MVCCLogicalOp {
 	return makeLogicalOp(&enginepb.MVCCWriteValueOp{
 		Key:       key,
