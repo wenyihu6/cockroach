@@ -355,7 +355,7 @@ func (a *SharedBudgetAllocation) TrackUsage(
 	a.Lock()
 	defer a.Unlock()
 	if ev != nil {
-		a.memoryAdjuster.trackUsage(ctx, ev.MemUsage())
+		a.memoryAdjuster.trackUsage(ctx, ev.currMemUsage())
 	}
 	if re != nil {
 		a.memoryAdjuster.trackUsage(ctx, RangefeedEventMemUsage(re))

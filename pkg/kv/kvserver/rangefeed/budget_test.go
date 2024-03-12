@@ -201,7 +201,7 @@ func TestFeedBudgetMemoryAdjustment(t *testing.T) {
 				},
 			},
 		}}
-		evMemUsage := ev.MemUsage()
+		evMemUsage := ev.currMemUsage()
 		// Check evMemUsage < 1000.
 		require.Greater(t, int64(1000), evMemUsage)
 		a, err := f.TryGet(ctx, int64(1000))
@@ -222,7 +222,7 @@ func TestFeedBudgetMemoryAdjustment(t *testing.T) {
 				},
 			},
 		}}
-		evMemUsage := ev.MemUsage()
+		evMemUsage := ev.currMemUsage()
 		require.Less(t, int64(100), evMemUsage)
 
 		a, err := f.TryGet(ctx, 100)
@@ -243,7 +243,7 @@ func TestFeedBudgetMemoryAdjustment(t *testing.T) {
 				},
 			},
 		}}
-		evMemUsage := ev.MemUsage()
+		evMemUsage := ev.currMemUsage()
 
 		var futureEvent kvpb.RangeFeedEvent
 		futureEvent.MustSetValue(&kvpb.RangeFeedValue{
@@ -268,7 +268,7 @@ func TestFeedBudgetMemoryAdjustment(t *testing.T) {
 		a, err := f.TryGet(ctx, 1000000)
 		require.NoError(t, err)
 		ev := event{ops: []enginepb.MVCCLogicalOp{{WriteValue: &enginepb.MVCCWriteValueOp{}}}}
-		evMemUsage := ev.MemUsage()
+		evMemUsage := ev.currMemUsage()
 
 		var futureEvent kvpb.RangeFeedEvent
 		futureEvent.MustSetValue(&kvpb.RangeFeedValue{})
@@ -304,7 +304,7 @@ func TestFeedBudgetMemoryAdjustment(t *testing.T) {
 				},
 			},
 		}}
-		evMemUsage := ev.MemUsage()
+		evMemUsage := ev.currMemUsage()
 		require.Greater(t, int64(600), evMemUsage)
 
 		a, err := f.TryGet(ctx, 600)
