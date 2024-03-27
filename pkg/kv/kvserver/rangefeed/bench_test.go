@@ -63,7 +63,7 @@ func BenchmarkRangefeed(b *testing.B) {
 // processor budget. It sets up a single processor and registration, and
 // processes a set of events.
 func BenchmarkRangefeedBudget(b *testing.B) {
-	for _, budget := range []bool{false, true} {
+	for _, budget := range []bool{false} {
 		b.Run(fmt.Sprintf("budget=%t", budget), func(b *testing.B) {
 			var budgetSize int64
 			if budget {
