@@ -128,7 +128,7 @@ func (p *ScheduledProcessor) Start(
 			return err
 		}
 	} else {
-		p.initResolvedTS(p.taskCtx, nil)
+		p.initResolvedTS(p.taskCtx)
 	}
 
 	p.Metrics.RangeFeedProcessorsScheduler.Inc(1)
@@ -638,9 +638,9 @@ func (p *ScheduledProcessor) consumeEvent(ctx context.Context, e *event) {
 	case e.ops != nil:
 		p.consumeLogicalOps(ctx, e.ops, e.alloc)
 	case !e.ct.IsEmpty():
-		p.forwardClosedTS(ctx, e.ct.Timestamp, e.alloc)
+		p.forwardClosedTS(ctx, e.ct.Timestamp)
 	case bool(e.initRTS):
-		p.initResolvedTS(ctx, e.alloc)
+		p.initResolvedTS(ctx)
 	case e.sst != nil:
 		p.consumeSSTable(ctx, e.sst.data, e.sst.span, e.sst.ts, e.alloc)
 	case e.sync != nil:
@@ -699,7 +699,7 @@ func (p *ScheduledProcessor) consumeLogicalOps(
 		// Determine whether the operation caused the resolved timestamp to
 		// move forward. If so, publish a RangeFeedCheckpoint notification.
 		if p.rts.ConsumeLogicalOp(ctx, op) {
-			p.publishCheckpoint(ctx, nil)
+			p.publishCheckpoint(ctx)
 		}
 	}
 }
@@ -714,17 +714,15 @@ func (p *ScheduledProcessor) consumeSSTable(
 	p.publishSSTable(ctx, sst, sstSpan, sstWTS, alloc)
 }
 
-func (p *ScheduledProcessor) forwardClosedTS(
-	ctx context.Context, newClosedTS hlc.Timestamp, alloc *SharedBudgetAllocation,
-) {
+func (p *ScheduledProcessor) forwardClosedTS(ctx context.Context, newClosedTS hlc.Timestamp) {
 	if p.rts.ForwardClosedTS(ctx, newClosedTS) {
-		p.publishCheckpoint(ctx, alloc)
+		p.publishCheckpoint(ctx)
 	}
 }
 
-func (p *ScheduledProcessor) initResolvedTS(ctx context.Context, alloc *SharedBudgetAllocation) {
+func (p *ScheduledProcessor) initResolvedTS(ctx context.Context) {
 	if p.rts.Init(ctx) {
-		p.publishCheckpoint(ctx, alloc)
+		p.publishCheckpoint(ctx)
 	}
 }
 
@@ -797,12 +795,12 @@ func (p *ScheduledProcessor) publishSSTable(
 	}, false /* omitInRangefeeds */, alloc)
 }
 
-func (p *ScheduledProcessor) publishCheckpoint(ctx context.Context, alloc *SharedBudgetAllocation) {
+func (p *ScheduledProcessor) publishCheckpoint(ctx context.Context) {
 	// TODO(nvanbenschoten): persist resolvedTimestamp. Give Processor a client.DB.
 	// TODO(nvanbenschoten): rate limit these? send them periodically?
 
 	event := p.newCheckpointEvent()
-	p.reg.PublishToOverlapping(ctx, all, event, false /* omitInRangefeeds */, alloc)
+	p.reg.PublishToOverlapping(ctx, all, event, false /* omitInRangefeeds */, nil)
 }
 
 func (p *ScheduledProcessor) newCheckpointEvent() *kvpb.RangeFeedEvent {

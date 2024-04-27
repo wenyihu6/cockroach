@@ -14,9 +14,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"unsafe"
 
-	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -24,20 +22,20 @@ import (
 )
 
 const (
-	mvccLogicalOp      = int64(unsafe.Sizeof(enginepb.MVCCLogicalOp{}))
-	mvccWriteValueOp   = int64(unsafe.Sizeof(enginepb.MVCCWriteValueOp{}))
-	mvccDeleteRangeOp  = int64(unsafe.Sizeof(enginepb.MVCCDeleteRangeOp{}))
-	mvccWriteIntentOp  = int64(unsafe.Sizeof(enginepb.MVCCWriteIntentOp{}))
-	mvccUpdateIntentOp = int64(unsafe.Sizeof(enginepb.MVCCUpdateIntentOp{}))
-	mvccCommitIntentOp = int64(unsafe.Sizeof(enginepb.MVCCCommitIntentOp{}))
-	mvccAbortIntentOp  = int64(unsafe.Sizeof(enginepb.MVCCAbortIntentOp{}))
-	mvccAbortTxnOp     = int64(unsafe.Sizeof(enginepb.MVCCAbortTxnOp{}))
+	mvccLogicalOp      = int64(1)
+	mvccWriteValueOp   = int64(1)
+	mvccDeleteRangeOp  = int64(1)
+	mvccWriteIntentOp  = int64(1)
+	mvccUpdateIntentOp = int64(1)
+	mvccCommitIntentOp = int64(1)
+	mvccAbortIntentOp  = int64(1)
+	mvccAbortTxnOp     = int64(1)
 
-	eventPtrOverhead = int64(unsafe.Sizeof(&event{}))
-	eventOverhead    = int64(unsafe.Sizeof(&event{})) + int64(unsafe.Sizeof(event{}))
+	eventPtrOverhead = int64(1)
+	eventOverhead    = int64(1)
 
-	sstEventOverhead  = int64(unsafe.Sizeof(sstEvent{}))
-	syncEventOverhead = int64(unsafe.Sizeof(syncEvent{}))
+	sstEventOverhead  = int64(1)
+	syncEventOverhead = int64(1)
 
 	// futureEventBaseOverhead accounts for the base struct overhead of
 	// sharedEvent{} and its pointer. Each sharedEvent contains a
@@ -46,16 +44,15 @@ const (
 	// SharedBudgetAllocation. Underlying data for SharedBudgetAllocation includes
 	// a pointer to the FeedBudget, but that points to the same data structure
 	// across all rangefeeds, so we opted out in the calculation.
-	sharedEventPtrOverhead  = int64(unsafe.Sizeof(&sharedEvent{}))
-	sharedEventOverhead     = int64(unsafe.Sizeof(sharedEvent{}))
-	rangeFeedEventOverhead  = int64(unsafe.Sizeof(kvpb.RangeFeedEvent{}))
-	allocEventOverhead      = int64(unsafe.Sizeof(SharedBudgetAllocation{}))
+	sharedEventPtrOverhead  = int64(1)
+	sharedEventOverhead     = int64(1)
+	rangeFeedEventOverhead  = int64(1)
+	allocEventOverhead      = int64(1)
 	futureEventBaseOverhead = sharedEventPtrOverhead + sharedEventOverhead + rangeFeedEventOverhead + allocEventOverhead
 
-	rangefeedValueOverhead       = int64(unsafe.Sizeof(kvpb.RangeFeedValue{}))
-	rangefeedDeleteRangeOverhead = int64(unsafe.Sizeof(kvpb.RangeFeedDeleteRange{}))
-	rangefeedCheckpointOverhead  = int64(unsafe.Sizeof(kvpb.RangeFeedCheckpoint{}))
-	rangefeedSSTTableOverhead    = int64(unsafe.Sizeof(kvpb.RangeFeedSSTable{}))
+	rangefeedValueOverhead      = int64(1)
+	rangefeedCheckpointOverhead = int64(1)
+	rangefeedSSTTableOverhead   = int64(1)
 )
 
 // No future memory usages have been accounted so far.
@@ -264,40 +261,5 @@ func (e *event) String() string {
 // MemUsage estimates the total memory usage of the event, including its
 // underlying data. The memory usage is estimated in bytes.
 func (e *event) MemUsage() int64 {
-	if e == nil {
-		// For nil event, only eventPtrOverhead is accounted.
-		return eventPtrOverhead
-	}
-	// currMemUsage: pointer to e is passed to p.eventC channel. Each e pointer is
-	// &event{}, and each pointer points at an underlying event{}.
-	switch {
-	case e.ops != nil:
-		// For logical ops events, current memory usage is usually larger than
-		// rangefeed events. Note that we assume no checkpoint events are caused by
-		// ops since they are pretty rare to avoid the complexity.
-		return eventOverhead + e.ops.currMemUsage()
-	case !e.ct.IsEmpty():
-		// For ct event, rangefeed checkpoint event usually takes more memory than
-		// current memory usage. Note that we assume checkpoint event will happen.
-		// If it does not happen, the memory will be released soon after
-		// p.ConsumeEvent returns.
-		return rangefeedCheckpointOpMemUsage()
-	case bool(e.initRTS):
-		// For initRTS event, rangefeed checkpoint event usually takes more memory
-		// than current memory usage. Note that we assume checkpoint event will
-		// happen. If it does not happen, the memory will be released soon after
-		// p.ConsumeEvent returns.
-		return rangefeedCheckpointOpMemUsage()
-	case e.sst != nil:
-		// For sst event, rangefeed event usually takes more memory than current
-		// memory usage.
-		return rangefeedSSTTableOpMemUsage(e.sst.data, e.sst.span.Key, e.sst.span.EndKey)
-	case e.sync != nil:
-		// For sync event, no rangefeed events will be published.
-		return eventOverhead + e.sync.currMemUsage()
-	default:
-		log.Fatalf(context.Background(), "missing event variant: %+v", e)
-	}
-	// For empty event, only eventOverhead is accounted.
-	return eventOverhead
+	panic("not expected")
 }
