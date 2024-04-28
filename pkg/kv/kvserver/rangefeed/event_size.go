@@ -219,11 +219,7 @@ func opsCurrMemUsage(ops opsEvent) int64 {
 
 // MemUsage estimates the total memory usage of the event, including its
 // underlying data. The memory usage is estimated in bytes.
-func MemUsage(e *event) int64 {
-	if e == nil {
-		// For nil event, only eventPtrOverhead is accounted.
-		return eventPtrOverhead
-	}
+func MemUsage(e event) int64 {
 	// currMemUsage: pointer to e is passed to p.eventC channel. Each e pointer is
 	// &event{}, and each pointer points at an underlying event{}.
 	switch {
