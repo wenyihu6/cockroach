@@ -181,19 +181,9 @@ func abortTxnOpMemUsage(txnID uuid.UUID) int64 {
 	return currMemUsage
 }
 
-// eventOverhead accounts for the base struct of event{} which only included
-// pointer to syncEvent. currMemUsage accounts the base struct memory of
-// syncEvent{} and its underlying memory.
-func (sync syncEvent) currMemUsage() int64 {
-	// syncEvent has a channel and a pointer to testRegCatchupSpan.
-	// testRegCatchupSpan is never set in production. Channel sent is always
-	// struct{}, so the memory has already been accounted in syncEventOverhead.
-	return syncEventOverhead
-}
-
 // currMemUsage returns the current memory usage of the opsEvent including base
 // structs overhead and underlying memory usage.
-func (ops opsEvent) currMemUsage() int64 {
+func opsCurrMemUsage(ops opsEvent) int64 {
 	// currMemUsage: eventOverhead already accounts for slice overhead in
 	// opsEvent, []enginepb.MVCCLogicalOp. For each cap(ops), the underlying
 	// memory include a MVCCLogicalOp overhead.
@@ -241,7 +231,7 @@ func MemUsage(e *event) int64 {
 		// For logical ops events, current memory usage is usually larger than
 		// rangefeed events. Note that we assume no checkpoint events are caused by
 		// ops since they are pretty rare to avoid the complexity.
-		return eventOverhead + e.ops.currMemUsage()
+		return eventOverhead + opsCurrMemUsage(e.ops)
 	case !e.ct.IsEmpty():
 		// For ct event, rangefeed checkpoint event usually takes more memory than
 		// current memory usage. Note that we assume checkpoint event will happen.
@@ -260,7 +250,7 @@ func MemUsage(e *event) int64 {
 		return rangefeedSSTTableOpMemUsage(e.sst.data, e.sst.span.Key, e.sst.span.EndKey)
 	case e.sync != nil:
 		// For sync event, no rangefeed events will be published.
-		return eventOverhead + e.sync.currMemUsage()
+		return eventOverhead + syncEventOverhead
 	default:
 		log.Fatalf(context.Background(), "missing event variant: %+v", e)
 	}
