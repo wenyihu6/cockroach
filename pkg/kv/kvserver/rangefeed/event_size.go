@@ -229,7 +229,7 @@ func (ops opsEvent) currMemUsage() int64 {
 
 // MemUsage estimates the total memory usage of the event, including its
 // underlying data. The memory usage is estimated in bytes.
-func (e *event) MemUsage() int64 {
+func MemUsage(e *event) int64 {
 	if e == nil {
 		// For nil event, only eventPtrOverhead is accounted.
 		return eventPtrOverhead
