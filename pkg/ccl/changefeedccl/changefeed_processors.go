@@ -720,6 +720,9 @@ func (ca *changeAggregator) computeTrailingMetadata(meta *execinfrapb.Changefeed
 
 	// Build out the list of frontier spans.
 	ca.frontier.Entries(func(r roachpb.Span, ts hlc.Timestamp) (done span.OpResult) {
+		if !ts.IsSet() {
+			log.Warningf(ca.Ctx(), "BROOO unexpected resolved timestamp %s for span %s", ts, r)
+		}
 		meta.Checkpoint = append(meta.Checkpoint,
 			execinfrapb.ChangefeedMeta_FrontierSpan{
 				Span:      r,
