@@ -149,6 +149,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return errors.CombineErrors(err, f.writer.CloseWithReason(ctx, err))
 	}
 
+	log.Info(ctx, "stopping kv feed: changefeed completed check")
 	if isChangefeedCompleted {
 		log.Info(ctx, "stopping kv feed: changefeed completed")
 	} else {
@@ -309,6 +310,7 @@ func newKVFeed(
 var errChangefeedCompleted = errors.New("changefeed completed")
 
 func (f *kvFeed) run(ctx context.Context) (err error) {
+	log.Infof(ctx, "starting kv feed")
 	emitResolved := func(ts hlc.Timestamp, boundary jobspb.ResolvedSpan_BoundaryType) error {
 		for _, sp := range f.spans {
 			if err := f.writer.Add(ctx, kvevent.NewBackfillResolvedEvent(sp, ts, boundary)); err != nil {
@@ -321,6 +323,7 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 	// Frontier initialized to initialHighwater timestamp which
 	// represents the point in time at or before which we know
 	// we've seen all events or is the initial starting time of the feed.
+	log.Warningf(ctx, "initialHighWater %v", f.initialHighWater)
 	rangeFeedResumeFrontier, err := span.MakeFrontierAt(f.initialHighWater, f.spans...)
 	if err != nil {
 		return err
@@ -331,14 +334,19 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 	for i := 0; ; i++ {
 		initialScan := i == 0
 		initialScanOnly := f.endTime.EqOrdering(f.initialHighWater)
+		log.Infof(ctx, "starting scan %v", f.initialHighWater)
+		log.Infof(ctx, "starting scan endTime %v", f.endTime)
+		log.Infof(ctx, "resumefrontier %v", rangeFeedResumeFrontier.Frontier())
 		scannedSpans, scannedTS, err := f.scanIfShould(ctx, initialScan, initialScanOnly, rangeFeedResumeFrontier.Frontier())
 		if err != nil {
 			return err
 		}
+		log.Infof(ctx, "scanned up until %v", scannedTS)
 		// We have scanned scannedSpans up to and including scannedTS.  Advance frontier
 		// for those spans.  Note, since rangefeed start time is *exclusive* (that it, rangefeed
 		// starts from timestamp.Next()), we advanced frontier to the scannedTS.
 		for _, sp := range scannedSpans {
+			log.Infof(ctx, "forwarding spans: %v", scannedTS)
 			if _, err := rangeFeedResumeFrontier.Forward(sp, scannedTS); err != nil {
 				return err
 			}
@@ -348,6 +356,7 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 			if err := emitResolved(f.initialHighWater, jobspb.ResolvedSpan_EXIT); err != nil {
 				return err
 			}
+			log.Warning(ctx, "initial scan completed")
 			return errChangefeedCompleted
 		}
 
@@ -356,6 +365,7 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 				if err := emitResolved(rangeFeedResumeFrontier.Frontier(), jobspb.ResolvedSpan_EXIT); err != nil {
 					return err
 				}
+				log.Warning(ctx, "end time reached")
 				return errChangefeedCompleted
 			}
 			return err
@@ -444,7 +454,9 @@ func filterCheckpointSpans(spans []roachpb.Span, completed []roachpb.Span) []roa
 func (f *kvFeed) scanIfShould(
 	ctx context.Context, initialScan bool, initialScanOnly bool, highWater hlc.Timestamp,
 ) ([]roachpb.Span, hlc.Timestamp, error) {
+
 	scanTime := highWater.Next()
+	fmt.Printf("scanning starting from scanTime next highwater %v", scanTime)
 
 	events, err := f.tableFeed.Peek(ctx, scanTime)
 	if err != nil {
@@ -498,6 +510,8 @@ func (f *kvFeed) scanIfShould(
 
 	// If we have initial checkpoint information specified, filter out
 	// spans which we no longer need to scan.
+	fmt.Printf("scanning len(spans): %d at %v", len(spansToScan), scanTime)
+	fmt.Printf("scanning checkpoint %v spans", f.checkpoint)
 	spansToBackfill := filterCheckpointSpans(spansToScan, f.checkpoint)
 
 	if (!isInitialScan && f.schemaChangePolicy == changefeedbase.OptSchemaChangePolicyNoBackfill) ||

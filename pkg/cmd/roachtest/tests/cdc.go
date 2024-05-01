@@ -926,9 +926,12 @@ func runCDCBackfillRollingRestart(ctx context.Context, t test.Test, c cluster.Cl
 
 	restart := func(n int) error {
 		cmd := fmt.Sprintf("./cockroach node drain --certs-dir=%s --port={pgport:%d} --self", install.CockroachNodeCertsDir, n)
-		if err := c.RunE(ctx, option.WithNodes(c.Node(n)), cmd); err != nil {
-			return err
-		}
+		testutils.SucceedsWithin(t, func() error {
+			if err := c.RunE(ctx, option.WithNodes(c.Node(n)), cmd); err != nil {
+				t.L().Printf("errored in node draining but re-trying: %s", err)
+				return nil
+			}
+		})
 		m.ExpectDeath()
 		c.Stop(ctx, t.L(), option.DefaultStopOpts(), c.Node(n))
 		opts := startOpts

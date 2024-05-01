@@ -354,6 +354,7 @@ func (ca *changeAggregator) Start(ctx context.Context) {
 	if needsInitialScan {
 		kvFeedHighWater = ca.spec.Feed.StatementTime
 	}
+	log.Infof(ctx, "starting changefeed with high-water time %s", kvFeedHighWater)
 
 	// TODO(yevgeniy): Introduce separate changefeed monitor that's a parent
 	// for all changefeeds to control memory allocated to all changefeeds.
@@ -395,6 +396,7 @@ func (ca *changeAggregator) startKVFeed(
 	memLimit int64,
 	opts changefeedbase.StatementOptions,
 ) (kvevent.Reader, chan struct{}, chan error, error) {
+	log.Info(ctx, "starting kvfeed")
 	cfg := ca.flowCtx.Cfg
 	kvFeedMemMon := mon.NewMonitorInheritWithLimit("kvFeed", memLimit, parentMemMon)
 	kvFeedMemMon.StartNoReserved(ctx, parentMemMon)
@@ -457,6 +459,8 @@ func (ca *changeAggregator) makeKVFeedCfg(
 	cfg := ca.flowCtx.Cfg
 
 	initialScanOnly := config.EndTime.EqOrdering(initialHighWater)
+	log.Infof(ctx,"initial scan only: %t", initialScanOnly)
+	log.Infof(ctx,"initial high-water timestamp %s", initialHighWater)
 	var sf schemafeed.SchemaFeed
 
 	if schemaChange.Policy == changefeedbase.OptSchemaChangePolicyIgnore || initialScanOnly {
@@ -528,10 +532,12 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 	for _, watch := range ca.spec.Watches {
 		if initialHighWater.IsEmpty() || watch.InitialResolved.Less(initialHighWater) {
 			initialHighWater = watch.InitialResolved
+			fmt.Printf("initial resolved timestamp %s for span %s", watch.InitialResolved, watch.Span)
 		}
 		spans = append(spans, watch.Span)
 	}
 
+	fmt.Printf("initial high-water timestamp %s", initialHighWater)
 	ca.frontier, err = makeSchemaChangeFrontier(initialHighWater, spans...)
 	if err != nil {
 		return nil, err
@@ -542,22 +548,27 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 		// Spans that reach this time are eligible for checkpointing.
 		ca.frontier.initialHighWater = ca.spec.Feed.StatementTime
 	}
+	log.Infof(ca.Ctx(), "initial high-water timestamp %s", ca.frontier.initialHighWater)
 
 	checkpointedSpanTs := ca.spec.Checkpoint.Timestamp
-
+	log.Infof(context.Background(), "ca.spec.Checkpoint.Timestamp: %s", checkpointedSpanTs)
 	// Checkpoint records from 21.2 were used only for backfills and did not store
 	// the timestamp, since in a backfill it must either be the StatementTime for
 	// an initial backfill, or right after the high-water for schema backfills.
 	if checkpointedSpanTs.IsEmpty() {
 		if initialHighWater.IsEmpty() {
+			log.Infof(context.Background(), "initialHighWater is empty, using StatementTime")
 			checkpointedSpanTs = ca.spec.Feed.StatementTime
 		} else {
+			log.Infof(context.Background(), "initialHighWater is not empty, using Next()")
 			checkpointedSpanTs = initialHighWater.Next()
 		}
 	}
+	log.Infof(context.Background(), "forwarding spans to checkpointed span timestamp %s", checkpointedSpanTs)
 	// Checkpointed spans are spans that were above the highwater mark, and we
 	// must preserve that information in the frontier for future checkpointing.
 	for _, checkpointedSpan := range ca.spec.Checkpoint.Spans {
+		log.Infof(context.Background(), "forwarding span %s to checkpointed span timestamp %s", checkpointedSpan, checkpointedSpanTs)
 		if _, err := ca.frontier.Forward(checkpointedSpan, checkpointedSpanTs); err != nil {
 			return nil, err
 		}
@@ -720,11 +731,15 @@ func (ca *changeAggregator) computeTrailingMetadata(meta *execinfrapb.Changefeed
 
 	// Build out the list of frontier spans.
 	ca.frontier.Entries(func(r roachpb.Span, ts hlc.Timestamp) (done span.OpResult) {
-		meta.Checkpoint = append(meta.Checkpoint,
-			execinfrapb.ChangefeedMeta_FrontierSpan{
-				Span:      r,
-				Timestamp: ts,
-			})
+		if ts.IsSet() {
+			meta.Checkpoint = append(meta.Checkpoint,
+				execinfrapb.ChangefeedMeta_FrontierSpan{
+					Span:      r,
+					Timestamp: ts,
+				})
+		} else {
+			panic("WEIRDDDD")
+		}
 		return span.ContinueMatch
 	})
 }
@@ -1840,6 +1855,7 @@ func (f *schemaChangeFrontier) ForwardResolvedSpan(r jobspb.ResolvedSpan) (bool,
 	}
 
 	f.latestTs.Forward(r.Timestamp)
+	log.Infof(context.Background(), "resolved span %v at %v", r.Span, r.Timestamp)
 	return f.Forward(r.Span, r.Timestamp)
 }
 

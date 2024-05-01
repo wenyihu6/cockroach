@@ -11,6 +11,7 @@ package changefeedccl
 import (
 	"context"
 	"math"
+	"fmt"
 	"sort"
 
 	"github.com/cockroachdb/cockroach/pkg/ccl/changefeedccl/cdceval"
@@ -466,6 +467,7 @@ func makePlan(
 					Span:            nodeSpan,
 					InitialResolved: initialResolved,
 				}
+				fmt.Printf("watching span %s with initial resolved %s", nodeSpan, initialResolved)
 			}
 
 			aggregatorSpecs[i] = &execinfrapb.ChangeAggregatorSpec{

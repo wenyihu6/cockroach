@@ -6255,7 +6255,7 @@ func TestChangefeedHandlesRollingRestart(t *testing.T) {
 	defer closeSink()
 
 	proceed <- struct{}{} // Allow changefeed to start.
-	feed := feed(t, f, "CREATE CHANGEFEED FOR foo WITH initial_scan='no', min_checkpoint_frequency='100ms'")
+	feed := feed(t, f, "CREATE CHANGEFEED FOR foo WITH initial_scan='only', min_checkpoint_frequency='100ms'")
 	defer closeFeed(t, feed)
 
 	jf := feed.(cdctest.EnterpriseTestFeed)

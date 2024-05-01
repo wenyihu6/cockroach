@@ -1367,6 +1367,7 @@ func reconcileJobStateWithLocalState(
 	}
 
 	localState.progress = reloadedJob.Progress()
+	log.Infof(ctx, "CHANGEFEED %d reloaded job progress: %v", jobID, localState.progress)
 
 	// localState contains an up-to-date checkpoint information transmitted by
 	// aggregator when flow was terminated. To be safe, we don't blindly trust
@@ -1377,6 +1378,7 @@ func reconcileJobStateWithLocalState(
 	if hw := localState.progress.GetHighWater(); hw != nil {
 		highWater = *hw
 	}
+	log.Infof(ctx, "CHANGEFEED %d local state highwater: %v", jobID, highWater)
 
 	// Build frontier based on tracked spans.
 	sf, err := span.MakeFrontierAt(highWater, localState.trackedSpans...)
@@ -1386,6 +1388,7 @@ func reconcileJobStateWithLocalState(
 	// Advance frontier based on the information received from the aggregators.
 	for _, s := range localState.aggregatorFrontier {
 		_, err := sf.Forward(s.Span, s.Timestamp)
+		log.Infof(ctx, "CHANGEFEED %d advanced tracked span %s to %s", jobID, s.Span, s.Timestamp)
 		if err != nil {
 			return err
 		}
