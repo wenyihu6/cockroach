@@ -331,7 +331,10 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 
 	for i := 0; ; i++ {
 		initialScan := i == 0
+		log.Infof(ctx, "f.initialHighWater is %v", f.initialHighWater)
+		log.Infof(ctx, "f.endTime is %v", f.endTime)
 		initialScanOnly := f.endTime.EqOrdering(f.initialHighWater)
+		log.Infof(ctx, "rangeFeedResumeFrontier.Frontier() is %v", rangeFeedResumeFrontier.Frontier())
 		scannedSpans, scannedTS, err := f.scanIfShould(ctx, initialScan, initialScanOnly, rangeFeedResumeFrontier.Frontier())
 		if err != nil {
 			return err
@@ -339,6 +342,7 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 		// We have scanned scannedSpans up to and including scannedTS.  Advance frontier
 		// for those spans.  Note, since rangefeed start time is *exclusive* (that it, rangefeed
 		// starts from timestamp.Next()), we advanced frontier to the scannedTS.
+		log.Infof(ctx, "forwarding scanned spans to %v", scannedTS)
 		for _, sp := range scannedSpans {
 			if _, err := rangeFeedResumeFrontier.Forward(sp, scannedTS); err != nil {
 				return err
@@ -446,6 +450,7 @@ func (f *kvFeed) scanIfShould(
 	ctx context.Context, initialScan bool, initialScanOnly bool, highWater hlc.Timestamp,
 ) ([]roachpb.Span, hlc.Timestamp, error) {
 	scanTime := highWater.Next()
+	log.Infof(ctx, "scanTime is %v", scanTime)
 
 	events, err := f.tableFeed.Peek(ctx, scanTime)
 	if err != nil {
