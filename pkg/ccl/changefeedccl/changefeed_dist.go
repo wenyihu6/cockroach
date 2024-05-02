@@ -114,6 +114,7 @@ func distChangefeedFlow(
 			// ones at the statement time may have been garbage collected by now.
 			schemaTS = initialHighWater
 		}
+		log.Infof(ctx, "changefeed starting at high-water time %v", initialHighWater)
 
 		// We want to fetch the target spans as of the timestamp following the
 		// highwater unless the highwater corresponds to a timestamp of an initial
@@ -261,6 +262,7 @@ func startDistChangefeed(
 	if progress := localState.progress.GetChangefeed(); progress != nil && progress.Checkpoint != nil {
 		checkpoint = progress.Checkpoint
 	}
+	log.Infof(ctx, "starting changefeed progress with checkpoint: %v", checkpoint)
 	p, planCtx, err := makePlan(execCtx, jobID, details, initialHighWater,
 		trackedSpans, checkpoint, localState.drainingNodes)(ctx, dsp)
 	if err != nil {

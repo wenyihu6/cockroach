@@ -47,7 +47,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/internal/sqlsmith"
 	"github.com/cockroachdb/cockroach/pkg/jobs"
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
-	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvclient/kvcoord"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -6240,13 +6239,8 @@ func TestChangefeedHandlesRollingRestart(t *testing.T) {
 		sqlutils.ToRowFn(sqlutils.RowIdxFn, sqlutils.RowModuloFn(2)),
 	)
 
-	tableDesc := desctestutils.TestingGetPublicTableDescriptor(
-		tc.Server(0).DB(), keys.SystemSQLCodec, "test", "foo")
-	tc.SplitTable(t, tableDesc, []serverutils.SplitPoint{
-		{TargetNodeIdx: 1, Vals: []interface{}{100}},
-		{TargetNodeIdx: 2, Vals: []interface{}{200}},
-		{TargetNodeIdx: 3, Vals: []interface{}{300}},
-	})
+	sqlDB.Exec(t, `CREATE TABLE t1 (a INT PRIMARY KEY)`)
+	sqlDB.Exec(t, `INSERT INTO t1 (a) SELECT * FROM generate_series(1, 5000);`)
 
 	// Create a factory which executes the CREATE CHANGEFEED statement on server 1.
 	// Feed logic (helpers) running on node 4.
@@ -6255,7 +6249,7 @@ func TestChangefeedHandlesRollingRestart(t *testing.T) {
 	defer closeSink()
 
 	proceed <- struct{}{} // Allow changefeed to start.
-	feed := feed(t, f, "CREATE CHANGEFEED FOR foo WITH initial_scan='no', min_checkpoint_frequency='100ms'")
+	feed := feed(t, f, "CREATE CHANGEFEED FOR foo WITH initial_scan='only', min_checkpoint_frequency='100ms'")
 	defer closeFeed(t, feed)
 
 	jf := feed.(cdctest.EnterpriseTestFeed)
@@ -6277,13 +6271,14 @@ func TestChangefeedHandlesRollingRestart(t *testing.T) {
 	// the drain logic should preserve up-to-date restart information.
 	for i := 0; i < numNodes; i++ {
 		beforeInsert := tc.Server(3).Clock().Now()
-		sqlDB.Exec(t, "UPDATE test.foo SET v=$1 WHERE k IN (10, 110, 220, 330)", 42+i)
-		assertPayloads(t, feed, []string{
-			fmt.Sprintf(`foo: [10]->{"after": {"k": 10, "v": %d}}`, 42+i),
-			fmt.Sprintf(`foo: [110]->{"after": {"k": 110, "v": %d}}`, 42+i),
-			fmt.Sprintf(`foo: [220]->{"after": {"k": 220, "v": %d}}`, 42+i),
-			fmt.Sprintf(`foo: [330]->{"after": {"k": 330, "v": %d}}`, 42+i),
-		})
+		var expectedMessages []string
+		for i := 1; i <= 5000; i++ {
+			expectedMessages = append(expectedMessages, fmt.Sprintf(
+				`t1: [%d]->{"after": {"a": %d}}`, i, i,
+			))
+		}
+
+		assertPayloads(t, feed, expectedMessages)
 
 		// Wait for a checkpoint attempt.  The checkpoint will not be committed
 		// to the jobs table (due to testing knobs), but when we trigger drain

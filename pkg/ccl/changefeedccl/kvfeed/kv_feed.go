@@ -331,6 +331,7 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 
 	for i := 0; ; i++ {
 		initialScan := i == 0
+		log.Infof(ctx, "initialScan is %v", i)
 		log.Infof(ctx, "f.initialHighWater is %v", f.initialHighWater)
 		log.Infof(ctx, "f.endTime is %v", f.endTime)
 		initialScanOnly := f.endTime.EqOrdering(f.initialHighWater)
@@ -508,6 +509,7 @@ func (f *kvFeed) scanIfShould(
 
 	if (!isInitialScan && f.schemaChangePolicy == changefeedbase.OptSchemaChangePolicyNoBackfill) ||
 		len(spansToBackfill) == 0 {
+		log.Infof(ctx, "no backfill needed for %v", scanTime)
 		return spansToScan, scanTime, nil
 	}
 

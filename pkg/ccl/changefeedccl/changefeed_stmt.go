@@ -1111,6 +1111,7 @@ func (b *changefeedResumer) Resume(ctx context.Context, execCtx interface{}) err
 	jobID := b.job.ID()
 	details := b.job.Details().(jobspb.ChangefeedDetails)
 	progress := b.job.Progress()
+	log.Infof(ctx, "changefeed job %d: resuming with progress %s", jobID, progress.GetProgress())
 
 	if err := b.ensureClusterIDMatches(ctx, jobExec.ExtendedEvalContext().ClusterID); err != nil {
 		return err
@@ -1315,6 +1316,7 @@ func (b *changefeedResumer) resumeWithRetries(
 			sli.ErrorRetries.Inc(1)
 		}
 
+		log.Infof(ctx, "changefeed job %d: resuming with progress %v", jobID, localState.progress.GetProgress())
 		if err := reconcileJobStateWithLocalState(ctx, jobID, localState, execCfg); err != nil {
 			// Any errors during reconciliation are retry-able.
 			// When retry-able error propagates to jobs registry, it will clear out
@@ -1367,6 +1369,7 @@ func reconcileJobStateWithLocalState(
 	}
 
 	localState.progress = reloadedJob.Progress()
+	log.Infof(ctx, "reloaded job progress: %v", localState.progress.GetProgress())
 
 	// localState contains an up-to-date checkpoint information transmitted by
 	// aggregator when flow was terminated. To be safe, we don't blindly trust
@@ -1377,6 +1380,7 @@ func reconcileJobStateWithLocalState(
 	if hw := localState.progress.GetHighWater(); hw != nil {
 		highWater = *hw
 	}
+	log.Infof(ctx, "reloaded job highwater: %v", highWater)
 
 	// Build frontier based on tracked spans.
 	sf, err := span.MakeFrontierAt(highWater, localState.trackedSpans...)
