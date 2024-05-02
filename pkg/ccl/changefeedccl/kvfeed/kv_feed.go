@@ -149,6 +149,7 @@ func Run(ctx context.Context, cfg Config) error {
 		return errors.CombineErrors(err, f.writer.CloseWithReason(ctx, err))
 	}
 
+	log.Info(ctx, "stopping kv feed: changefeed completed check")
 	if isChangefeedCompleted {
 		log.Info(ctx, "stopping kv feed: changefeed completed")
 	} else {
