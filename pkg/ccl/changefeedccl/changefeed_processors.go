@@ -1858,6 +1858,7 @@ type spanIter func(forEachSpan span.Operation)
 func getCheckpointSpans(
 	frontier hlc.Timestamp, forEachSpan spanIter, maxBytes int64,
 ) (spans []roachpb.Span, timestamp hlc.Timestamp) {
+	log.Infof(context.Background(), "getCheckpointSpans: frontier timestamp=%s", frontier)
 	// Collect leading spans into a SpanGroup to merge adjacent spans and store
 	// the lowest timestamp found
 	var checkpointSpanGroup roachpb.SpanGroup

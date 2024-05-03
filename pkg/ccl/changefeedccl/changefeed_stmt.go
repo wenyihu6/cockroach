@@ -1389,6 +1389,7 @@ func reconcileJobStateWithLocalState(
 	}
 	// Advance frontier based on the information received from the aggregators.
 	for _, s := range localState.aggregatorFrontier {
+		log.Infof(ctx, "forwarding span %v to %v", s.Span, s.Timestamp)
 		_, err := sf.Forward(s.Span, s.Timestamp)
 		if err != nil {
 			return err

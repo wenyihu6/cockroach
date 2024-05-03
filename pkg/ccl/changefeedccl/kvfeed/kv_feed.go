@@ -331,7 +331,7 @@ func (f *kvFeed) run(ctx context.Context) (err error) {
 
 	for i := 0; ; i++ {
 		initialScan := i == 0
-		log.Infof(ctx, "initialScan is %v", i)
+		log.Infof(ctx, "initialScan i is %v", i)
 		log.Infof(ctx, "f.initialHighWater is %v", f.initialHighWater)
 		log.Infof(ctx, "f.endTime is %v", f.endTime)
 		initialScanOnly := f.endTime.EqOrdering(f.initialHighWater)
