@@ -352,6 +352,10 @@ func (ca *changeAggregator) Start(ctx context.Context) {
 	// change events from.  When there's an inital scan, we want the scan to cover
 	// data up to the StatementTime and change events to begin from that point.
 	kvFeedHighWater := ca.frontier.Frontier()
+	ca.frontier.Entries(func(r roachpb.Span, ts hlc.Timestamp) (done span.OpResult) {
+		log.Infof(ctx, "span: %s, ts: %s", r, ts)
+		return span.ContinueMatch
+	})
 	log.Infof(ctx, "ca.frontier.Frontier(): %s", kvFeedHighWater)
 	if needsInitialScan {
 		kvFeedHighWater = ca.spec.Feed.StatementTime
