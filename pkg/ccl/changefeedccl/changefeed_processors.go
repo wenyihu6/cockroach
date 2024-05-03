@@ -346,6 +346,7 @@ func (ca *changeAggregator) Start(ctx context.Context) {
 
 	// If the initial scan was disabled the highwater would've already been forwarded
 	needsInitialScan := ca.frontier.Frontier().IsEmpty()
+	log.Infof(ctx, "initial scan: %t", needsInitialScan)
 
 	// The "HighWater" of the KVFeed is the timestamp it will begin streaming
 	// change events from.  When there's an inital scan, we want the scan to cover
@@ -354,6 +355,7 @@ func (ca *changeAggregator) Start(ctx context.Context) {
 	if needsInitialScan {
 		kvFeedHighWater = ca.spec.Feed.StatementTime
 	}
+	log.Infof(ctx, "kvFeedHighWater: %s", kvFeedHighWater)
 
 	// TODO(yevgeniy): Introduce separate changefeed monitor that's a parent
 	// for all changefeeds to control memory allocated to all changefeeds.
