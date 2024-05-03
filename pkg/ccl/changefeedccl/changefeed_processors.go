@@ -1845,6 +1845,7 @@ func makeSchemaChangeFrontier(
 // ForwardResolvedSpan advances the timestamp for a resolved span, taking care
 // of updating schema change boundary information.
 func (f *schemaChangeFrontier) ForwardResolvedSpan(r jobspb.ResolvedSpan) (bool, error) {
+	log.Infof(context.Background(), "ForwardResolvedSpan: %v", r)
 	if r.BoundaryType != jobspb.ResolvedSpan_NONE {
 		if !f.boundaryTime.IsEmpty() && r.Timestamp.Less(f.boundaryTime) {
 			// Boundary resolved events should be ingested from the schema feed

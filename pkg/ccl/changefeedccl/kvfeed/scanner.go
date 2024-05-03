@@ -228,6 +228,7 @@ func (p *scanRequestScanner) exportSpan(
 		scanDuration += afterScan.Sub(start)
 		bufferDuration += afterBuffer.Sub(afterScan)
 		if res.ResumeSpan != nil {
+			log.Infof(ctx, `resuming scan is non nil at %s`, res.ResumeSpan)
 			consumed := roachpb.Span{Key: remaining.Key, EndKey: res.ResumeSpan.Key}
 			if err := sink.Add(
 				ctx, kvevent.NewBackfillResolvedEvent(consumed, ts, boundaryType),
