@@ -84,6 +84,7 @@ func distChangefeedFlow(
 ) error {
 	opts := changefeedbase.MakeStatementOptions(details.Opts)
 	progress := localState.progress
+	log.Infof(ctx, `creating dist changefeed with local state progress %v`, progress)
 
 	// NB: A non-empty high water indicates that we have checkpointed a resolved
 	// timestamp. Skipping the initial scan is equivalent to starting the
@@ -91,7 +92,9 @@ func distChangefeedFlow(
 	// based on whether we should perform an initial scan.
 	{
 		h := progress.GetHighWater()
+		log.Infof(ctx, "highwater: %v", h)
 		noHighWater := (h == nil || h.IsEmpty())
+		log.Infof(ctx, "noHighWater: %v", noHighWater)
 		// We want to set the highWater and thus avoid an initial scan if either
 		// this is a cursor and there was no request for one, or we don't have a
 		// cursor but we have a request to not have an initial scan.
@@ -100,6 +103,7 @@ func distChangefeedFlow(
 			return err
 		}
 		if noHighWater && initialScanType == changefeedbase.NoInitialScan {
+			log.Infof(ctx, "skipping initial scan")
 			// If there is a cursor, the statement time has already been set to it.
 			progress.Progress = &jobspb.Progress_HighWater{HighWater: &details.StatementTime}
 		}
