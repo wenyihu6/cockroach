@@ -563,7 +563,7 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 			checkpointedSpanTs = initialHighWater.Next()
 		}
 	}
-	log.Info(ca.Ctx(), "checkpointedSpanTs is: ", checkpointedSpanTs)
+	log.Infof(ca.Ctx(), "checkpointedSpanTs is: %v", checkpointedSpanTs)
 	// Checkpointed spans are spans that were above the highwater mark, and we
 	// must preserve that information in the frontier for future checkpointing.
 	for _, checkpointedSpan := range ca.spec.Checkpoint.Spans {
