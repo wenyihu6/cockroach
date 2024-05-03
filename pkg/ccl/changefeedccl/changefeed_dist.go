@@ -452,6 +452,7 @@ func makePlan(
 		var aggregatorCheckpoint execinfrapb.ChangeAggregatorSpec_Checkpoint
 		var checkpointSpanGroup roachpb.SpanGroup
 
+		log.Info(ctx, "CALLED HERE")
 		if checkpoint != nil {
 			log.Infof(ctx, "using checkpoint: %v", checkpoint)
 			checkpointSpanGroup.Add(checkpoint.Spans...)
@@ -478,6 +479,7 @@ func makePlan(
 				}
 			}
 
+			log.Infof(ctx, "aggregatorCheckpoint is %v", aggregatorCheckpoint)
 			aggregatorSpecs[i] = &execinfrapb.ChangeAggregatorSpec{
 				Watches:    watches,
 				Checkpoint: aggregatorCheckpoint,

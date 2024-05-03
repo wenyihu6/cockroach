@@ -528,13 +528,11 @@ func makeKVFeedMonitoringCfg(
 // to name its output files in lexicographically monotonic fashion.
 func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err error) {
 	var initialHighWater hlc.Timestamp
-	first := true
 	spans = make([]roachpb.Span, 0, len(ca.spec.Watches))
 	for _, watch := range ca.spec.Watches {
-		if first || watch.InitialResolved.Less(initialHighWater) {
+		if initialHighWater.IsEmpty() || watch.InitialResolved.Less(initialHighWater) {
 			log.Infof(ca.Ctx(), "InitialResolved is: %s", watch.InitialResolved)
 			initialHighWater = watch.InitialResolved
-			first = false
 		}
 		spans = append(spans, watch.Span)
 	}
@@ -553,6 +551,7 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 	}
 
 	checkpointedSpanTs := ca.spec.Checkpoint.Timestamp
+	log.Infof(ca.Ctx(), "before checkpointedSpanTs is: %v", checkpointedSpanTs)
 
 	// Checkpoint records from 21.2 were used only for backfills and did not store
 	// the timestamp, since in a backfill it must either be the StatementTime for
