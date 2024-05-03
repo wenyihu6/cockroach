@@ -536,6 +536,7 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 		}
 		spans = append(spans, watch.Span)
 	}
+	// this is wrong initialHighWater is:
 	log.Infof(ca.Ctx(), "initialHighWater is: %s", initialHighWater)
 
 	ca.frontier, err = makeSchemaChangeFrontier(initialHighWater, spans...)
@@ -731,6 +732,9 @@ func (ca *changeAggregator) computeTrailingMetadata(meta *execinfrapb.Changefeed
 
 	// Build out the list of frontier spans.
 	ca.frontier.Entries(func(r roachpb.Span, ts hlc.Timestamp) (done span.OpResult) {
+		if ts.IsEmpty() {
+			log.Info(ca.Ctx(), "checkpointing span is empty")
+		}
 		meta.Checkpoint = append(meta.Checkpoint,
 			execinfrapb.ChangefeedMeta_FrontierSpan{
 				Span:      r,
