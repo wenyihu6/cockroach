@@ -462,6 +462,7 @@ func (f *kvFeed) scanIfShould(
 	// time with an initial backfill but if you use a cursor then you will get the
 	// updates after that timestamp.
 	isInitialScan := initialScan && f.withInitialBackfill
+	log.Infof(ctx, "initialScan is %v, withInitialBackfill %v", initialScan, f.withInitialBackfill)
 	var spansToScan []roachpb.Span
 	if isInitialScan {
 		scanTime = highWater
@@ -539,7 +540,7 @@ func (f *kvFeed) scanIfShould(
 
 	// We return entire set of spans (ignoring possible checkpoint) because all of those
 	// spans have been scanned up to and including scanTime.
-	log.Infof(ctx, "backfilled %d spans at %v", len(spansToScan), scanTime
+	log.Infof(ctx, "backfilled %d spans at %v", len(spansToScan), scanTime)
 	return spansToScan, scanTime, nil
 }
 
