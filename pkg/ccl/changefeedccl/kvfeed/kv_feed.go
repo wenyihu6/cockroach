@@ -465,8 +465,10 @@ func (f *kvFeed) scanIfShould(
 	var spansToScan []roachpb.Span
 	if isInitialScan {
 		scanTime = highWater
+		log.Infof(ctx, "initial scan at %v", scanTime)
 		spansToScan = f.spans
 	} else if len(events) > 0 {
+		log.Infof(ctx, "found %d events in scanIfShould", len(events))
 		// Only backfill for the tables which have events which may not be all
 		// of the targets.
 		for _, ev := range events {
@@ -489,17 +491,20 @@ func (f *kvFeed) scanIfShould(
 				}
 			}
 			if !scanTime.Equal(ev.After.GetModificationTime()) {
+				log.Infof(ctx, "backfill needed for %v at %v", ev.After.GetID(), ev.After.GetModificationTime())
 				return nil, hlc.Timestamp{}, errors.Newf(
 					"found event in scanIfShould which did not occur at the scan time %v: %v",
 					scanTime, ev)
 			}
 		}
 	} else {
+		log.Infof(ctx, "no events found in scanIfShould")
 		return nil, hlc.Timestamp{}, nil
 	}
 
 	// Consume the events up to scanTime.
 	if _, err := f.tableFeed.Pop(ctx, scanTime); err != nil {
+		log.Info(ctx, "error popping events")
 		return nil, hlc.Timestamp{}, err
 	}
 
@@ -528,11 +533,13 @@ func (f *kvFeed) scanIfShould(
 		Knobs:     f.knobs,
 		Boundary:  boundaryType,
 	}); err != nil {
+		log.Info(ctx, "error scanning")
 		return nil, hlc.Timestamp{}, err
 	}
 
 	// We return entire set of spans (ignoring possible checkpoint) because all of those
 	// spans have been scanned up to and including scanTime.
+	log.Infof(ctx, "backfilled %d spans at %v", len(spansToScan), scanTime
 	return spansToScan, scanTime, nil
 }
 
