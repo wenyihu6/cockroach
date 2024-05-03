@@ -352,8 +352,10 @@ func (ca *changeAggregator) Start(ctx context.Context) {
 	// change events from.  When there's an inital scan, we want the scan to cover
 	// data up to the StatementTime and change events to begin from that point.
 	kvFeedHighWater := ca.frontier.Frontier()
+	log.Infof(ctx, "ca.frontier.Frontier(): %s", kvFeedHighWater)
 	if needsInitialScan {
 		kvFeedHighWater = ca.spec.Feed.StatementTime
+		log.Infof(ctx, "ca.spec.Feed.StatementTime: %s", kvFeedHighWater)
 	}
 	log.Infof(ctx, "kvFeedHighWater: %s", kvFeedHighWater)
 
@@ -533,6 +535,7 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 		}
 		spans = append(spans, watch.Span)
 	}
+	log.Infof(ca.Ctx(), "initialHighWater is: %s", initialHighWater)
 
 	ca.frontier, err = makeSchemaChangeFrontier(initialHighWater, spans...)
 	if err != nil {
@@ -543,6 +546,7 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 		// to the StatementTime -- this is the time we will be scanning spans.
 		// Spans that reach this time are eligible for checkpointing.
 		ca.frontier.initialHighWater = ca.spec.Feed.StatementTime
+		log.Infof(ca.Ctx(), "ca.frontier.initialHighWater is: %s", ca.frontier.initialHighWater)
 	}
 
 	checkpointedSpanTs := ca.spec.Checkpoint.Timestamp
@@ -552,11 +556,14 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 	// an initial backfill, or right after the high-water for schema backfills.
 	if checkpointedSpanTs.IsEmpty() {
 		if initialHighWater.IsEmpty() {
+			log.Infof(ca.Ctx(), "no checkpointed timestamp, using StatementTime")
 			checkpointedSpanTs = ca.spec.Feed.StatementTime
 		} else {
+			log.Infof(ca.Ctx(), "no checkpointed timestamp, using initialHighWater")
 			checkpointedSpanTs = initialHighWater.Next()
 		}
 	}
+	log.Info(ca.Ctx(), "checkpointedSpanTs is: ", checkpointedSpanTs)
 	// Checkpointed spans are spans that were above the highwater mark, and we
 	// must preserve that information in the frontier for future checkpointing.
 	for _, checkpointedSpan := range ca.spec.Checkpoint.Spans {
