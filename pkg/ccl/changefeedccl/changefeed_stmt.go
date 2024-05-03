@@ -1236,6 +1236,7 @@ func (b *changefeedResumer) resumeWithRetries(
 	initialProgress jobspb.Progress,
 	execCfg *sql.ExecutorConfig,
 ) error {
+	log.Info(ctx, "starting changefeed with resumeWithRetries")
 	// If execution needs to be and is relocated, the resulting error should be
 	// returned without retry, as it indicates _this_ execution should cease now
 	// that execution is elsewhere, so check this before the retry loop.
@@ -1266,6 +1267,7 @@ func (b *changefeedResumer) resumeWithRetries(
 	// the up-to-date checkpoint and node health information in case
 	// changefeed encounters transient error.
 	localState := &cachedState{progress: initialProgress}
+	log.Infof(ctx, "CHANGEFEED %d initial progress %v", jobID, localState.progress.GetProgress())
 	jobExec.ExtendedEvalContext().ChangefeedState = localState
 	knobs, _ := execCfg.DistSQLSrv.TestingKnobs.Changefeed.(*TestingKnobs)
 
@@ -1353,6 +1355,7 @@ func (b *changefeedResumer) resumeWithRetries(
 func reconcileJobStateWithLocalState(
 	ctx context.Context, jobID jobspb.JobID, localState *cachedState, execCfg *sql.ExecutorConfig,
 ) error {
+	log.Info(ctx, "reconciling job state with local state")
 	// Re-load the job in order to update our progress object, which may have
 	// been updated by the changeFrontier processor since the flow started.
 	reloadedJob, reloadErr := execCfg.JobRegistry.LoadClaimedJob(ctx, jobID)
