@@ -377,6 +377,11 @@ func makePlan(
 	drainingNodes []roachpb.NodeID,
 ) func(context.Context, *sql.DistSQLPlanner) (*sql.PhysicalPlan, *sql.PlanningCtx, error) {
 	return func(ctx context.Context, dsp *sql.DistSQLPlanner) (*sql.PhysicalPlan, *sql.PlanningCtx, error) {
+		log.Infof(ctx, "creating changefeed with %d watched tables", len(details.TargetSpecifications))
+		if checkpoint != nil {
+			log.Infof(ctx, "checkpoint: %v", checkpoint)
+		}
+		log.Infof(ctx, "draining nodes: %v", drainingNodes)
 		sv := &execCtx.ExecCfg().Settings.SV
 		maybeCfKnobs, haveKnobs := execCtx.ExecCfg().DistSQLSrv.TestingKnobs.Changefeed.(*TestingKnobs)
 		var blankTxn *kv.Txn
@@ -448,6 +453,7 @@ func makePlan(
 		var checkpointSpanGroup roachpb.SpanGroup
 
 		if checkpoint != nil {
+			log.Infof(ctx, "using checkpoint: %v", checkpoint)
 			checkpointSpanGroup.Add(checkpoint.Spans...)
 			aggregatorCheckpoint.Spans = checkpoint.Spans
 			aggregatorCheckpoint.Timestamp = checkpoint.Timestamp
@@ -462,8 +468,10 @@ func makePlan(
 			for watchIdx, nodeSpan := range sp.Spans {
 				initialResolved := initialHighWater
 				if checkpointSpanGroup.Encloses(nodeSpan) {
+					log.Infof(ctx, "checkpointSpanGroup.Encloses(nodeSpan)")
 					initialResolved = checkpoint.Timestamp
 				}
+				log.Infof(ctx, "initial resolved for span %s: %s", nodeSpan, initialResolved)
 				watches[watchIdx] = execinfrapb.ChangeAggregatorSpec_Watch{
 					Span:            nodeSpan,
 					InitialResolved: initialResolved,

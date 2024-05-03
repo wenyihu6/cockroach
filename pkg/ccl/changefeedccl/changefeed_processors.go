@@ -531,6 +531,7 @@ func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err e
 	spans = make([]roachpb.Span, 0, len(ca.spec.Watches))
 	for _, watch := range ca.spec.Watches {
 		if initialHighWater.IsEmpty() || watch.InitialResolved.Less(initialHighWater) {
+			log.Infof(ca.Ctx(), "InitialResolved is: %s", watch.InitialResolved)
 			initialHighWater = watch.InitialResolved
 		}
 		spans = append(spans, watch.Span)
