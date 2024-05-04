@@ -1246,6 +1246,7 @@ func (cf *changeFrontier) Start(ctx context.Context) {
 
 	cf.highWaterAtStart = cf.spec.Feed.StatementTime
 	if cf.EvalCtx.ChangefeedState == nil {
+		log.Infof(ctx, "no local state")
 		cf.MoveToDraining(errors.AssertionFailedf("expected initialized local state"))
 		return
 	}
