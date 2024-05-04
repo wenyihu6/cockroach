@@ -1524,16 +1524,19 @@ func (cf *changeFrontier) maybeMarkJobIdle(recentKVCount uint64) {
 func (cf *changeFrontier) maybeCheckpointJob(
 	resolvedSpan jobspb.ResolvedSpan, frontierChanged bool,
 ) (bool, error) {
+	log.Info(cf.Ctx(), "maybeCheckpointJob")
 	// When in a Backfill, the frontier remains unchanged at the backfill boundary
 	// as we receive spans from the scan request at the Backfill Timestamp
 	inBackfill := !frontierChanged && resolvedSpan.Timestamp.Equal(cf.frontier.BackfillTS())
 
+	log.Infof(cf.Ctx(), "frontier changed: %t, in backfill: %t", frontierChanged, inBackfill)
 	// If we're not in a backfill, highwater progress and an empty checkpoint will
 	// be saved. This is throttled however we always persist progress to a schema
 	// boundary.
 	updateHighWater :=
 		!inBackfill && (cf.frontier.schemaChangeBoundaryReached() || cf.js.canCheckpointHighWatermark(frontierChanged))
 
+	log.Infof(cf.Ctx(), "updateHighWater: %t", updateHighWater)
 	// During backfills or when some problematic spans stop advancing, the
 	// highwater mark remains fixed while other spans may significantly outpace
 	// it, therefore to avoid losing that progress on changefeed resumption we
@@ -1541,6 +1544,7 @@ func (cf *changeFrontier) maybeCheckpointJob(
 	updateCheckpoint :=
 		(inBackfill || cf.frontier.hasLaggingSpans(cf.spec.Feed.StatementTime, &cf.js.settings.SV)) &&
 			cf.js.canCheckpointSpans()
+	log.Infof(cf.Ctx(), "updateCheckpoint: %t", updateCheckpoint)
 
 	// If the highwater has moved an empty checkpoint will be saved
 	var checkpoint jobspb.ChangefeedProgress_Checkpoint
@@ -1548,6 +1552,7 @@ func (cf *changeFrontier) maybeCheckpointJob(
 		maxBytes := changefeedbase.FrontierCheckpointMaxBytes.Get(&cf.flowCtx.Cfg.Settings.SV)
 		checkpoint.Spans, checkpoint.Timestamp = cf.frontier.getCheckpointSpans(maxBytes)
 	}
+	log.Infof(cf.Ctx(), "checkpoint spans: %d, timestamp: %s", len(checkpoint.Spans), checkpoint.Timestamp)
 
 	if updateCheckpoint || updateHighWater {
 		if cf.knobs.ShouldCheckpointToJobRecord != nil && !cf.knobs.ShouldCheckpointToJobRecord(cf.frontier.Frontier()) {
@@ -1555,6 +1560,7 @@ func (cf *changeFrontier) maybeCheckpointJob(
 		}
 		checkpointStart := timeutil.Now()
 		updated, err := cf.checkpointJobProgress(cf.frontier.Frontier(), checkpoint)
+		log.Infof(cf.Ctx(), "updated: %t, err: %v", updated, err)
 		if err != nil {
 			return false, err
 		}
@@ -1574,6 +1580,7 @@ func (cf *changeFrontier) checkpointJobProgress(
 				errors.New("cf.knobs.RaiseRetryableError"))
 		}
 	}
+	log.Info(cf.Ctx(), "checkpointJobProgress")
 
 	updateRunStatus := timeutil.Since(cf.js.lastRunStatusUpdate) > runStatusUpdateFrequency
 	if updateRunStatus {
@@ -1587,15 +1594,18 @@ func (cf *changeFrontier) checkpointJobProgress(
 			if err := md.CheckRunningOrReverting(); err != nil {
 				return err
 			}
+			log.Infof(cf.Ctx(), "updating job progress: %s", frontier)
 
 			// Advance resolved timestamp.
 			progress := md.Progress
 			progress.Progress = &jobspb.Progress_HighWater{
 				HighWater: &frontier,
 			}
+			log.Infof(cf.Ctx(), "progress: %s", progress.String())
 
 			changefeedProgress := progress.Details.(*jobspb.Progress_Changefeed).Changefeed
 			changefeedProgress.Checkpoint = &checkpoint
+			log.Infof(cf.Ctx(), "checkpoint: %s", checkpoint.String())
 
 			if err := cf.manageProtectedTimestamps(cf.Ctx(), txn, changefeedProgress); err != nil {
 				log.Warningf(cf.Ctx(), "error managing protected timestamp record: %v", err)
@@ -1625,6 +1635,7 @@ func (cf *changeFrontier) checkpointJobProgress(
 	cf.localState.SetHighwater(frontier)
 	cf.localState.SetCheckpoint(checkpoint.Spans, checkpoint.Timestamp)
 
+	log.Infof(cf.Ctx(), "new local state: %s", cf.localState.progress.String())
 	return true, nil
 }
 

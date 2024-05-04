@@ -1284,6 +1284,14 @@ func (b *changefeedResumer) resumeWithRetries(
 				knobs.BeforeDistChangefeed()
 			}
 
+			if err := reconcileJobStateWithLocalState(ctx, jobID, localState, execCfg); err != nil {
+				// Any errors during reconciliation are retry-able.
+				// When retry-able error propagates to jobs registry, it will clear out
+				// claim information, and will restart this job somewhere else (though,
+				// it's possible that the job gets restarted on this node).
+				return jobs.MarkAsRetryJobError(err)
+			}
+
 			flowErr = distChangefeedFlow(ctx, jobExec, jobID, details, localState, startedCh)
 			if flowErr == nil {
 				return nil // Changefeed completed -- e.g. due to initial_scan=only mode.
@@ -1319,13 +1327,6 @@ func (b *changefeedResumer) resumeWithRetries(
 		}
 
 		log.Infof(ctx, "changefeed job %d: resuming with progress %v", jobID, localState.progress.GetProgress())
-		if err := reconcileJobStateWithLocalState(ctx, jobID, localState, execCfg); err != nil {
-			// Any errors during reconciliation are retry-able.
-			// When retry-able error propagates to jobs registry, it will clear out
-			// claim information, and will restart this job somewhere else (though,
-			// it's possible that the job gets restarted on this node).
-			return jobs.MarkAsRetryJobError(err)
-		}
 
 		if errors.Is(flowErr, changefeedbase.ErrNodeDraining) {
 			select {
@@ -1373,6 +1374,7 @@ func reconcileJobStateWithLocalState(
 
 	localState.progress = reloadedJob.Progress()
 	log.Infof(ctx, "reloaded job progress: %v", localState.progress.GetProgress())
+	log.Infof(ctx, "CHANGEFEED %d reloading job progress checkpoint: %v", jobID, localState.progress.GetChangefeed().Checkpoint)
 
 	// localState contains an up-to-date checkpoint information transmitted by
 	// aggregator when flow was terminated. To be safe, we don't blindly trust
@@ -1384,6 +1386,10 @@ func reconcileJobStateWithLocalState(
 		highWater = *hw
 	}
 	log.Infof(ctx, "reloaded job highwater: %v", highWater)
+
+	// if highWater.IsEmpty() {
+	// 	return nil
+	// }
 
 	// Build frontier based on tracked spans.
 	sf, err := span.MakeFrontierAt(highWater, localState.trackedSpans...)
@@ -1400,25 +1406,39 @@ func reconcileJobStateWithLocalState(
 	}
 
 	maxBytes := changefeedbase.FrontierCheckpointMaxBytes.Get(&execCfg.Settings.SV)
+	log.Infof(ctx, "sf.Frontier(): %v", sf.Frontier())
 	checkpointSpans, checkpointTS := getCheckpointSpans(sf.Frontier(), func(forEachSpan span.Operation) {
 		for _, fs := range localState.aggregatorFrontier {
+			log.Infof(ctx, "localState.aggregatorFrontier: forwarding span %v to %v", fs.Span, fs.Timestamp)
 			forEachSpan(fs.Span, fs.Timestamp)
 		}
 	}, maxBytes)
 
+	//getCheckpointSpans(sf.Frontier(), func(forEachSpan span.Operation) {
+	//	for _, fs := range localState.aggregatorFrontier {
+	//		forEachSpan(fs.Span, fs.Timestamp)
+	//	}
+	//}, maxBytes)
+
 	// Update checkpoint.
-	updateHW := highWater.Less(sf.Frontier())
+	updateHW := !highWater.IsEmpty() && highWater.Less(sf.Frontier())
+	log.Infof(ctx, "ID HERE reconciling job %d: highwater=%v, checkpoint=%v", jobID, highWater, checkpointTS)
 	updateSpanCheckpoint := len(checkpointSpans) > 0
+
+	log.Infof(ctx, "updateHW: %v", updateHW)
+	log.Infof(ctx, "highWater: %v", highWater)
+	log.Infof(ctx, "sf.Frontier(): %v", sf.Frontier())
+	log.Infof(ctx, "updateSpanCheckpoint: %v", updateSpanCheckpoint)
+	log.Infof(ctx, "FIRTS Applying checkpoint to job record:  hw=%v, cf=%v",
+		localState.progress.GetHighWater(), localState.progress.GetChangefeed())
 
 	if updateHW || updateSpanCheckpoint {
 		if updateHW {
 			localState.SetHighwater(sf.Frontier())
 		}
 		localState.SetCheckpoint(checkpointSpans, checkpointTS)
-		if log.V(1) {
-			log.Infof(ctx, "Applying checkpoint to job record:  hw=%v, cf=%v",
-				localState.progress.GetHighWater(), localState.progress.GetChangefeed())
-		}
+		log.Infof(ctx, "Applying checkpoint to job record:  hw=%v, cf=%v",
+			localState.progress.GetHighWater(), localState.progress.GetChangefeed())
 		return reloadedJob.NoTxn().Update(ctx,
 			func(txn isql.Txn, md jobs.JobMetadata, ju *jobs.JobUpdater) error {
 				if err := md.CheckRunningOrReverting(); err != nil {

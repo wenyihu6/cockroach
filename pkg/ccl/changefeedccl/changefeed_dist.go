@@ -472,6 +472,7 @@ func makePlan(
 			watches := make([]execinfrapb.ChangeAggregatorSpec_Watch, len(sp.Spans))
 			for watchIdx, nodeSpan := range sp.Spans {
 				initialResolved := initialHighWater
+				log.Infof(ctx, "initial highwater for span %s: %s", nodeSpan, initialHighWater)
 				if checkpointSpanGroup.Encloses(nodeSpan) {
 					log.Infof(ctx, "checkpointSpanGroup.Encloses(nodeSpan)")
 					initialResolved = checkpoint.Timestamp
