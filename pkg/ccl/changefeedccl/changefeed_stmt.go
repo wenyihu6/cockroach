@@ -1319,6 +1319,7 @@ func (b *changefeedResumer) resumeWithRetries(
 		}
 
 		log.Infof(ctx, "changefeed job %d: resuming with progress %v", jobID, localState.progress.GetProgress())
+	
 		if err := reconcileJobStateWithLocalState(ctx, jobID, localState, execCfg); err != nil {
 			// Any errors during reconciliation are retry-able.
 			// When retry-able error propagates to jobs registry, it will clear out
@@ -1326,7 +1327,7 @@ func (b *changefeedResumer) resumeWithRetries(
 			// it's possible that the job gets restarted on this node).
 			return jobs.MarkAsRetryJobError(err)
 		}
-
+	
 		if errors.Is(flowErr, changefeedbase.ErrNodeDraining) {
 			select {
 			case <-drainCh:
@@ -1385,6 +1386,10 @@ func reconcileJobStateWithLocalState(
 	}
 	log.Infof(ctx, "reloaded job highwater: %v", highWater)
 
+	if localState.progress.GetHighWater() == nil || localState.progress.GetHighWater().IsEmpty() {
+		return nil 
+	}
+
 	// Build frontier based on tracked spans.
 	sf, err := span.MakeFrontierAt(highWater, localState.trackedSpans...)
 	if err != nil {
@@ -1412,9 +1417,11 @@ func reconcileJobStateWithLocalState(
 
 	if updateHW || updateSpanCheckpoint {
 		if updateHW {
+			log.Infof(ctx, "updating highwater: %v", sf.Frontier())
 			localState.SetHighwater(sf.Frontier())
 		}
 		localState.SetCheckpoint(checkpointSpans, checkpointTS)
+		log.Infof(ctx, "updating SetCheckpoint: checkpointSpans is %v and checkpointTS is %v", checkpointSpans, checkpointTS)
 		if log.V(1) {
 			log.Infof(ctx, "Applying checkpoint to job record:  hw=%v, cf=%v",
 				localState.progress.GetHighWater(), localState.progress.GetChangefeed())

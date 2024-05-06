@@ -949,6 +949,7 @@ func runCDCBackfillRollingRestart(ctx context.Context, t test.Test, c cluster.Cl
 	// Keep ranges off n1 so that our plans use 2, 3, and 4.
 	t.L().Printf("setting up test data...")
 	for _, s := range []string{
+		`SET CLUSTER SETTING changefeed.shutdown_checkpoint.enabled=true`,
 		`ALTER RANGE default CONFIGURE ZONE USING constraints = '[-rack=0]'`,
 		fmt.Sprintf(`CREATE TABLE t (id PRIMARY KEY) AS SELECT generate_series(1, %d) id`, rowCount),
 		`ALTER TABLE t SCATTER`,
@@ -1015,7 +1016,7 @@ func runCDCBackfillRollingRestart(ctx context.Context, t test.Test, c cluster.Cl
 			t.L().Printf("exiting webhook sink status: %v", err)
 		}()
 
-		for i := 1; i < 5; i++ {
+		for i := 1; i < 10; i++ {
 			t.L().Printf("starting changefeed...")
 			var job int
 			if err := db.QueryRow(
