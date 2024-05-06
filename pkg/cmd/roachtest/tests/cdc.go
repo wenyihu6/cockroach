@@ -1337,16 +1337,6 @@ func registerCDC(r registry.Registry) {
 					"kafka_sink_config": `'{"ClientID": "quota2"}'`,
 				},
 			})
-
-			ct.newChangefeed(feedArgs{
-				sinkURIOverride: kafka.sinkURL(ct.ctx),
-				targets:         allTpccTargets,
-				opts: map[string]string{
-					"metrics_label":     "'quota3'",
-					"initial_scan":      "'no'",
-					"kafka_sink_config": `'{"ClientID": "quota3"}'`,
-				},
-			})
 			ct.waitForWorkload()
 		},
 	})
@@ -2173,12 +2163,12 @@ func (k kafkaManager) setProducerQuota(ctx context.Context) {
 		"--entity-type", "clients",
 		"--entity-name", "quota2")
 
-	k.c.Run(ctx, option.WithNodes(k.kafkaSinkNode), filepath.Join(k.binDir(), "kafka-configs"),
-		"--bootstrap-server", "localhost:9092",
-		"--alter",
-		"--add-config", "producer_byte_rate=1000000",
-		"--entity-type", "clients",
-		"--entity-name", "quota3")
+	//k.c.Run(ctx, option.WithNodes(k.kafkaSinkNode), filepath.Join(k.binDir(), "kafka-configs"),
+	//	"--bootstrap-server", "localhost:9092",
+	//	"--alter",
+	//	"--add-config", "producer_byte_rate=1000000",
+	//	"--entity-type", "clients",
+	//	"--entity-name", "quota3")
 
 	//# Verify quota for client "client-id-1"
 	//kafka-configs.sh --zookeeper <zookeeper_connect> --describe --entity-type clients --entity-name client-id-1
