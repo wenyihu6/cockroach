@@ -456,8 +456,10 @@ func makePlan(
 			if log.ExpensiveLogEnabled(ctx, 2) {
 				log.Infof(ctx, "watched spans for node %d: %v", sp.SQLInstanceID, sp)
 			}
+			log.Infof(ctx, "i is %v", i)
 			watches := make([]execinfrapb.ChangeAggregatorSpec_Watch, len(sp.Spans))
 			for watchIdx, nodeSpan := range sp.Spans {
+				log.Infof(ctx, "iwatchIdx is %v", watchIdx)
 				initialResolved := initialHighWater
 				if checkpointSpanGroup.Encloses(nodeSpan) {
 					log.Info(ctx, "checkpointSpanGroup.Encloses(nodeSpan) called here")

@@ -525,19 +525,6 @@ func makeKVFeedMonitoringCfg(
 func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err error) {
 	var initialHighWater hlc.Timestamp
 	spans = make([]roachpb.Span, 0, len(ca.spec.Watches))
-	swapI := 0
-	swapJ := 0
-	for i, watch := range ca.spec.Watches {
-		if !watch.InitialResolved.IsEmpty() {
-			swapI = i
-		} else {
-			swapJ = i
-		}
-	}
-	temp := ca.spec.Watches[swapI]
-	ca.spec.Watches[swapI] = ca.spec.Watches[swapJ] 
-	ca.spec.Watches[swapJ] = temp
-	
 	for i, watch := range ca.spec.Watches {
 		if (i == len(ca.spec.Watches)-1) {
 			if !watch.InitialResolved.IsEmpty() {
@@ -1545,7 +1532,7 @@ func (cf *changeFrontier) maybeCheckpointJob(
 	// If the highwater has moved an empty checkpoint will be saved
 	var checkpoint jobspb.ChangefeedProgress_Checkpoint
 	if updateCheckpoint {
-		log.Info(context.Background(), "updateCheckpoint is called")
+		log.Infof(context.Background(), "updateCheckpoint is called %v", inBackfill)
 		maxBytes := changefeedbase.FrontierCheckpointMaxBytes.Get(&cf.flowCtx.Cfg.Settings.SV)
 		checkpoint.Spans, checkpoint.Timestamp = cf.frontier.getCheckpointSpans(maxBytes)
 	}
