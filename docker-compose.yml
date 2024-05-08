@@ -1,0 +1,11 @@
+services:
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    network_mode: host
+    environment:
+      KAFKA_BROKER_ID: 3
+      KAFKA_ZOOKEEPER_CONNECT: wenyi-drt-kafka-0001.roachprod.crdb.io:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://wenyi-drt-kafka-0003.roachprod.crdb.io:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3

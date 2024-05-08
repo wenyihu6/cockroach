@@ -525,7 +525,25 @@ func makeKVFeedMonitoringCfg(
 func (ca *changeAggregator) setupSpansAndFrontier() (spans []roachpb.Span, err error) {
 	var initialHighWater hlc.Timestamp
 	spans = make([]roachpb.Span, 0, len(ca.spec.Watches))
-	for _, watch := range ca.spec.Watches {
+	swapI := 0
+	swapJ := 0
+	for i, watch := range ca.spec.Watches {
+		if !watch.InitialResolved.IsEmpty() {
+			swapI = i
+		} else {
+			swapJ = i
+		}
+	}
+	temp := ca.spec.Watches[swapI]
+	ca.spec.Watches[swapI] = ca.spec.Watches[swapJ] 
+	ca.spec.Watches[swapJ] = temp
+	
+	for i, watch := range ca.spec.Watches {
+		if (i == len(ca.spec.Watches)-1) {
+			if !watch.InitialResolved.IsEmpty() {
+				log.Info(context.Background(), "this is happening")
+			}
+		}
 		if initialHighWater.IsEmpty() || watch.InitialResolved.Less(initialHighWater) {
 			initialHighWater = watch.InitialResolved
 		}
@@ -1505,6 +1523,7 @@ func (cf *changeFrontier) maybeMarkJobIdle(recentKVCount uint64) {
 func (cf *changeFrontier) maybeCheckpointJob(
 	resolvedSpan jobspb.ResolvedSpan, frontierChanged bool,
 ) (bool, error) {
+	log.Info(context.Background(), "maybeCheckpointJob is called and we are updating")
 	// When in a Backfill, the frontier remains unchanged at the backfill boundary
 	// as we receive spans from the scan request at the Backfill Timestamp
 	inBackfill := !frontierChanged && resolvedSpan.Timestamp.Equal(cf.frontier.BackfillTS())
@@ -1526,6 +1545,7 @@ func (cf *changeFrontier) maybeCheckpointJob(
 	// If the highwater has moved an empty checkpoint will be saved
 	var checkpoint jobspb.ChangefeedProgress_Checkpoint
 	if updateCheckpoint {
+		log.Info(context.Background(), "updateCheckpoint is called")
 		maxBytes := changefeedbase.FrontierCheckpointMaxBytes.Get(&cf.flowCtx.Cfg.Settings.SV)
 		checkpoint.Spans, checkpoint.Timestamp = cf.frontier.getCheckpointSpans(maxBytes)
 	}
@@ -1535,6 +1555,7 @@ func (cf *changeFrontier) maybeCheckpointJob(
 			return false, nil
 		}
 		checkpointStart := timeutil.Now()
+		log.Infof(context.Background(), "updating checkpoint is called: %v", checkpoint)
 		updated, err := cf.checkpointJobProgress(cf.frontier.Frontier(), checkpoint)
 		if err != nil {
 			return false, err
@@ -1575,6 +1596,7 @@ func (cf *changeFrontier) checkpointJobProgress(
 				HighWater: &frontier,
 			}
 
+			log.Infof(context.Background(), "chcecked pointed got updated here : %v", checkpoint)
 			changefeedProgress := progress.Details.(*jobspb.Progress_Changefeed).Changefeed
 			changefeedProgress.Checkpoint = &checkpoint
 

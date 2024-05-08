@@ -950,6 +950,7 @@ func runCDCBackfillRollingRestart(ctx context.Context, t test.Test, c cluster.Cl
 	t.L().Printf("setting up test data...")
 	for _, s := range []string{
 		`SET CLUSTER SETTING changefeed.shutdown_checkpoint.enabled = true`,
+		`SET CLUSTER SETTING changefeed.frontier_checkpoint_frequency='1s'`,
 		`ALTER RANGE default CONFIGURE ZONE USING constraints = '[-rack=0]'`,
 		fmt.Sprintf(`CREATE TABLE t (id PRIMARY KEY) AS SELECT generate_series(1, %d) id`, rowCount),
 		`ALTER TABLE t SCATTER`,
@@ -1296,6 +1297,7 @@ func registerCDC(r registry.Registry) {
 		Timeout:          time.Minute * 15,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runCDCBackfillRollingRestart(ctx, t, c)
+			t.Fatal("tests passed but I want to see the outputs")
 		},
 	})
 	r.Add(registry.TestSpec{
