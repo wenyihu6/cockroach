@@ -949,7 +949,7 @@ func runCDCBackfillRollingRestart(ctx context.Context, t test.Test, c cluster.Cl
 	// Keep ranges off n1 so that our plans use 2, 3, and 4.
 	t.L().Printf("setting up test data...")
 	for _, s := range []string{
-		`SET CLUSTER SETTING changefeed.shutdown_checkpoint.enabled = true`,
+		`SET CLUSTER SETTING changefeed.shutdown_checkpoint.enabled = false`,
 		`SET CLUSTER SETTING changefeed.frontier_checkpoint_frequency='1s'`,
 		`ALTER RANGE default CONFIGURE ZONE USING constraints = '[-rack=0]'`,
 		fmt.Sprintf(`CREATE TABLE t (id PRIMARY KEY) AS SELECT generate_series(1, %d) id`, rowCount),
