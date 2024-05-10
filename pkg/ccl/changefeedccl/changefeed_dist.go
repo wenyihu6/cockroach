@@ -261,6 +261,7 @@ func startDistChangefeed(
 	if progress := localState.progress.GetChangefeed(); progress != nil && progress.Checkpoint != nil {
 		checkpoint = progress.Checkpoint
 	}
+	log.Infof(ctx, "startDistChangefeed is called: %v", checkpoint)
 	p, planCtx, err := makePlan(execCtx, jobID, details, initialHighWater,
 		trackedSpans, checkpoint, localState.drainingNodes)(ctx, dsp)
 	if err != nil {
