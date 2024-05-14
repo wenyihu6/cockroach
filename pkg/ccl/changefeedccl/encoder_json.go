@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	gojson "encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -231,6 +232,7 @@ func (e *versionEncoder) rowAsGoNative(
 
 	if err := row.ForEachColumn().Datum(func(d tree.Datum, col cdcevent.ResultColumn) error {
 		j, err := e.datumToJSON(ctx, d)
+		fmt.Printf("j after datumToJSON: %s\n", j)
 		if err != nil {
 			return err
 		}
@@ -441,6 +443,7 @@ func (e *jsonEncoder) initWrappedEnvelope(ctx context.Context) error {
 func (e *jsonEncoder) EncodeValue(
 	ctx context.Context, evCtx eventContext, updatedRow cdcevent.Row, prevRow cdcevent.Row,
 ) ([]byte, error) {
+	fmt.Printf("updatdeRow %v\n", updatedRow.DebugString())
 	if e.envelopeType == changefeedbase.OptEnvelopeKeyOnly {
 		return nil, nil
 	}

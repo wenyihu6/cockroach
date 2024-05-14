@@ -188,6 +188,29 @@ func TestChangefeedBasicQuery(t *testing.T) {
 	cdcTest(t, testFn)
 }
 
+func TestChangefeedGeo(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
+		sqlDB := sqlutils.MakeSQLRunner(s.DB)
+		sqlDB.Exec(t, `CREATE TABLE geo_test (check_in_location GEOMETRY(POINT,4326) NULL,rowid INT8 NOT VISIBLE NOT NULL DEFAULT unique_rowid(),CONSTRAINT geo_test_pkey PRIMARY KEY (rowid ASC))`)
+		sqlDB.Exec(t, `INSERT INTO geo_test(check_in_location) VALUES (ST_GeomFromText('POINT(-122.43708038330078 37.7709846496582)', 4326))`)
+
+		// r := sqlDB.Query(t, `SELECT * FROM geo_test`)
+		foo := feed(t, f, `CREATE CHANGEFEED FOR geo_test`)
+		defer closeFeed(t, foo)
+
+		//{"key":"[968286833137123329]","table":"geo_test","value":"{\"after\": {\"check_in_location\": {\"coordinates\": [40.7128, -74.006], \"type\": \"Point\"}, \"rowid\": 968286833137123329}}"}
+		//{"key":"[968286918728482817]","table":"geo_test","value":"{\"after\": {\"check_in_location\": {\"coordinates\": [-122.437080383, 37.77098465], \"type\": \"Point\"}, \"rowid\": 968286918728482817}}"}
+		assertPayloads(t, foo, []string{
+			`geo_test: [968470281800450049]->{"after": {"check_in_location": {"coordinates": [-122.437080383, 37.77098465], "type": "Point"}, "rowid": 968470281800450049}}`,
+		})
+	}
+
+	cdcTest(t, testFn, feedTestForceSink("kafka"))
+}
+
 // Same test as TestChangefeedBasicQuery, but using wrapped envelope with CDC query.
 func TestChangefeedBasicQueryWrapped(t *testing.T) {
 	defer leaktest.AfterTest(t)()
