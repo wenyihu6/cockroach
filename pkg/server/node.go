@@ -1657,48 +1657,6 @@ func (n *Node) RangeLookup(
 	return resp, nil
 }
 
-// RangeFeed implements the roachpb.InternalServer interface.
-func (n *Node) RangeFeed(args *kvpb.RangeFeedRequest, stream kvpb.Internal_RangeFeedServer) error {
-	if args.StreamID > 0 || args.CloseStream {
-		return errors.AssertionFailedf("unexpected mux rangefeed arguments set when calling RangeFeed")
-	}
-
-	ctx := n.AnnotateCtx(stream.Context())
-	ctx = logtags.AddTag(ctx, "r", args.RangeID)
-	ctx = logtags.AddTag(ctx, "s", args.Replica.StoreID)
-	_, restore := pprofutil.SetProfilerLabelsFromCtxTags(ctx)
-	defer restore()
-
-	n.metrics.NumRangeFeed.Inc(1)
-	n.metrics.ActiveRangeFeed.Inc(1)
-	defer n.metrics.ActiveRangeFeed.Inc(-1)
-
-	var done func() *kvpb.Error
-	err := n.stores.RangeFeed(ctx, args, func(drained func()) rangefeed.BufferedStream {
-		s := rangefeed.NewSingleBufferedStream(ctx, stream, kvserver.DefaultEventChanCap, false,
-			drained)
-		done = s.Done
-		return s
-	})
-	if err != nil {
-		// Got stream context error, probably won't be able to propagate it to the stream,
-		// but give it a try anyway.
-		var event kvpb.RangeFeedEvent
-		event.SetValue(&kvpb.RangeFeedError{
-			Error: *kvpb.NewError(err),
-		})
-		return stream.Send(&event)
-	}
-	if feedErr := done(); feedErr != nil {
-		var event kvpb.RangeFeedEvent
-		event.SetValue(&kvpb.RangeFeedError{
-			Error: *feedErr,
-		})
-		return stream.Send(&event)
-	}
-	return nil
-}
-
 // lockedMuxStream provides support for concurrent calls to Send.
 // The underlying MuxRangeFeedServer is not safe for concurrent calls to Send.
 type lockedMuxStream struct {

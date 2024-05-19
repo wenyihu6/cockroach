@@ -3383,7 +3383,6 @@ service Internal {
   rpc RangeLookup        (RangeLookupRequest)        returns (RangeLookupResponse)            {}
   // RangeFeed RPC is deprecated.  Use MuxRangeFeed instead.
   // To be removed at version 23.1
-  rpc RangeFeed          (RangeFeedRequest)          returns (stream RangeFeedEvent)          {}
   rpc MuxRangeFeed       (stream RangeFeedRequest)   returns (stream MuxRangeFeedEvent) {}
   rpc GossipSubscription (GossipSubscriptionRequest) returns (stream GossipSubscriptionEvent) {}
   rpc ResetQuorum        (ResetQuorumRequest)        returns (ResetQuorumResponse)            {}
