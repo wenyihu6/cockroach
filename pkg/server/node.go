@@ -1674,18 +1674,7 @@ func (n *Node) RangeFeed(args *kvpb.RangeFeedRequest, stream kvpb.Internal_Range
 	defer n.metrics.ActiveRangeFeed.Inc(-1)
 
 	var done func() *kvpb.Error
-	err := n.stores.RangeFeed(ctx, args, func() rangefeed.Stream {
-		resC := make(chan *kvpb.Error, 1)
-		done = func() *kvpb.Error {
-			select {
-			case e := <-resC:
-				return e
-			case <-ctx.Done():
-				return kvpb.NewError(ctx.Err())
-			}
-		}
-		return rangefeed.NewSingleFeedStream(ctx, resC, stream)
-	}, func(drained func()) rangefeed.BufferedStream {
+	err := n.stores.RangeFeed(ctx, args, func(drained func()) rangefeed.BufferedStream {
 		s := rangefeed.NewSingleBufferedStream(ctx, stream, kvserver.DefaultEventChanCap, false,
 			drained)
 		done = s.Done
@@ -1852,21 +1841,7 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 
 		n.metrics.NumMuxRangeFeed.Inc(1)
 		n.metrics.ActiveMuxRangeFeed.Inc(1)
-		err = n.stores.RangeFeed(streamCtx, req, func() rangefeed.Stream {
-			// Single feed doesn't need anything other than reading error.
-			s := rangefeed.NewMuxFeedStream(
-				streamCtx, req.StreamID, req.RangeID, muxErrorsC, muxStream, streamCtxCancel)
-			activeStreams.Store(req.StreamID, &ctxAndCancel{
-				ctx:    streamCtx,
-				cancel: func() {
-					s.Error(kvpb.NewError(
-						kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED),
-					))
-					streamCtxCancel()
-				},
-			})
-			return s
-		}, func(done func()) rangefeed.BufferedStream {
+		err = n.stores.RangeFeed(streamCtx, req, func(done func()) rangefeed.BufferedStream {
 			startMuxer.Do(func() {
 				// Give mux rangefeed extra buffer capacity to be able to handle data
 				// during stream catch ups. This is less of a waste as we have it per
@@ -1882,7 +1857,7 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 			})
 			s := rangefeed.NewMuxBufferedStream(streamCtx, req.StreamID, req.RangeID, done, muxer)
 			activeStreams.Store(req.StreamID, &ctxAndCancel{
-				ctx:    streamCtx,
+				ctx: streamCtx,
 				cancel: func() {
 					s.SendError(kvpb.NewError(
 						kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED),

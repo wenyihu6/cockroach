@@ -210,10 +210,7 @@ func (ls *Stores) SendWithWriteBytes(
 // updates to the provided stream and returns a future with an optional error
 // when the rangefeed is complete.
 func (ls *Stores) RangeFeed(
-	ctx context.Context,
-	args *kvpb.RangeFeedRequest,
-	newStream rangefeed.NewStream,
-	newBufferedStream rangefeed.NewBufferedStream,
+	ctx context.Context, args *kvpb.RangeFeedRequest, newBufferedStream rangefeed.NewBufferedStream,
 ) error {
 	if args.RangeID == 0 {
 		log.Fatal(ctx, "rangefeed request missing range ID")
@@ -226,7 +223,7 @@ func (ls *Stores) RangeFeed(
 		return err
 	}
 
-	return store.RangeFeed(ctx, args, newStream, newBufferedStream)
+	return store.RangeFeed(ctx, args, newBufferedStream)
 }
 
 // ReadBootstrapInfo implements the gossip.Storage interface. Read

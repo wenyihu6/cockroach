@@ -260,6 +260,17 @@ func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
 	})
 }
 
+// IntentScannerConstructor is used to construct an IntentScanner. It
+// should be called from underneath a stopper task to ensure that the
+// engine has not been closed.
+type IntentScannerConstructor func() (IntentScanner, error)
+
+// CatchUpIteratorConstructor is used to construct an iterator that can be used
+// for catchup-scans. Takes the key span and exclusive start time to run the
+// catchup scan for. It should be called from underneath a stopper task to
+// ensure that the engine has not been closed.
+type CatchUpIteratorConstructor func(roachpb.Span, hlc.Timestamp) (*CatchUpIterator, error)
+
 // Register registers the stream over the specified span of keys.
 //
 // The registration will not observe any events that were consumed before this
@@ -281,7 +292,6 @@ func (p *ScheduledProcessor) Register(
 	startTS hlc.Timestamp,
 	catchUpIterConstructor CatchUpIteratorConstructor,
 	withDiff bool,
-	_ NewStream,
 	newBufferedStream NewBufferedStream,
 	disconnectFn func(),
 ) (bool, *Filter) {

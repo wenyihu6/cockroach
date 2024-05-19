@@ -2979,23 +2979,13 @@ func (s *Store) Descriptor(ctx context.Context, useCached bool) (*roachpb.StoreD
 // the provided stream and returns a future with an optional error when the rangefeed is
 // complete.
 func (s *Store) RangeFeed(
-	ctx context.Context,
-	args *kvpb.RangeFeedRequest,
-	newStream rangefeed.NewStream,
-	newBufferedStream rangefeed.NewBufferedStream,
+	ctx context.Context, args *kvpb.RangeFeedRequest, newBufferedStream rangefeed.NewBufferedStream,
 ) error {
 	// TODO(oleg): need a more comprehensive solution.
 	// Current issue is that we don't know which type of feed underlying processor
 	// will ask for. We cache unbuffered stream, but it only works in limited
 	// cases.
 	if filter := s.TestingKnobs().TestingRangefeedFilter; filter != nil {
-		stream := newStream()
-		if pErr := filter(args, stream); pErr != nil {
-			return pErr.GoError()
-		}
-		newStream = func() rangefeed.Stream {
-			return stream
-		}
 		newBufferedStream = func(drained func()) rangefeed.BufferedStream {
 			panic("test tried to use TestingRangefeedFilter with scheduled processor")
 		}
@@ -3021,7 +3011,7 @@ func (s *Store) RangeFeed(
 
 	tenID, _ := repl.TenantID()
 	pacer := s.cfg.KVAdmissionController.AdmitRangefeedRequest(tenID, args)
-	return repl.RangeFeed(ctx, args, newStream, newBufferedStream, pacer)
+	return repl.RangeFeed(ctx, args, newBufferedStream, pacer)
 }
 
 // updateReplicationGauges counts a number of simple replication statistics for

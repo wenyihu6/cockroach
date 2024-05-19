@@ -171,7 +171,6 @@ func (tp *rangefeedTxnPusher) ResolveIntents(
 func (r *Replica) RangeFeed(
 	ctx context.Context,
 	args *kvpb.RangeFeedRequest,
-	newStream rangefeed.NewStream,
 	newBufferedStream rangefeed.NewBufferedStream,
 	pacer *admission.Pacer,
 ) error {
@@ -256,7 +255,7 @@ func (r *Replica) RangeFeed(
 	}
 
 	p, err := r.registerWithRangefeedRaftMuLocked(
-		ctx, rSpan, args.Timestamp, catchUpIterFunc, args.WithDiff, newStream, newBufferedStream,
+		ctx, rSpan, args.Timestamp, catchUpIterFunc, args.WithDiff, newBufferedStream,
 	)
 	r.raftMu.Unlock()
 
@@ -350,7 +349,6 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	startTS hlc.Timestamp, // exclusive
 	catchUpIter rangefeed.CatchUpIteratorConstructor,
 	withDiff bool,
-	newStream rangefeed.NewStream,
 	newBufferedStream rangefeed.NewBufferedStream,
 ) (rangefeed.Processor, error) {
 	defer logSlowRangefeedRegistration(ctx)()
@@ -362,7 +360,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	p := r.rangefeedMu.proc
 
 	if p != nil {
-		reg, filter := p.Register(span, startTS, catchUpIter, withDiff, newStream, newBufferedStream,
+		reg, filter := p.Register(span, startTS, catchUpIter, withDiff, newBufferedStream,
 			func() { r.maybeDisconnectEmptyRangefeed(p) })
 		if reg {
 			// Registered successfully with an existing processor.
@@ -433,7 +431,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	// any other goroutines are able to stop the processor. In other words,
 	// this ensures that the only time the registration fails is during
 	// server shutdown.
-	reg, filter := p.Register(span, startTS, catchUpIter, withDiff, newStream, newBufferedStream,
+	reg, filter := p.Register(span, startTS, catchUpIter, withDiff, newBufferedStream,
 		func() { r.maybeDisconnectEmptyRangefeed(p) })
 	if !reg {
 		select {
