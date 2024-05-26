@@ -80,22 +80,6 @@ var RangeFeedSmearInterval = settings.RegisterDurationSetting(
 	settings.NonNegativeDuration,
 )
 
-// RangeFeedUseScheduler controls type of rangefeed processor is used to process
-// raft updates and sends updates to clients.
-var RangeFeedUseScheduler = settings.RegisterBoolSetting(
-	settings.SystemOnly,
-	"kv.rangefeed.scheduler.enabled",
-	"use shared fixed pool of workers for all range feeds instead of a "+
-		"worker per range (worker pool size is determined by "+
-		"COCKROACH_RANGEFEED_SCHEDULER_WORKERS env variable)",
-	metamorphic.ConstantWithTestBool("kv_rangefeed_scheduler_enabled", true),
-)
-
-// RangefeedSchedulerDisabled is a kill switch for scheduler based rangefeed
-// processors. To be removed in 24.1 after new processor becomes default.
-var RangefeedSchedulerDisabled = envutil.EnvOrDefaultBool("COCKROACH_RANGEFEED_DISABLE_SCHEDULER",
-	false)
-
 func init() {
 	// Inject into kvserverbase to allow usage from kvcoord.
 	kvserverbase.RangeFeedRefreshInterval = RangeFeedRefreshInterval
@@ -493,11 +477,6 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	// Create a new rangefeed.
 	feedBudget := r.store.GetStoreConfig().RangefeedBudgetFactory.CreateBudget(isSystemSpan)
 
-	var sched *rangefeed.Scheduler
-	if shouldUseRangefeedScheduler(&r.ClusterSettings().SV) {
-		sched = r.store.getRangefeedScheduler()
-	}
-
 	desc := r.Desc()
 	tp := rangefeedTxnPusher{ir: r.store.intentResolver, r: r, span: desc.RSpan()}
 	cfg := rangefeed.Config{
@@ -513,7 +492,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 		EventChanTimeout: defaultEventChanTimeout,
 		Metrics:          r.store.metrics.RangeFeedMetrics,
 		MemBudget:        feedBudget,
-		Scheduler:        sched,
+		Scheduler:        r.store.getRangefeedScheduler(),
 		Priority:         isSystemSpan, // only takes effect when Scheduler != nil
 	}
 	p = rangefeed.NewProcessor(cfg)
@@ -953,10 +932,6 @@ func (r *Replica) ensureClosedTimestampStarted(ctx context.Context) *kvpb.Error 
 		}
 	}
 	return nil
-}
-
-func shouldUseRangefeedScheduler(sv *settings.Values) bool {
-	return RangeFeedUseScheduler.Get(sv) && !RangefeedSchedulerDisabled
 }
 
 // TestGetReplicaRangefeedProcessor exposes rangefeed processor for test
