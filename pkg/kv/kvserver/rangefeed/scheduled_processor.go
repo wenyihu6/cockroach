@@ -302,7 +302,6 @@ func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
 //
 // NB: startTS is exclusive; the first possible event will be at startTS.Next().
 func (p *ScheduledProcessor) Register(
-	streamCtx context.Context,
 	span roachpb.RSpan,
 	startTS hlc.Timestamp,
 	catchUpIter *CatchUpIterator,
@@ -346,7 +345,7 @@ func (p *ScheduledProcessor) Register(
 
 		// Run an output loop for the registry.
 		runOutputLoop := func(ctx context.Context) {
-			r.runOutputLoop(ctx, streamCtx, p.RangeID)
+			r.runOutputLoop(ctx, p.RangeID)
 			if p.unregisterClient(&r) {
 				// unreg callback is set by replica to tear down processors that have
 				// zero registrations left and to update event filters.

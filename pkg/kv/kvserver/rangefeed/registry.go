@@ -314,7 +314,7 @@ func (r *registration) disconnect(pErr *kvpb.Error) {
 // The loop exits with any error encountered, if the provided context is
 // canceled, or when the buffer has overflowed and all pre-overflow entries
 // have been emitted.
-func (r *registration) outputLoop(ctx context.Context, streamCtx context.Context) error {
+func (r *registration) outputLoop(ctx context.Context) error {
 	// If the registration has a catch-up scan, run it.
 	if err := r.maybeRunCatchUpScan(ctx); err != nil {
 		err = errors.Wrap(err, "catch-up scan failed")
@@ -345,15 +345,14 @@ func (r *registration) outputLoop(ctx context.Context, streamCtx context.Context
 			}
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-streamCtx.Done():
-			return streamCtx.Err()
+			// TODO(wenyihu6): get rid of output worker loop
+			//case <-streamCtx.Done():
+			//	return streamCtx.Err()
 		}
 	}
 }
 
-func (r *registration) runOutputLoop(
-	ctx context.Context, streamCtx context.Context, _forStacks roachpb.RangeID,
-) {
+func (r *registration) runOutputLoop(ctx context.Context, _forStacks roachpb.RangeID) {
 	r.mu.Lock()
 	if r.mu.disconnected {
 		// The registration has already been disconnected.
@@ -362,7 +361,7 @@ func (r *registration) runOutputLoop(
 	}
 	ctx, r.mu.outputLoopCancelFn = context.WithCancel(ctx)
 	r.mu.Unlock()
-	err := r.outputLoop(ctx, streamCtx)
+	err := r.outputLoop(ctx)
 	r.disconnect(kvpb.NewError(err))
 }
 

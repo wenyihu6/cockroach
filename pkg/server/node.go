@@ -1998,8 +1998,6 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 	ctx, cancel := context.WithCancel(n.AnnotateCtx(stream.Context()))
 	defer cancel()
 
-	// TODO(wenyihu6): passing in muxStream.Send doesnt look right - you need to
-	// populate the range and stream id tage
 	rangefeedCompleted, cleanup, err := newMuxRangeFeedCompletionWatcher(ctx, n.stopper, muxStream.Send)
 	if err != nil {
 		return err
