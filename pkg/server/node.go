@@ -1998,6 +1998,8 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 	ctx, cancel := context.WithCancel(n.AnnotateCtx(stream.Context()))
 	defer cancel()
 
+	// TODO(wenyihu6): passing in muxStream.Send doesnt look right - you need to
+	// populate the range and stream id tage
 	rangefeedCompleted, cleanup, err := newMuxRangeFeedCompletionWatcher(ctx, n.stopper, muxStream.Send)
 	if err != nil {
 		return err
@@ -2010,6 +2012,11 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 
 	var activeStreams sync.Map
 
+	type ctxAndCancel struct {
+		ctx    context.Context
+		cancel context.CancelFunc
+	}
+
 	for {
 		req, err := stream.Recv()
 		if err != nil {
@@ -2019,7 +2026,7 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 		if req.CloseStream {
 			// Client issued a request to close previously established stream.
 			if v, loaded := activeStreams.LoadAndDelete(req.StreamID); loaded {
-				s := v.(*setRangeIDEventSink)
+				s := v.(*ctxAndCancel)
 				s.cancel()
 			} else {
 				// This is a bit strange, but it could happen if this stream completes
@@ -2031,17 +2038,13 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 			continue
 		}
 
-		streamCtx, cancel := context.WithCancel(ctx)
+		streamCtx, streamCtxCancel := context.WithCancel(ctx)
 		streamCtx = logtags.AddTag(streamCtx, "r", req.RangeID)
 		streamCtx = logtags.AddTag(streamCtx, "s", req.Replica.StoreID)
 		streamCtx = logtags.AddTag(streamCtx, "sid", req.StreamID)
 
-		streamSink := &setRangeIDEventSink{
-			ctx:      streamCtx,
-			cancel:   cancel,
-			rangeID:  req.RangeID,
-			streamID: req.StreamID,
-			wrapped:  muxStream,
+		streamSink := ctxAndCancel{
+			streamCtx, streamCtxCancel,
 		}
 		activeStreams.Store(req.StreamID, streamSink)
 
