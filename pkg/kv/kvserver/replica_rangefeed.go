@@ -113,10 +113,6 @@ type lockedRangefeedStream struct {
 	sendMu  syncutil.Mutex
 }
 
-func (s *lockedRangefeedStream) Context() context.Context {
-	return s.wrapped.Context()
-}
-
 func (s *lockedRangefeedStream) Send(e *kvpb.RangeFeedEvent) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
@@ -242,9 +238,12 @@ func (tp *rangefeedTxnPusher) Barrier(ctx context.Context) error {
 // complete. The surrounding store's ConcurrentRequestLimiter is used to limit
 // the number of rangefeeds using catch-up iterators at the same time.
 func (r *Replica) RangeFeed(
-	args *kvpb.RangeFeedRequest, stream kvpb.RangeFeedEventSink, pacer *admission.Pacer,
+	streamCtx context.Context,
+	args *kvpb.RangeFeedRequest,
+	stream kvpb.RangeFeedEventSink,
+	pacer *admission.Pacer,
 ) *future.ErrorFuture {
-	ctx := r.AnnotateCtx(stream.Context())
+	ctx := r.AnnotateCtx(streamCtx)
 
 	rSpan, err := keys.SpanAddr(args.Span)
 	if err != nil {
@@ -327,7 +326,7 @@ func (r *Replica) RangeFeed(
 	}
 	var done future.ErrorFuture
 	p := r.registerWithRangefeedRaftMuLocked(
-		ctx, rSpan, args.Timestamp, catchUpIter, args.WithDiff, args.WithFiltering, lockedStream, &done,
+		ctx, streamCtx, rSpan, args.Timestamp, catchUpIter, args.WithDiff, args.WithFiltering, lockedStream, &done,
 	)
 	r.raftMu.Unlock()
 
@@ -419,6 +418,7 @@ func logSlowRangefeedRegistration(ctx context.Context) func() {
 // ownership and ensures it is closed when catch up is complete or aborted.
 func (r *Replica) registerWithRangefeedRaftMuLocked(
 	ctx context.Context,
+	streamCtx context.Context,
 	span roachpb.RSpan,
 	startTS hlc.Timestamp, // exclusive
 	catchUpIter *rangefeed.CatchUpIterator,
@@ -445,7 +445,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	p := r.rangefeedMu.proc
 
 	if p != nil {
-		reg, filter := p.Register(span, startTS, catchUpIter, withDiff, withFiltering,
+		reg, filter := p.Register(streamCtx, span, startTS, catchUpIter, withDiff, withFiltering,
 			stream, func() { r.maybeDisconnectEmptyRangefeed(p) }, done)
 		if reg {
 			// Registered successfully with an existing processor.
@@ -527,7 +527,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	// any other goroutines are able to stop the processor. In other words,
 	// this ensures that the only time the registration fails is during
 	// server shutdown.
-	reg, filter := p.Register(span, startTS, catchUpIter, withDiff,
+	reg, filter := p.Register(streamCtx, span, startTS, catchUpIter, withDiff,
 		withFiltering, stream, func() { r.maybeDisconnectEmptyRangefeed(p) }, done)
 	if !reg {
 		select {

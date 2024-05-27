@@ -2519,7 +2519,6 @@ func (s *ScanStats) String() string {
 
 // RangeFeedEventSink is an interface for sending a single rangefeed event.
 type RangeFeedEventSink interface {
-	Context() context.Context
 	Send(*RangeFeedEvent) error
 }
 

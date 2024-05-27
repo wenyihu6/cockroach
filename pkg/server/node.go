@@ -1852,7 +1852,7 @@ func (n *Node) RangeFeed(args *kvpb.RangeFeedRequest, stream kvpb.Internal_Range
 	n.metrics.ActiveRangeFeed.Inc(1)
 	defer n.metrics.ActiveRangeFeed.Inc(-1)
 
-	if err := errors.CombineErrors(future.Wait(ctx, n.stores.RangeFeed(args, stream))); err != nil {
+	if err := errors.CombineErrors(future.Wait(ctx, n.stores.RangeFeed(ctx, args, stream))); err != nil {
 		// Got stream context error, probably won't be able to propagate it to the stream,
 		// but give it a try anyway.
 		var event kvpb.RangeFeedEvent
@@ -1891,6 +1891,23 @@ func (s *setRangeIDEventSink) Send(event *kvpb.RangeFeedEvent) error {
 }
 
 var _ kvpb.RangeFeedEventSink = (*setRangeIDEventSink)(nil)
+
+type newSetRangeIDEventSink struct {
+	rangeID  roachpb.RangeID
+	streamID int64
+	wrapped  *lockedMuxStream
+}
+
+func (s *newSetRangeIDEventSink) Send(event *kvpb.RangeFeedEvent) error {
+	response := &kvpb.MuxRangeFeedEvent{
+		RangeFeedEvent: *event,
+		RangeID:        s.rangeID,
+		StreamID:       s.streamID,
+	}
+	return s.wrapped.Send(response)
+}
+
+var _ kvpb.RangeFeedEventSink = (*newSetRangeIDEventSink)(nil)
 
 // lockedMuxStream provides support for concurrent calls to Send.
 // The underlying MuxRangeFeedServer is not safe for concurrent calls to Send.
@@ -2028,9 +2045,15 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 		}
 		activeStreams.Store(req.StreamID, streamSink)
 
+		newStreamSink := &newSetRangeIDEventSink{
+			rangeID:  req.RangeID,
+			streamID: req.StreamID,
+			wrapped:  muxStream,
+		}
+
 		n.metrics.NumMuxRangeFeed.Inc(1)
 		n.metrics.ActiveMuxRangeFeed.Inc(1)
-		f := n.stores.RangeFeed(req, streamSink)
+		f := n.stores.RangeFeed(streamCtx, req, newStreamSink)
 		f.WhenReady(func(err error) {
 			n.metrics.ActiveMuxRangeFeed.Inc(-1)
 
