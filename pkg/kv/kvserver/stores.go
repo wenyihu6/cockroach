@@ -20,6 +20,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvadmission"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rangefeed"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/storage/disk"
@@ -211,7 +212,7 @@ func (ls *Stores) SendWithWriteBytes(
 // updates to the provided stream and returns a future with an optional error
 // when the rangefeed is complete.
 func (ls *Stores) RangeFeed(
-	streamCtx context.Context, args *kvpb.RangeFeedRequest, stream kvpb.RangeFeedEventSink,
+	streamCtx context.Context, args *kvpb.RangeFeedRequest, stream rangefeed.BufferedStream,
 ) *future.ErrorFuture {
 	if args.RangeID == 0 {
 		log.Fatal(streamCtx, "rangefeed request missing range ID")

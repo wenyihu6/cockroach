@@ -68,6 +68,8 @@ const (
 	// DefaultSnapshotApplyLimit is the number of snapshots concurrently applied.
 	// See server.KVConfig for more info.
 	DefaultSnapshotApplyLimit = 1
+
+	DefaultEventChanCap = 4096
 )
 
 // snapshotMetrics contains metrics on the number and size of snapshots in

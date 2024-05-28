@@ -38,6 +38,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvadmission"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvstorage"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rangefeed"
 	"github.com/cockroachdb/cockroach/pkg/multitenant"
 	"github.com/cockroachdb/cockroach/pkg/multitenant/tenantcapabilities"
 	"github.com/cockroachdb/cockroach/pkg/multitenant/tenantcapabilities/tenantcapabilitieswatcher"
@@ -2017,6 +2018,17 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 		cancel context.CancelFunc
 	}
 
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	muxer := rangefeed.NewStreamMuxer(muxStream, kvserver.DefaultEventChanCap)
+	// If we can't start muxer then we are shutting down. Rangefeed should
+	// also stop before starting. But we may need a saner recovery here.
+	_ = n.stopper.RunAsyncTask(ctx, "mux-rangefeed-output", func(ctx context.Context) {
+		wg.Add(1)
+		defer wg.Done()
+		muxer.OutputLoop(ctx)
+	})
+
 	for {
 		req, err := stream.Recv()
 		if err != nil {
@@ -2048,15 +2060,21 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 		}
 		activeStreams.Store(req.StreamID, streamSink)
 
-		newStreamSink := &newSetRangeIDEventSink{
-			rangeID:  req.RangeID,
-			streamID: req.StreamID,
-			wrapped:  muxStream,
-		}
-
 		n.metrics.NumMuxRangeFeed.Inc(1)
 		n.metrics.ActiveMuxRangeFeed.Inc(1)
-		f := n.stores.RangeFeed(streamCtx, req, newStreamSink)
+
+		// TODO(wenyihu6): think about how to deal with done registry
+		bufferStream := rangefeed.NewMuxBufferedStream(streamCtx, req.StreamID, req.RangeID, done, muxer)
+		activeStreams.Store(req.StreamID, &ctxAndCancel{
+			ctx: streamCtx,
+			cancel: func() {
+				bufferStream.SendError(kvpb.NewError(
+					kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED),
+				))
+				streamCtxCancel()
+			},
+		})
+		f := n.stores.RangeFeed(streamCtx, req, bufferStream)
 		f.WhenReady(func(err error) {
 			n.metrics.ActiveMuxRangeFeed.Inc(-1)
 

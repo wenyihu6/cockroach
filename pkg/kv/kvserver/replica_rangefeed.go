@@ -240,7 +240,7 @@ func (tp *rangefeedTxnPusher) Barrier(ctx context.Context) error {
 func (r *Replica) RangeFeed(
 	streamCtx context.Context,
 	args *kvpb.RangeFeedRequest,
-	stream kvpb.RangeFeedEventSink,
+	stream rangefeed.BufferedStream,
 	pacer *admission.Pacer,
 ) *future.ErrorFuture {
 	ctx := r.AnnotateCtx(streamCtx)
@@ -268,8 +268,6 @@ func (r *Replica) RangeFeed(
 		// scan, so make sure the GCThreshold in requestCanProceed succeeds.
 		checkTS = r.Clock().Now()
 	}
-
-	lockedStream := &lockedRangefeedStream{wrapped: stream}
 
 	// If we will be using a catch-up iterator, wait for the limiter here before
 	// locking raftMu.
@@ -326,7 +324,7 @@ func (r *Replica) RangeFeed(
 	}
 	var done future.ErrorFuture
 	p := r.registerWithRangefeedRaftMuLocked(
-		ctx, rSpan, args.Timestamp, catchUpIter, args.WithDiff, args.WithFiltering, lockedStream, &done,
+		ctx, rSpan, args.Timestamp, catchUpIter, args.WithDiff, args.WithFiltering, stream, &done,
 	)
 	r.raftMu.Unlock()
 
@@ -423,7 +421,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	catchUpIter *rangefeed.CatchUpIterator,
 	withDiff bool,
 	withFiltering bool,
-	stream rangefeed.Stream,
+	stream rangefeed.BufferedStream,
 	done *future.ErrorFuture,
 ) rangefeed.Processor {
 	defer logSlowRangefeedRegistration(ctx)()

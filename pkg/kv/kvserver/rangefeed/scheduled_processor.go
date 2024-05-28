@@ -41,7 +41,7 @@ type ScheduledProcessor struct {
 	Config
 	scheduler ClientScheduler
 
-	reg registry
+	reg nonBufferedRegistry
 	rts resolvedTimestamp
 
 	// processCtx is the annotated background context used for process(). It is
@@ -80,7 +80,7 @@ func NewScheduledProcessor(cfg Config) *ScheduledProcessor {
 	p := &ScheduledProcessor{
 		Config:     cfg,
 		scheduler:  cfg.Scheduler.NewClientScheduler(),
-		reg:        makeRegistry(cfg.Metrics),
+		reg:        makeNonBufferedRegistry(cfg.Metrics),
 		rts:        makeResolvedTimestamp(cfg.Settings),
 		processCtx: cfg.AmbientContext.AnnotateCtx(context.Background()),
 
@@ -307,7 +307,7 @@ func (p *ScheduledProcessor) Register(
 	catchUpIter *CatchUpIterator,
 	withDiff bool,
 	withFiltering bool,
-	stream Stream,
+	stream BufferedStream,
 	disconnectFn func(),
 	done *future.ErrorFuture,
 ) (bool, *Filter) {
@@ -316,20 +316,28 @@ func (p *ScheduledProcessor) Register(
 	// it should see these events during its catch up scan.
 	p.syncEventC()
 
-	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
-	r := newRegistration(
-		span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering,
-		p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn, done,
-	)
-
 	filter := runRequest(p, func(ctx context.Context, p *ScheduledProcessor) *Filter {
 		if p.stopping {
 			return nil
 		}
-		if !p.Span.AsRawSpanWithNoLocals().Contains(r.span) {
-			log.Fatalf(ctx, "registration %s not in Processor's key range %v", r, p.Span)
+
+		regSpan := span.AsRawSpanWithNoLocals()
+		if !p.Span.AsRawSpanWithNoLocals().Contains(regSpan) {
+			log.Fatalf(ctx, "registration span %v not in Processor's key range %v", regSpan, p.Span)
 		}
 
+		r := newNonBufferedRegistration(regSpan, startTS, catchUpIter, withDiff, withFiltering,
+			p.Config.EventChanCap, p.Metrics, stream, done)
+
+		//span roachpb.Span,
+		//	startTS hlc.Timestamp,
+		//	catchUpIter *CatchUpIterator,
+		//	withDiff bool,
+		//	withFiltering bool,
+		//	catchUpBufferSize int,
+		//	metrics *Metrics,
+		//	stream Stream,
+		//	done *future.ErrorFuture,
 		// Add the new registration to the registry.
 		p.reg.Register(ctx, &r)
 
@@ -343,19 +351,16 @@ func (p *ScheduledProcessor) Register(
 		// once they observe the first checkpoint event.
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
-		// Run an output loop for the registry.
-		runOutputLoop := func(ctx context.Context) {
-			r.runOutputLoop(ctx, p.RangeID)
-			if p.unregisterClient(&r) {
-				// unreg callback is set by replica to tear down processors that have
-				// zero registrations left and to update event filters.
-				if r.unreg != nil {
-					r.unreg()
-				}
-			}
+		runCatchUpLoop := func(ctx context.Context) {
+			r.runCatchupScanLoop(ctx, p.RangeID)
+			r.discardCatchUpBuffer(ctx)
+			// Lock mutex here
+			r.mu.catchUpIter.Close()
+			r.mu.catchUpIter = nil
+			close(r.catchUpDrained)
 		}
 		// NB: use ctx, not p.taskCtx, as the registry handles teardown itself.
-		if err := p.Stopper.RunAsyncTask(ctx, "rangefeed: output loop", runOutputLoop); err != nil {
+		if err := p.Stopper.RunAsyncTask(ctx, "rangefeed: catch up scan loop", runCatchUpLoop); err != nil {
 			// If we can't schedule internally, processor is already stopped which
 			// could only happen on shutdown. Disconnect stream and just remove
 			// registration.
@@ -370,7 +375,7 @@ func (p *ScheduledProcessor) Register(
 	return false, nil
 }
 
-func (p *ScheduledProcessor) unregisterClient(r *registration) bool {
+func (p *ScheduledProcessor) unregisterClient(r *nonBufferedRegistration) bool {
 	return runRequest(p, func(ctx context.Context, p *ScheduledProcessor) bool {
 		p.reg.Unregister(ctx, r)
 		return true
@@ -579,7 +584,7 @@ func (p *ScheduledProcessor) Len() int {
 // the processor. Returns nil if the processor has been stopped already.
 func (p *ScheduledProcessor) Filter() *Filter {
 	return runRequest(p, func(_ context.Context, p *ScheduledProcessor) *Filter {
-		return newFilterFromRegistry(&p.reg)
+		return newFilterFromFilterTree(p.reg.tree)
 	})
 }
 
@@ -645,13 +650,7 @@ func (p *ScheduledProcessor) consumeEvent(ctx context.Context, e *event) {
 		p.consumeSSTable(ctx, e.sst.data, e.sst.span, e.sst.ts, e.alloc)
 	case e.sync != nil:
 		if e.sync.testRegCatchupSpan != nil {
-			if err := p.reg.waitForCaughtUp(ctx, *e.sync.testRegCatchupSpan); err != nil {
-				log.Errorf(
-					ctx,
-					"error waiting for registries to catch up during test, results might be impacted: %s",
-					err,
-				)
-			}
+			// TODO(wenyihu6): check how we should do this
 		}
 		close(e.sync.c)
 	default:

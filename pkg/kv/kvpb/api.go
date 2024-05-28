@@ -2522,6 +2522,13 @@ type RangeFeedEventSink interface {
 	Send(*RangeFeedEvent) error
 }
 
+// MuxRangeFeedEventSink is an interface for sending a single mux rangefeed
+// event. Decouples underlying grpc implementation from higher level rangefeed
+// components.
+type MuxRangeFeedEventSink interface {
+	Send(*MuxRangeFeedEvent) error
+}
+
 // RangeFeedEventProducer is an adapter for receiving rangefeed events with either
 // the legacy RangeFeed RPC, or the MuxRangeFeed RPC.
 type RangeFeedEventProducer interface {

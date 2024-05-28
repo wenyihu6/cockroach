@@ -183,7 +183,7 @@ type Processor interface {
 		catchUpIter *CatchUpIterator,
 		withDiff bool,
 		withFiltering bool,
-		stream Stream,
+		stream BufferedStream,
 		disconnectFn func(),
 		done *future.ErrorFuture,
 	) (bool, *Filter)

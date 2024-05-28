@@ -417,6 +417,10 @@ func (r registration) String() string {
 	return fmt.Sprintf("[%s @ %s+]", r.span, r.catchUpTimestamp)
 }
 
+func (r *registration) needsPrev() bool {
+	return r.withDiff
+}
+
 // registry holds a set of registrations and manages their lifecycle.
 type registry struct {
 	metrics *Metrics
@@ -439,7 +443,7 @@ func (reg *registry) Len() int {
 // NewFilter returns a operation filter reflecting the registrations
 // in the registry.
 func (reg *registry) NewFilter() *Filter {
-	return newFilterFromRegistry(reg)
+	return newFilterFromFilterTree(reg.tree)
 }
 
 // Register adds the provided registration to the registry.
