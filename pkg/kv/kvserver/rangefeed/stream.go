@@ -27,9 +27,6 @@ type RegistrationFinished func()
 
 // BufferedStream is an interface for an outbound queue.
 type BufferedStream interface {
-	// Context of underlying gRPC stream. Context is cancelled if underlying
-	// stream is closed.
-	Context() context.Context
 	// Send writes events into the buffer. Returns true if event was successfully
 	// written, false if buffered stream overflowed. BufferedStream could still
 	// hold to allocations and it is not safe to assume that resources allocated
@@ -47,35 +44,23 @@ type BufferedStream interface {
 // MuxBufferedStream is a BufferedStream provided by MuxRangeFeeds for processors
 // to send data.
 type MuxBufferedStream struct {
-	ctx      context.Context
 	streamID int64
 	rangeID  roachpb.RangeID
-	done     RegistrationFinished
 	muxer    *StreamMuxer
 }
 
 var _ BufferedStream = (*MuxBufferedStream)(nil)
 
 func NewMuxBufferedStream(
-	ctx context.Context,
-	streamID int64,
-	rangeID roachpb.RangeID,
-	done RegistrationFinished,
-	muxer *StreamMuxer,
+	streamID int64, rangeID roachpb.RangeID, done RegistrationFinished, muxer *StreamMuxer,
 ) *MuxBufferedStream {
 	s := &MuxBufferedStream{
-		ctx:      ctx,
 		streamID: streamID,
 		rangeID:  rangeID,
-		done:     done,
 		muxer:    muxer,
 	}
-	muxer.addProducer(ctx, streamID, rangeID, done)
+	muxer.addProducer(streamID, rangeID, done)
 	return s
-}
-
-func (s *MuxBufferedStream) Context() context.Context {
-	return s.ctx
 }
 
 func (s *MuxBufferedStream) Send(event *kvpb.RangeFeedEvent, alloc *SharedBudgetAllocation) {
@@ -145,14 +130,12 @@ func NewStreamMuxer(output kvpb.MuxRangeFeedEventSink, capacity int) *StreamMuxe
 	return r
 }
 
-func (m *StreamMuxer) addProducer(
-	ctx context.Context, id int64, rangeID roachpb.RangeID, done RegistrationFinished,
-) {
+func (m *StreamMuxer) addProducer(id int64, rangeID roachpb.RangeID, done RegistrationFinished) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.mu.prods[id]; ok {
 		if buildutil.CrdbTestBuild {
-			log.Fatalf(ctx, "attempt to register completions callback for mux stream %d multiple times",
+			log.Fatalf(context.Background(), "attempt to register completions callback for mux stream %d multiple times",
 				id)
 		}
 	}
