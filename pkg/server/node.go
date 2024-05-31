@@ -1870,15 +1870,9 @@ func (n *Node) RangeFeed(args *kvpb.RangeFeedRequest, stream kvpb.Internal_Range
 // TODO: This code can be removed in 22.2 once MuxRangeFeed is the default, and
 // the old style RangeFeed deprecated.
 type setRangeIDEventSink struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
 	rangeID  roachpb.RangeID
 	streamID int64
 	wrapped  *lockedMuxStream
-}
-
-func (s *setRangeIDEventSink) Context() context.Context {
-	return s.ctx
 }
 
 func (s *setRangeIDEventSink) Send(event *kvpb.RangeFeedEvent) error {
