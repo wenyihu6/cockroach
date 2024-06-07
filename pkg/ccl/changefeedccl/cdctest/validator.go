@@ -677,6 +677,11 @@ type CountValidator struct {
 	rowsSinceResolved                    int
 }
 
+func (v *CountValidator) String() string {
+	return fmt.Sprintf("rows=%d resolved=%d resolvedRows=%d resolvedWithRows=%d",
+		v.NumRows, v.NumResolved, v.NumResolvedRows, v.NumResolvedWithRows)
+}
+
 // NewCountValidator returns a CountValidator wrapping the given Validator.
 func NewCountValidator(v Validator) *CountValidator {
 	return &CountValidator{v: v}

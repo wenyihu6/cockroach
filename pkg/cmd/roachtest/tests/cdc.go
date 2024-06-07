@@ -1554,7 +1554,11 @@ func registerCDC(r registry.Registry) {
 			ct := newCDCTester(ctx, t, c)
 			defer ct.Close()
 
-			ct.runTPCCWorkload(tpccArgs{warehouses: 100, duration: "30m"})
+			_, err := ct.DB().ExecContext(ctx, `CREATE TABLE t (id INT PRIMARY KEY, x INT);`)
+			if err != nil {
+				t.Fatal("failed to create table")
+			}
+
 			kafka, cleanup := setupKafka(ctx, t, c, c.Node(c.Spec().NodeCount))
 			kafka.validateOrder = true
 			defer cleanup()
@@ -1585,6 +1589,12 @@ func registerCDC(r registry.Registry) {
 				},
 				opts: map[string]string{"initial_scan": "'no'"},
 			})
+
+			_, err = ct.DB().ExecContext(ctx, `INSERT INTO t SELECT generate_series(1, 10000);`)
+			if err != nil {
+				t.Fatal("failed to insert row into table")
+			}
+
 			//
 			//ct.runFeedLatencyVerifier(feed, latencyTargets{
 			//	initialScanLatency: 3 * time.Minute,
@@ -3161,7 +3171,11 @@ func (k kafkaManager) startTopicConsumers(
 
 		k.t.L().Printf("starting topic consumer for topic: %s", topic)
 		k.mon.Go(func(ctx context.Context) error {
+
 			topicConsumer, err := k.newConsumer(ctx, topic, stopper)
+			defer func() {
+				k.t.L().Printf("topic consumer with validator info: %s\n", topicConsumer.validator)
+			}()
 			if err != nil {
 				return err
 			}
