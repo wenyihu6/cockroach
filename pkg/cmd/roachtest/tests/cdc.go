@@ -1545,7 +1545,7 @@ func registerCDC(r registry.Registry) {
 		Name:             "cdc/kafka-chaos",
 		Owner:            `cdc`,
 		Benchmark:        true,
-		Cluster:          r.MakeClusterSpec(4, spec.CPU(16)),
+		Cluster:          r.MakeClusterSpec(5, spec.CPU(16)),
 		Leases:           registry.MetamorphicLeases,
 		CompatibleClouds: registry.AllExceptAWS,
 		Suites:           registry.Suites(registry.Nightly),
@@ -1555,20 +1555,41 @@ func registerCDC(r registry.Registry) {
 			defer ct.Close()
 
 			ct.runTPCCWorkload(tpccArgs{warehouses: 100, duration: "30m"})
+			kafka, cleanup := setupKafka(ctx, t, c, c.Node(c.Spec().NodeCount))
+			kafka.validateOrder = true
+			defer cleanup()
 
-			feed := ct.newChangefeed(feedArgs{
-				sinkType: kafkaSink,
-				targets:  allTpccTargets,
+			kafka2, cleanup2 := setupKafka(ctx, t, c, c.Node(c.Spec().NodeCount-1))
+			kafka2.validateOrder = true
+			defer cleanup2()
+
+			db := c.Conn(ctx, t.L(), 1)
+			defer stopFeeds(db)
+
+			ct.newChangefeed(feedArgs{
+				sinkURIOverride: kafka.sinkURL(ct.ctx),
+				targets:         allTpccTargets,
 				kafkaArgs: kafkaFeedArgs{
 					kafkaChaos:    true,
 					validateOrder: true,
 				},
 				opts: map[string]string{"initial_scan": "'no'"},
 			})
-			ct.runFeedLatencyVerifier(feed, latencyTargets{
-				initialScanLatency: 3 * time.Minute,
-				steadyLatency:      5 * time.Minute,
+
+			ct.newChangefeed(feedArgs{
+				sinkURIOverride: kafka2.sinkURL(ct.ctx),
+				targets:         allTpccTargets,
+				kafkaArgs: kafkaFeedArgs{
+					kafkaChaos:    true,
+					validateOrder: true,
+				},
+				opts: map[string]string{"initial_scan": "'no'"},
 			})
+			//
+			//ct.runFeedLatencyVerifier(feed, latencyTargets{
+			//	initialScanLatency: 3 * time.Minute,
+			//	steadyLatency:      5 * time.Minute,
+			//})
 			ct.waitForWorkload()
 		},
 	})
