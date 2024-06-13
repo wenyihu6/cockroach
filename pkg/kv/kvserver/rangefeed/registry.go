@@ -360,7 +360,7 @@ func (r *registration) outputLoop(ctx context.Context) error {
 func (r *registration) runOutputLoop(ctx context.Context, _forStacks roachpb.RangeID) {
 	r.mu.Lock()
 	if r.mu.disconnected {
-		// The registration has already been disconnected.
+		// The registratioTODO(erikgrinaker): this sn has already been disconnected.
 		r.mu.Unlock()
 		return
 	}
