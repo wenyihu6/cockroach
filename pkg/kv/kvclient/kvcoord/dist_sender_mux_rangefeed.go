@@ -527,7 +527,6 @@ func (m *rangefeedMuxer) restartActiveRangeFeeds(
 func (m *rangefeedMuxer) restartActiveRangeFeed(
 	ctx context.Context, active *activeMuxRangeFeed, reason error,
 ) error {
-	m.metrics.Errors.RangefeedRestartRanges.Inc(1)
 	active.setLastError(reason)
 
 	// Release catchup scan reservation if any -- we will acquire another
