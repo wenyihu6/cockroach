@@ -49,6 +49,8 @@ type streamMuxer struct {
 	// stream.
 	activeStreams sync.Map
 
+	rangefeedCleanUps sync.Map
+
 	// notifyCompletion is a buffered channel of size 1 used to signal the
 	// presence of muxErrors that need to be sent. Additional signals are dropped
 	// if the channel is already full so that it's unblocking.
@@ -92,6 +94,10 @@ func newStreamMuxer(sender severStreamSender, metrics rangefeedMetricsRecorder) 
 	}
 }
 
+func (s *streamMuxer) registerRangefeedCleanUp(streamID int64, cleanUp func()) {
+	s.rangefeedCleanUps.Store(streamID, cleanUp)
+}
+
 // send annotates the rangefeed event with streamID and rangeID and sends it to
 // the grpc stream.
 func (s *streamMuxer) send(
@@ -126,6 +132,10 @@ func (s *streamMuxer) appendMuxError(ev *kvpb.MuxRangeFeedEvent) {
 func (s *streamMuxer) disconnectRangefeedWithError(
 	streamID int64, rangeID roachpb.RangeID, err *kvpb.Error,
 ) {
+	if cleanUp, ok := s.rangefeedCleanUps.LoadAndDelete(streamID); ok {
+		f := cleanUp.(func())
+		f()
+	}
 	if cancelFunc, ok := s.activeStreams.LoadAndDelete(streamID); ok {
 		f := cancelFunc.(context.CancelFunc)
 		// Canceling the context will cause the registration to disconnect unless

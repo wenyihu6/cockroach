@@ -36,6 +36,8 @@ type Stream interface {
 	Send(*kvpb.RangeFeedEvent) error
 
 	Disconnect(err *kvpb.Error)
+
+	Register(func())
 }
 
 // Shared event is an entry stored in registration channel. Each entry is
