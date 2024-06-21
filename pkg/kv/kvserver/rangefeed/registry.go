@@ -34,9 +34,7 @@ type Stream interface {
 	// Send blocks until it sends m, the stream is done, or the stream breaks.
 	// Send must be safe to call on the same stream in different goroutines.
 	Send(*kvpb.RangeFeedEvent) error
-
 	Disconnect(err *kvpb.Error)
-
 	Register(func())
 }
 
