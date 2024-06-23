@@ -166,7 +166,7 @@ type Processor interface {
 	//
 	// If the iterator is nil then no initialization scan will be performed and
 	// the resolved timestamp will immediately be considered initialized.
-	Start(stopper *stop.Stopper, newRtsIter IntentScannerConstructor) error
+	Start(stopper *stop.Stopper, newRtsIter IntentScanner) error
 	// Stop processor and close all registrations.
 	//
 	// It is meant to be called by replica when it finds that all streams were
@@ -370,12 +370,12 @@ type IntentScannerConstructor func() IntentScanner
 //
 // Note that to fulfill newRtsIter contract, LegacyProcessor will create
 // iterator at the start of its work loop prior to firing async task.
-func (p *LegacyProcessor) Start(stopper *stop.Stopper, newRtsIter IntentScannerConstructor) error {
+func (p *LegacyProcessor) Start(stopper *stop.Stopper, rtsIter IntentScanner) error {
 	ctx := p.AnnotateCtx(context.Background())
 	if err := stopper.RunAsyncTask(ctx, "rangefeed.LegacyProcessor", func(ctx context.Context) {
 		p.Metrics.RangeFeedProcessorsGO.Inc(1)
 		defer p.Metrics.RangeFeedProcessorsGO.Dec(1)
-		p.run(ctx, p.RangeID, newRtsIter, stopper)
+		p.run(ctx, p.RangeID, rtsIter, stopper)
 	}); err != nil {
 		p.reg.DisconnectWithErr(ctx, all, kvpb.NewError(err))
 		close(p.stoppedC)
@@ -386,10 +386,7 @@ func (p *LegacyProcessor) Start(stopper *stop.Stopper, newRtsIter IntentScannerC
 
 // run is called from Start and runs the rangefeed.
 func (p *LegacyProcessor) run(
-	ctx context.Context,
-	_forStacks roachpb.RangeID,
-	rtsIterFunc IntentScannerConstructor,
-	stopper *stop.Stopper,
+	ctx context.Context, _forStacks roachpb.RangeID, rtsIter IntentScanner, stopper *stop.Stopper,
 ) {
 	// Close the memory budget last, or there will be a period of time during
 	// which requests are still ongoing but will run into the closed budget,
@@ -403,8 +400,7 @@ func (p *LegacyProcessor) run(
 
 	// Launch an async task to scan over the resolved timestamp iterator and
 	// initialize the unresolvedIntentQueue. Ignore error if quiescing.
-	if rtsIterFunc != nil {
-		rtsIter := rtsIterFunc()
+	if rtsIter != nil {
 		initScan := newInitResolvedTSScan(p.Span, p, rtsIter)
 		err := stopper.RunAsyncTask(ctx, "rangefeed: init resolved ts", initScan.Run)
 		if err != nil {

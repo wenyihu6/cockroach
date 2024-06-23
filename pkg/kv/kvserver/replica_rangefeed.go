@@ -520,19 +520,10 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	p = rangefeed.NewProcessor(cfg)
 
 	// Start it with an iterator to initialize the resolved timestamp.
-	rtsIter := func() rangefeed.IntentScanner {
-		// Assert that we still hold the raftMu when this is called to ensure
-		// that the rtsIter reads from the current snapshot. The replica
-		// synchronizes with the rangefeed Processor calling this function by
-		// waiting for the Register call below to return.
-		r.raftMu.AssertHeld()
-
-		scanner, err := rangefeed.NewSeparatedIntentScanner(ctx, r.store.TODOEngine(), desc.RSpan())
-		if err != nil {
-			done.Set(err)
-			return nil
-		}
-		return scanner
+	scanner, err := rangefeed.NewSeparatedIntentScanner(ctx, r.store.TODOEngine(), desc.RSpan())
+	if err != nil {
+		done.Set(err)
+		return nil
 	}
 
 	// NB: This only errors if the stopper is stopping, and we have to return here
@@ -540,7 +531,7 @@ func (r *Replica) registerWithRangefeedRaftMuLocked(
 	// because the stopper has two states: stopping and quiescing. If this errors
 	// due to stopping, but before it enters the quiescing state, then the select
 	// below will fall through to the panic.
-	if err := p.Start(r.store.Stopper(), rtsIter); err != nil {
+	if err := p.Start(r.store.Stopper(), scanner); err != nil {
 		done.Set(err)
 		return nil
 	}

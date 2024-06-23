@@ -265,7 +265,7 @@ func (t procType) String() string {
 type testConfig struct {
 	Config
 	useScheduler bool
-	isc          IntentScannerConstructor
+	is           IntentScanner
 }
 
 type option func(*testConfig)
@@ -299,9 +299,7 @@ func withMetrics(m *Metrics) option {
 func withRtsScanner(scanner IntentScanner) option {
 	return func(config *testConfig) {
 		if scanner != nil {
-			config.isc = func() IntentScanner {
-				return scanner
-			}
+			config.is = scanner
 		}
 	}
 }
@@ -453,7 +451,7 @@ func newTestProcessor(
 	default:
 		panic("unknown processor type")
 	}
-	require.NoError(t, s.Start(stopper, cfg.isc))
+	require.NoError(t, s.Start(stopper, cfg.is))
 	return s, &h, stopper
 }
 

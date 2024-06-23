@@ -100,9 +100,7 @@ func NewScheduledProcessor(cfg Config) *ScheduledProcessor {
 // calling its Close method when it is finished. If the iterator is nil then
 // no initialization scan will be performed and the resolved timestamp will
 // immediately be considered initialized.
-func (p *ScheduledProcessor) Start(
-	stopper *stop.Stopper, rtsIterFunc IntentScannerConstructor,
-) error {
+func (p *ScheduledProcessor) Start(stopper *stop.Stopper, rtsIter IntentScanner) error {
 	p.stopper = stopper
 	p.taskCtx, p.taskCancel = p.stopper.WithCancelOnQuiesce(
 		p.Config.AmbientContext.AnnotateCtx(context.Background()))
@@ -116,8 +114,7 @@ func (p *ScheduledProcessor) Start(
 
 	// Launch an async task to scan over the resolved timestamp iterator and
 	// initialize the unresolvedIntentQueue.
-	if rtsIterFunc != nil {
-		rtsIter := rtsIterFunc()
+	if rtsIter != nil {
 		initScan := newInitResolvedTSScan(p.Span, p, rtsIter)
 		// TODO(oleg): we need to cap number of tasks that we can fire up across
 		// all feeds as they could potentially generate O(n) tasks during start.
@@ -128,6 +125,7 @@ func (p *ScheduledProcessor) Start(
 			return err
 		}
 	} else {
+		// Should be impossible for rtsIter/LockTableIterator to be nil here.
 		p.initResolvedTS(p.taskCtx, nil)
 	}
 
