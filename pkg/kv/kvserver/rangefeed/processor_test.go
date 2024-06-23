@@ -296,12 +296,10 @@ func withMetrics(m *Metrics) option {
 	}
 }
 
-func withRtsScanner(scanner IntentScanner) option {
+func withRtsScanner() option {
 	return func(config *testConfig) {
-		if scanner != nil {
-			config.isc = func() IntentScanner {
-				return scanner
-			}
+		config.isc = func() IntentScanner {
+			return nil
 		}
 	}
 }
@@ -465,7 +463,7 @@ func waitErrorFuture(f *future.ErrorFuture) error {
 func TestProcessorBasic(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	testutils.RunValues(t, "proc type", testTypes, func(t *testing.T, pt procType) {
-		p, h, stopper := newTestProcessor(t, withProcType(pt))
+		p, h, stopper := newTestProcessor(t, withProcType(pt), withRtsScanner())
 		ctx := context.Background()
 		defer stopper.Stop(ctx)
 
@@ -1001,7 +999,7 @@ func TestProcessorInitializeResolvedTimestamp(t *testing.T) {
 		require.NoError(t, err, "failed to prepare test data")
 		defer cleanup()
 
-		p, h, stopper := newTestProcessor(t, withRtsScanner(scanner), withProcType(pt))
+		p, h, stopper := newTestProcessor(t, withRtsScanner(), withProcType(pt))
 		ctx := context.Background()
 		defer stopper.Stop(ctx)
 
