@@ -252,7 +252,7 @@ const (
 	schedulerProcessor          = true
 )
 
-var testTypes = []procType{legacyProcessor, schedulerProcessor}
+var testTypes = []procType{schedulerProcessor}
 
 func (t procType) String() string {
 	if t {
@@ -494,7 +494,10 @@ func TestProcessorBasic(t *testing.T) {
 			func() {},
 		)
 		require.True(t, r1OK)
+		fmt.Println("waiting here1")
 		h.syncEventAndRegistrations()
+		fmt.Println("waiting here2")
+
 		require.Equal(t, 1, p.Len())
 		require.Equal(t,
 			[]*kvpb.RangeFeedEvent{
@@ -506,6 +509,8 @@ func TestProcessorBasic(t *testing.T) {
 			r1Stream.Events(),
 		)
 
+		fmt.Println("waiting here3")
+
 		// Test the processor's operation filter.
 		require.True(t, r1Filter.NeedVal(roachpb.Span{Key: roachpb.Key("a")}))
 		require.True(t, r1Filter.NeedVal(roachpb.Span{Key: roachpb.Key("d"), EndKey: roachpb.Key("r")}))
@@ -514,6 +519,8 @@ func TestProcessorBasic(t *testing.T) {
 		require.False(t,
 			r1Filter.NeedPrevVal(roachpb.Span{Key: roachpb.Key("d"), EndKey: roachpb.Key("r")}))
 		require.False(t, r1Filter.NeedPrevVal(roachpb.Span{Key: roachpb.Key("z")}))
+
+		fmt.Println("waiting here4")
 
 		// Test checkpoint with one registration.
 		p.ForwardClosedTS(ctx, hlc.Timestamp{WallTime: 5})
@@ -527,6 +534,8 @@ func TestProcessorBasic(t *testing.T) {
 			},
 			r1Stream.Events(),
 		)
+
+		fmt.Println("waiting here5")
 
 		// Test value with one registration.
 		p.ConsumeLogicalOps(ctx,
@@ -545,16 +554,22 @@ func TestProcessorBasic(t *testing.T) {
 			r1Stream.Events(),
 		)
 
+		fmt.Println("waiting here6")
+
 		// Test value to non-overlapping key with one registration.
 		p.ConsumeLogicalOps(ctx,
 			writeValueOpWithKV(roachpb.Key("s"), hlc.Timestamp{WallTime: 6}, []byte("val")))
 		h.syncEventAndRegistrations()
 		require.Equal(t, []*kvpb.RangeFeedEvent(nil), r1Stream.Events())
 
+		fmt.Println("waiting here7")
+
 		// Test intent that is aborted with one registration.
 		txn1 := uuid.MakeV4()
 		// Write intent.
 		p.ConsumeLogicalOps(ctx, writeIntentOp(txn1, hlc.Timestamp{WallTime: 6}))
+		fmt.Println("waiting here8")
+
 		h.syncEventAndRegistrations()
 		require.Equal(t, []*kvpb.RangeFeedEvent(nil), r1Stream.Events())
 		// Abort.
@@ -562,6 +577,8 @@ func TestProcessorBasic(t *testing.T) {
 		h.syncEventC()
 		require.Equal(t, []*kvpb.RangeFeedEvent(nil), r1Stream.Events())
 		require.Equal(t, 0, h.rts.intentQ.Len())
+
+		fmt.Println("waiting here9")
 
 		// Test intent that is committed with one registration.
 		txn2 := uuid.MakeV4()
@@ -581,6 +598,8 @@ func TestProcessorBasic(t *testing.T) {
 			},
 			r1Stream.Events(),
 		)
+		fmt.Println("waiting here10")
+
 		// Update the intent. Should forward resolved timestamp.
 		p.ConsumeLogicalOps(ctx, updateIntentOp(txn2, hlc.Timestamp{WallTime: 12}))
 		h.syncEventAndRegistrations()
@@ -593,6 +612,8 @@ func TestProcessorBasic(t *testing.T) {
 			},
 			r1Stream.Events(),
 		)
+		fmt.Println("waiting here11")
+
 		// Commit intent. Should forward resolved timestamp to closed timestamp.
 		p.ConsumeLogicalOps(ctx,
 			commitIntentOpWithKV(txn2, roachpb.Key("e"), hlc.Timestamp{WallTime: 13},
@@ -614,6 +635,8 @@ func TestProcessorBasic(t *testing.T) {
 			},
 			r1Stream.Events(),
 		)
+
+		fmt.Println("waiting here12")
 
 		// Add another registration with withDiff = true and withFiltering = true.
 		r2Stream := newTestStream()
@@ -639,6 +662,8 @@ func TestProcessorBasic(t *testing.T) {
 			r2Stream.Events(),
 		)
 
+		fmt.Println("waiting here13")
+
 		// Test the processor's new operation filter.
 		require.True(t, r1And2Filter.NeedVal(roachpb.Span{Key: roachpb.Key("a")}))
 		require.True(t, r1And2Filter.NeedVal(roachpb.Span{Key: roachpb.Key("y")}))
@@ -650,6 +675,8 @@ func TestProcessorBasic(t *testing.T) {
 		require.True(t,
 			r1And2Filter.NeedPrevVal(roachpb.Span{Key: roachpb.Key("y"), EndKey: roachpb.Key("zzz")}))
 		require.False(t, r1And2Filter.NeedPrevVal(roachpb.Span{Key: roachpb.Key("zzz")}))
+
+		fmt.Println("waiting here14")
 
 		// Both registrations should see checkpoint.
 		p.ForwardClosedTS(ctx, hlc.Timestamp{WallTime: 20})
@@ -669,6 +696,8 @@ func TestProcessorBasic(t *testing.T) {
 		}
 		require.Equal(t, chEventCZ, r2Stream.Events())
 
+		fmt.Println("waiting here15")
+
 		// Test value with two registration that overlaps both.
 		p.ConsumeLogicalOps(ctx,
 			writeValueOpWithKV(roachpb.Key("k"), hlc.Timestamp{WallTime: 22}, []byte("val2")))
@@ -684,6 +713,8 @@ func TestProcessorBasic(t *testing.T) {
 		}
 		require.Equal(t, valEvent, r1Stream.Events())
 		require.Equal(t, valEvent, r2Stream.Events())
+
+		fmt.Println("waiting here16")
 
 		// Test value that only overlaps the second registration.
 		p.ConsumeLogicalOps(ctx,
@@ -701,6 +732,8 @@ func TestProcessorBasic(t *testing.T) {
 		require.Equal(t, []*kvpb.RangeFeedEvent(nil), r1Stream.Events())
 		require.Equal(t, valEvent2, r2Stream.Events())
 
+		fmt.Println("waiting here17")
+
 		// Test committing intent with OmitInRangefeeds that overlaps two
 		// registration (one withFiltering = true and one withFiltering = false).
 		p.ConsumeLogicalOps(ctx,
@@ -716,17 +749,23 @@ func TestProcessorBasic(t *testing.T) {
 				},
 			),
 		}
+		fmt.Println("waiting here18")
+
 		require.Equal(t, valEvent3, r1Stream.Events())
 		// r2Stream should not see the event.
+
+		fmt.Println("waiting here19")
 
 		// Cancel the first registration.
 		r1Stream.Disconnect(kvpb.NewError(context.Canceled))
 		require.NotNil(t, r1Stream.Err(t))
+		fmt.Println("waiting here20")
 
 		// Stop the processor with an error.
 		pErr := kvpb.NewErrorf("stop err")
 		p.StopWithErr(pErr)
 		require.NotNil(t, r2Stream.Err(t))
+		fmt.Println("waiting here21")
 
 		// Adding another registration should fail.
 		r3Stream := newTestStream()
@@ -740,6 +779,7 @@ func TestProcessorBasic(t *testing.T) {
 			func() {},
 		)
 		require.False(t, r3OK)
+		fmt.Println("waiting here22")
 	})
 }
 

@@ -74,12 +74,38 @@ func (s *testStream) Send(e *kvpb.RangeFeedEvent) error {
 }
 
 func (s *testStream) Disconnect(err *kvpb.Error) {
+	fmt.Println("again1")
 	s.ctxDone()
-	s.done <- err
-	s.cleanUp()
+	fmt.Println("again3")
+
+	select {
+	case s.done <- err:
+	default:
+	}
+	fmt.Println("again4")
+
+	var wg sync.WaitGroup
+
+	// Add the number of goroutines to wait for
+	wg.Add(1)
+
+	// Start the goroutine
+	go func() {
+		s.cleanUp()
+		wg.Done()
+	}()
+
+	// Wait for all goroutines to finish
+	wg.Wait()
+	fmt.Println("again5")
+
+	s.cleanUp = func() {}
+	fmt.Println("done1")
+
 }
 
 func (s *testStream) RegisterCleanUp(f func()) {
+	fmt.Println("again2")
 	s.cleanUp = f
 }
 

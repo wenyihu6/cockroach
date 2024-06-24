@@ -289,6 +289,8 @@ func (r *registration) maybeStripEvent(
 func (r *registration) disconnect(pErr *kvpb.Error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	fmt.Println("disconnecting", r.mu.disconnected)
+
 	if !r.mu.disconnected {
 		if r.mu.catchUpIter != nil {
 			r.mu.catchUpIter.Close()
@@ -298,8 +300,11 @@ func (r *registration) disconnect(pErr *kvpb.Error) {
 			r.mu.outputLoopCancelFn()
 		}
 		r.mu.disconnected = true
+		fmt.Println("disconnecting2")
 		r.stream.Disconnect(pErr)
+		fmt.Println("disconnecting3")
 	}
+	fmt.Println("disconnecting4")
 }
 
 // outputLoop is the operational loop for a single registration. The behavior
@@ -537,9 +542,12 @@ func (reg *registry) Disconnect(ctx context.Context, span roachpb.Span) {
 // DisconnectWithErr disconnects all registrations that overlap the specified
 // span with the provided error.
 func (reg *registry) DisconnectWithErr(ctx context.Context, span roachpb.Span, pErr *kvpb.Error) {
+	fmt.Println("DisconnectWithErr start")
+
 	reg.forOverlappingRegs(ctx, span, func(r *registration) (bool, *kvpb.Error) {
 		return true /* disconned */, pErr
 	})
+	fmt.Println("DisconnectWithErr done")
 }
 
 // all is a span that overlaps with all registrations.
@@ -559,6 +567,7 @@ func (reg *registry) forOverlappingRegs(
 		r := i.(*registration)
 		dis, pErr := fn(r)
 		if dis {
+			fmt.Println("forOverlappingRegs")
 			r.disconnect(pErr)
 			toDelete = append(toDelete, i)
 		}

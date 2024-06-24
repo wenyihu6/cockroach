@@ -12,6 +12,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -174,9 +175,11 @@ func (p *ScheduledProcessor) processEvents(ctx context.Context) {
 	for max := len(p.eventC); max > 0; max-- {
 		select {
 		case e := <-p.eventC:
+			fmt.Println("processEvents")
 			if !p.stopping {
 				// If we are stopping, there's no need to forward any remaining
 				// data since registrations already have errors set.
+				fmt.Println("stopping")
 				p.consumeEvent(ctx, e)
 			}
 			e.alloc.Release(ctx)
@@ -221,6 +224,7 @@ func (p *ScheduledProcessor) processPushTxn(ctx context.Context) {
 }
 
 func (p *ScheduledProcessor) processStop() {
+	fmt.Println("processStop")
 	p.cleanup()
 	p.Metrics.RangeFeedProcessorsScheduler.Dec(1)
 }
@@ -276,11 +280,15 @@ func (p *ScheduledProcessor) DisconnectSpanWithErr(span roachpb.Span, pErr *kvpb
 
 func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
 	p.enqueueRequest(func(ctx context.Context) {
+		fmt.Println("sendStop1")
+
 		p.reg.DisconnectWithErr(ctx, all, pErr)
+		fmt.Println("sendStop3")
 		// First set stopping flag to ensure that once all registrations are removed
 		// processor should stop.
 		p.stopping = true
 		p.scheduler.StopProcessor()
+		fmt.Println("sendStop2")
 	})
 }
 
@@ -309,10 +317,13 @@ func (p *ScheduledProcessor) Register(
 	stream Stream,
 	disconnectFn func(),
 ) (bool, *Filter) {
+	fmt.Println("Register")
+
 	// Synchronize the event channel so that this registration doesn't see any
 	// events that were consumed before this registration was called. Instead,
 	// it should see these events during its catch up scan.
 	p.syncEventC()
+	fmt.Println("Register blocked")
 
 	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
 	r := newRegistration(
@@ -370,8 +381,11 @@ func (p *ScheduledProcessor) Register(
 }
 
 func (p *ScheduledProcessor) unregisterClient(r *registration) bool {
+	fmt.Println("waiting here")
 	return runRequest(p, func(ctx context.Context, p *ScheduledProcessor) bool {
+		fmt.Println("waiting here")
 		p.reg.Unregister(ctx, r)
+		fmt.Println("done")
 		return true
 	})
 }
@@ -549,21 +563,31 @@ func (p *ScheduledProcessor) syncEventC() {
 // syncSendAndWait allows sync event to be sent and waited on its channel.
 // Exposed to allow special test syneEvents that contain span to be sent.
 func (p *ScheduledProcessor) syncSendAndWait(se *syncEvent) {
+	fmt.Println("syncSendAndWait")
 	ev := getPooledEvent(event{sync: se})
 	select {
 	case p.eventC <- ev:
+		fmt.Println("eventC")
+
 		// This shouldn't happen as there should be no sync events after disconnect,
 		// but if there's a bug don't wait it can hang waiting for sync chan.
 		p.scheduler.Enqueue(EventQueued)
 		select {
+
 		case <-se.c:
-		// Synchronized.
+			// Synchronized.
+			fmt.Println("eventC1")
+
 		case <-p.stoppedC:
 			// Already stopped. Do nothing.
+			fmt.Println("eventC2")
+
 		}
 	case <-p.stoppedC:
 		// Already stopped. Do nothing.
 		putPooledEvent(ev)
+		fmt.Println("eventCD")
+
 	}
 }
 
@@ -652,6 +676,7 @@ func (p *ScheduledProcessor) consumeEvent(ctx context.Context, e *event) {
 				)
 			}
 		}
+		fmt.Println("sync")
 		close(e.sync.c)
 	default:
 		log.Fatalf(ctx, "missing event variant: %+v", e)
