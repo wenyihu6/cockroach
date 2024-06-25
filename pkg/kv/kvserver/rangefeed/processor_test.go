@@ -23,6 +23,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/cockroachdb/cockroach/pkg/base"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency/isolation"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -30,6 +31,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -728,8 +730,20 @@ func TestProcessorBasic(t *testing.T) {
 		p.StopWithErr(pErr)
 		require.NotNil(t, r2Stream.Err(t))
 
-		// Adding another registration should fail.
 		r3Stream := newTestStream()
+		// Adding another registration should fail.
+		var wg sync.WaitGroup
+		wg.Add(1)
+		defer wg.Wait()
+		// Make sure to shut down the muxer before wg.Wait().
+		tc := serverutils.StartCluster(t, 1, base.TestClusterArgs{})
+		defer tc.Stopper().Stop(ctx)
+		if err := tc.Stopper().RunAsyncTask(ctx, "mux-term-forwarder", func(ctx context.Context) {
+			defer wg.Done()
+			r3Stream.Run(ctx, tc.Stopper())
+		}); err != nil {
+			wg.Done()
+		}
 		r3OK, _ := p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("c"), EndKey: roachpb.RKey("z")},
 			hlc.Timestamp{WallTime: 1},

@@ -39,6 +39,7 @@ go_library(
         "node.go",
         "node_http_router.go",
         "node_stream_muxer.go",
+        "node_stream_muxer_test_helper.go",
         "node_tenant.go",
         "node_tombstone_storage.go",
         "nodes_response.go",
@@ -366,6 +367,7 @@ go_library(
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//metadata",
         "@org_golang_google_grpc//status",
+        "@org_uber_go_atomic//:atomic",
     ] + select({
         "@io_bazel_rules_go//go/platform:aix": [
             "@org_golang_x_sys//unix",
@@ -555,7 +557,6 @@ go_test(
         "//pkg/util/protoutil",
         "//pkg/util/randutil",
         "//pkg/util/stop",
-        "//pkg/util/syncutil",
         "//pkg/util/timeutil",
         "//pkg/util/tracing",
         "//pkg/util/tracing/tracingpb",
