@@ -1827,7 +1827,7 @@ func (n *Node) RangeLookup(
 }
 
 type muxer interface {
-	Send(streamID int64, rangeID roachpb.RangeID, event *kvpb.RangeFeedEvent) error
+	Send(event *kvpb.MuxRangeFeedEvent) error
 }
 
 var _ muxer = &rangefeed.StreamMuxer{}
@@ -1848,7 +1848,12 @@ func (s *setRangeIDEventSink) Context() context.Context {
 }
 
 func (s *setRangeIDEventSink) Send(event *kvpb.RangeFeedEvent) error {
-	return s.wrapped.Send(s.streamID, s.rangeID, event)
+	response := &kvpb.MuxRangeFeedEvent{
+		RangeFeedEvent: *event,
+		RangeID:        s.rangeID,
+		StreamID:       s.streamID,
+	}
+	return s.wrapped.Send(response)
 }
 
 var _ kvpb.RangeFeedEventSink = (*setRangeIDEventSink)(nil)
