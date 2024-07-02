@@ -1849,10 +1849,11 @@ func (s *setRangeIDEventSink) Context() context.Context {
 
 func (s *setRangeIDEventSink) Send(event *kvpb.RangeFeedEvent) error {
 	response := &kvpb.MuxRangeFeedEvent{
-		RangeFeedEvent: *event,
-		RangeID:        s.rangeID,
-		StreamID:       s.streamID,
+		//RangeFeedEvent: *event,
+		RangeID:  s.rangeID,
+		StreamID: s.streamID,
 	}
+	response.SetValue(event)
 	return s.wrapped.Send(response)
 }
 
