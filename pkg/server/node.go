@@ -1882,27 +1882,38 @@ func (s *lockedMuxStream) Send(e *kvpb.MuxRangeFeedEvent) error {
 }
 
 // MuxRangeFeed implements the roachpb.InternalServer interface.
-func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
+func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) (err error) {
 	muxStream := &lockedMuxStream{wrapped: stream}
 	bufferedStream := rangefeed.NewLockedBufferedStream(muxStream)
 
 	var wg sync.WaitGroup
-	defer wg.Wait()
-
 	// All context created below should derive from this context, which is
 	// cancelled once MuxRangeFeed exits.
 	// Note that ctx is done when stream is done as well.
 	ctx, cancel := context.WithCancel(n.AnnotateCtx(stream.Context()))
 	// Make sure cancel context first before wait.
-	defer cancel()
 
 	streamMuxer := rangefeed.NewStreamMuxer(muxStream, n.metrics)
-	wg.Add(1)
+	defer func() {
+		cancel()
+		wg.Wait()
+		streamMuxer.DisconnectAllWithErr(err)
+		bufferedStream.CleanUp()
+	}()
+
 	errC := make(chan error, 1)
+	sendError := func(err error) {
+		select {
+		case errC <- err:
+		default:
+		}
+	}
+
+	wg.Add(1)
 	if err := n.stopper.RunAsyncTask(ctx, "buffered stream output", func(ctx context.Context) {
 		defer wg.Done()
 		if err := bufferedStream.RunOutputLoop(ctx, n.stopper); err != nil {
-			errC <- err
+			sendError(err)
 		}
 	}); err != nil {
 		wg.Done()
@@ -1912,47 +1923,56 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 	wg.Add(1)
 	if err := n.stopper.RunAsyncTask(ctx, "stream muxer", func(ctx context.Context) {
 		defer wg.Done()
-		streamMuxer.Run(ctx, n.stopper, errC)
-		// Shutdown everything and the buffered stream output.
-		cancel()
+		if err := func() error {
+			for {
+				select {
+				case <-ctx.Done():
+					return nil
+				case <-n.stopper.ShouldQuiesce():
+					return nil
+				default:
+					// TODO: this or select on channel ctx.Done()?
+					req, err := stream.Recv()
+					if err != nil {
+						return err
+					}
+
+					if req.CloseStream {
+						streamMuxer.DisconnectRangefeedWithError(
+							req.StreamID,
+							kvpb.NewError(
+								kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED)))
+						continue
+					}
+
+					streamCtx, cancel := context.WithCancel(ctx)
+					streamCtx = logtags.AddTag(streamCtx, "r", req.RangeID)
+					streamCtx = logtags.AddTag(streamCtx, "s", req.Replica.StoreID)
+					streamCtx = logtags.AddTag(streamCtx, "sid", req.StreamID)
+
+					streamSink := &setRangeIDEventSink{
+						ctx:      streamCtx,
+						rangeID:  req.RangeID,
+						streamID: req.StreamID,
+						wrapped:  streamMuxer,
+					}
+
+					streamMuxer.AddStream(req.StreamID, req.RangeID, cancel)
+
+					if err := n.stores.RangeFeed(req, streamSink); err != nil {
+						streamMuxer.DisconnectRangefeedWithError(
+							req.StreamID, kvpb.NewError(err))
+					}
+				}
+			}
+		}(); err != nil {
+			sendError(err)
+		}
 	}); err != nil {
 		wg.Done()
 		return err
 	}
-
-	for {
-		req, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-
-		if req.CloseStream {
-			streamMuxer.DisconnectRangefeedWithError(
-				req.StreamID,
-				kvpb.NewError(
-					kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED)))
-			continue
-		}
-
-		streamCtx, cancel := context.WithCancel(ctx)
-		streamCtx = logtags.AddTag(streamCtx, "r", req.RangeID)
-		streamCtx = logtags.AddTag(streamCtx, "s", req.Replica.StoreID)
-		streamCtx = logtags.AddTag(streamCtx, "sid", req.StreamID)
-
-		streamSink := &setRangeIDEventSink{
-			ctx:      streamCtx,
-			rangeID:  req.RangeID,
-			streamID: req.StreamID,
-			wrapped:  streamMuxer,
-		}
-
-		streamMuxer.AddStream(req.StreamID, req.RangeID, cancel)
-
-		if err := n.stores.RangeFeed(req, streamSink); err != nil {
-			streamMuxer.DisconnectRangefeedWithError(
-				req.StreamID, kvpb.NewError(err))
-		}
-	}
+	return streamMuxer.Run(ctx, n.stopper, errC)
 }
 
 // ResetQuorum implements the kvpb.InternalServer interface.

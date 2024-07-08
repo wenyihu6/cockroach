@@ -76,12 +76,12 @@ func (b *LockedBufferedStream) popFront() (e *kvpb.MuxRangeFeedEvent, empty bool
 	return event, !ok, b.queueMu.overflow
 }
 
+func (b *LockedBufferedStream) CleanUp() {
+	b.removeAll()
+}
+
 // should be able to cancel
 func (b *LockedBufferedStream) RunOutputLoop(ctx context.Context, stopper *stop.Stopper) error {
-	defer func() {
-		b.removeAll()
-	}()
-
 	for {
 		select {
 		case <-ctx.Done():
