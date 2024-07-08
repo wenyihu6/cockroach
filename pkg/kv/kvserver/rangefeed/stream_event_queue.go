@@ -26,6 +26,7 @@ type LockedBufferedStream struct {
 		capacity int64
 		buffer   muxEventQueue
 		overflow bool
+		done     bool
 	}
 }
 
@@ -52,12 +53,16 @@ func (b *LockedBufferedStream) removeAll() {
 	b.queueMu.Lock()
 	defer b.queueMu.Unlock()
 	b.queueMu.buffer.removeAll()
+	b.queueMu.done = true
 }
 
 // Never returns an error. We shut down when overflow but wait until output loop drains everythng.
 func (b *LockedBufferedStream) Send(e *kvpb.MuxRangeFeedEvent) error {
 	b.queueMu.Lock()
 	defer b.queueMu.Unlock()
+	if b.queueMu.done == true {
+		return nil
+	}
 	if b.queueMu.overflow {
 		return nil
 	}

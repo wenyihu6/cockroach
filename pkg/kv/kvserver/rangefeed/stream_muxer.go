@@ -257,7 +257,7 @@ func (s *StreamMuxer) DisconnectAllWithErr(err error) {
 // If run returns (due to context cancellation, broken stream, or quiescing),
 // there is nothing we could do. We expect registrations to receive the same
 // error and shut streams down.
-func (s *StreamMuxer) Run(ctx context.Context, stopper *stop.Stopper, errC chan error) {
+func (s *StreamMuxer) Run(ctx context.Context, stopper *stop.Stopper, errC chan error) error {
 	for {
 		select {
 		case <-s.notifyCompletion:
@@ -267,7 +267,7 @@ func (s *StreamMuxer) Run(ctx context.Context, stopper *stop.Stopper, errC chan 
 				// callback and also disconnected signal
 				if err := s.sender.Send(clientErr); err != nil {
 					s.DisconnectAllWithErr(nil)
-					return
+					return err
 				}
 			}
 		case <-s.notifyCleanUp:
@@ -280,16 +280,18 @@ func (s *StreamMuxer) Run(ctx context.Context, stopper *stop.Stopper, errC chan 
 				}
 			}
 		case err := <-errC:
-			s.DisconnectAllWithErr(err)
-			return
+			if err != nil {
+				s.DisconnectAllWithErr(err)
+				return err
+			}
 		case <-ctx.Done():
 			// ctx should be canceled if the underlying stream is broken.
 			s.DisconnectAllWithErr(ctx.Err())
-			return
+			return ctx.Err()
 		case <-stopper.ShouldQuiesce():
 			// TODO(wenyihu6): should we cancel context here?
 			s.DisconnectAllWithErr(nil)
-			return
+			return nil
 		}
 	}
 }
