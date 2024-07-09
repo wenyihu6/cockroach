@@ -287,7 +287,7 @@ func (s *StreamMuxer) Run(ctx context.Context, stopper *stop.Stopper, errC chan 
 		case <-ctx.Done():
 			// ctx should be canceled if the underlying stream is broken.
 			s.DisconnectAllWithErr(ctx.Err())
-			return ctx.Err()
+			return nil
 		case <-stopper.ShouldQuiesce():
 			// TODO(wenyihu6): should we cancel context here?
 			s.DisconnectAllWithErr(nil)

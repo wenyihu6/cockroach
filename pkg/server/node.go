@@ -1903,49 +1903,51 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 	}
 
 	if err := n.stopper.RunAsyncTask(ctx, "buffered stream output", func(ctx context.Context) {
-		errC <- func() error {
-			for {
-				select {
-				case <-ctx.Done():
-					return nil
-				default:
-					req, err := stream.Recv()
-					if err != nil {
-						return err
-					}
-
-					if req.CloseStream {
-						streamMuxer.DisconnectRangefeedWithError(
-							req.StreamID,
-							kvpb.NewError(
-								kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED)))
-						continue
-					}
-
-					streamCtx, cancel := context.WithCancel(ctx)
-					streamCtx = logtags.AddTag(streamCtx, "r", req.RangeID)
-					streamCtx = logtags.AddTag(streamCtx, "s", req.Replica.StoreID)
-					streamCtx = logtags.AddTag(streamCtx, "sid", req.StreamID)
-
-					streamSink := &setRangeIDEventSink{
-						ctx:      streamCtx,
-						rangeID:  req.RangeID,
-						streamID: req.StreamID,
-						wrapped:  streamMuxer,
-					}
-					streamMuxer.AddStream(req.StreamID, req.RangeID, cancel)
-					if err := n.stores.RangeFeed(req, streamSink); err != nil {
-						streamMuxer.DisconnectRangefeedWithError(
-							req.StreamID, kvpb.NewError(err))
-					}
-				}
-			}
-		}()
+		errC <- streamMuxer.Run(ctx, n.stopper, errC)
 	}); err != nil {
 		return err
 	}
 
-	return streamMuxer.Run(ctx, n.stopper, errC)
+	for {
+		select {
+		case err := <-errC:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-n.stopper.ShouldQuiesce():
+			return stop.ErrUnavailable
+		default:
+			req, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+
+			if req.CloseStream {
+				streamMuxer.DisconnectRangefeedWithError(
+					req.StreamID,
+					kvpb.NewError(
+						kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED)))
+				continue
+			}
+
+			streamCtx, cancel := context.WithCancel(ctx)
+			streamCtx = logtags.AddTag(streamCtx, "r", req.RangeID)
+			streamCtx = logtags.AddTag(streamCtx, "s", req.Replica.StoreID)
+			streamCtx = logtags.AddTag(streamCtx, "sid", req.StreamID)
+
+			streamSink := &setRangeIDEventSink{
+				ctx:      streamCtx,
+				rangeID:  req.RangeID,
+				streamID: req.StreamID,
+				wrapped:  streamMuxer,
+			}
+			streamMuxer.AddStream(req.StreamID, req.RangeID, cancel)
+			if err := n.stores.RangeFeed(req, streamSink); err != nil {
+				streamMuxer.DisconnectRangefeedWithError(
+					req.StreamID, kvpb.NewError(err))
+			}
+		}
+	}
 }
 
 // ResetQuorum implements the kvpb.InternalServer interface.
