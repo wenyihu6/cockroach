@@ -17,7 +17,6 @@ import (
 	"net"
 	"sort"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -1888,56 +1887,37 @@ func (s *lockedMuxStream) Send(e *kvpb.MuxRangeFeedEvent) error {
 // MuxRangeFeed implements the roachpb.InternalServer interface.
 func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) (err error) {
 	muxStream := &lockedMuxStream{wrapped: stream}
-	bufferedStream := rangefeed.NewLockedBufferedStream(muxStream)
 
-	var wg sync.WaitGroup
 	// All context created below should derive from this context, which is
 	// cancelled once MuxRangeFeed exits.
 	// Note that ctx is done when stream is done as well.
 	ctx, cancel := context.WithCancel(n.AnnotateCtx(stream.Context()))
+	defer cancel()
 
 	streamMuxer := rangefeed.NewStreamMuxer(muxStream, n.metrics)
+
+	errCh := make(chan error, 1)
+	streamMuxerStop, err := streamMuxer.Start(ctx, n.stopper, errCh)
+	if err != nil {
+		return err
+	}
+
+	bufferedStream := rangefeed.NewLockedBufferedStream(muxStream)
+	bufferedStreamStop, err := bufferedStream.Start(ctx, n.stopper, errCh)
+	if err != nil {
+		return err
+	}
+
 	defer func() {
-		// Make sure cancel context first before wait to avoid deadlock.
-		cancel()
-		wg.Wait()
+		streamMuxerStop()
+		bufferedStreamStop()
 		streamMuxer.DisconnectAllWithErr(err)
 		bufferedStream.CleanUp()
 	}()
 
-	errC := make(chan error, 1)
-	sendError := func(err error) {
-		select {
-		case errC <- err:
-		default:
-		}
-	}
-
-	wg.Add(1)
-	if err := n.stopper.RunAsyncTask(ctx, "buffered stream output", func(ctx context.Context) {
-		defer wg.Done()
-		if err := bufferedStream.RunOutputLoop(ctx, n.stopper); err != nil {
-			sendError(err)
-		}
-	}); err != nil {
-		wg.Done()
-		return err
-	}
-
-	wg.Add(1)
-	if err := n.stopper.RunAsyncTask(ctx, "stream muxer", func(ctx context.Context) {
-		defer wg.Done()
-		if err := streamMuxer.Run(ctx, n.stopper, errC); err != nil {
-			sendError(err)
-		}
-	}); err != nil {
-		wg.Done()
-		return err
-	}
-
 	for {
 		select {
-		case err := <-errC:
+		case err := <-errCh:
 			return err
 		case <-ctx.Done():
 			return ctx.Err()

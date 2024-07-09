@@ -12,6 +12,7 @@ package rangefeed
 
 import (
 	"context"
+	"sync"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
@@ -105,4 +106,29 @@ func (b *LockedBufferedStream) RunOutputLoop(ctx context.Context, stopper *stop.
 			}
 		}
 	}
+}
+
+func (b *LockedBufferedStream) Start(
+	ctx context.Context, stopper *stop.Stopper, errCh chan error,
+) (func(), error) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	ctx, cancel := context.WithCancel(ctx)
+	if err := stopper.RunAsyncTask(ctx, "buffered stream output", func(ctx context.Context) {
+		defer wg.Done()
+		if err := b.RunOutputLoop(ctx, stopper); err != nil {
+			select {
+			case errCh <- err:
+			default:
+			}
+		}
+	}); err != nil {
+		cancel()
+		wg.Done()
+		return func() {}, err // noop if error
+	}
+	return func() {
+		cancel()
+		wg.Wait()
+	}, nil
 }
