@@ -117,6 +117,10 @@ func (s *testServerStream) rangefeedEventsSentById(
 	return
 }
 
+func (s *testServerStream) SendUnbuffered(e *kvpb.MuxRangeFeedEvent) error {
+	return s.Send(e)
+}
+
 func (s *testServerStream) Send(e *kvpb.MuxRangeFeedEvent) error {
 	s.Lock()
 	defer s.Unlock()

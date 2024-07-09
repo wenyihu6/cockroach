@@ -32,6 +32,7 @@ type rangefeedMetricsRecorder interface {
 // safe for concurrent Sends. Implemented by lockedMuxStream.
 type severStreamSender interface {
 	Send(*kvpb.MuxRangeFeedEvent) error
+	SendUnbuffered(*kvpb.MuxRangeFeedEvent) error
 }
 
 type StreamMuxer struct {
@@ -265,7 +266,7 @@ func (s *StreamMuxer) Run(ctx context.Context, stopper *stop.Stopper, errC chan 
 			for _, clientErr := range toSend {
 				// have another slice to process disconnect signals can deadlock here in
 				// callback and also disconnected signal
-				if err := s.sender.Send(clientErr); err != nil {
+				if err := s.sender.SendUnbuffered(clientErr); err != nil {
 					return err
 				}
 			}

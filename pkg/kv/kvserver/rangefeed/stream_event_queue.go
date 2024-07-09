@@ -80,6 +80,10 @@ func (b *LockedBufferedStream) CleanUp() {
 	b.removeAll()
 }
 
+func (b *LockedBufferedStream) SendUnbuffered(e *kvpb.MuxRangeFeedEvent) error {
+	return b.wrapped.Send(e)
+}
+
 // should be able to cancel
 func (b *LockedBufferedStream) RunOutputLoop(ctx context.Context, stopper *stop.Stopper) error {
 	for {

@@ -1875,6 +1875,10 @@ type lockedMuxStream struct {
 	sendMu  syncutil.Mutex
 }
 
+func (s *lockedMuxStream) SendUnbuffered(e *kvpb.MuxRangeFeedEvent) error {
+	return s.Send(e)
+}
+
 func (s *lockedMuxStream) Send(e *kvpb.MuxRangeFeedEvent) error {
 	s.sendMu.Lock()
 	defer s.sendMu.Unlock()
