@@ -36,6 +36,20 @@ type severStreamSender interface {
 }
 
 type StreamMuxer struct {
+	// taskCancel is used to cancel the tasks spawned by StreamMuxer.Run. It is
+	// called by StreamMuxer.Stop.
+	taskCancel context.CancelFunc
+
+	// wg is used to wait for the muxer to shut down.
+	wg sync.WaitGroup
+
+	// errCh is used to signal errors from the muxer task. If non-empty, the
+	// StreamMuxer.Run is finished and the error should be handled. Note that it
+	// is possible for StreamMuxer.Run to be finished without returning an error
+	// to errCh. Other goroutines are expected to receive the same shutdown signal
+	// and handle error if applicable.
+	errCh chan error
+
 	// stream is the server stream to which the muxer sends events. Note that the
 	// stream is a locked mux stream, so it is safe for concurrent Sends.
 	sender severStreamSender
@@ -106,29 +120,34 @@ func NewStreamMuxer(sender severStreamSender, metrics rangefeedMetricsRecorder) 
 	}
 }
 
+func (sm *StreamMuxer) Error() chan error {
+	return sm.errCh
+}
+
+func (sm *StreamMuxer) Stop() {
+	sm.taskCancel()
+	sm.wg.Wait()
+}
+
 func (sm *StreamMuxer) Start(
-	ctx context.Context, stopper *stop.Stopper, errCh chan error,
-) (func(), error) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	ctx, cancel := context.WithCancel(ctx)
-	if err := stopper.RunAsyncTask(ctx, "test-stream-muxer", func(ctx context.Context) {
-		defer wg.Done()
+	ctx context.Context, stopper *stop.Stopper,
+) error {
+	sm.errCh = make(chan error, 1)
+	sm.wg.Add(1)
+	// TODO(during review): Should I use stopper.WithCancelOnQuiesce and get rid
+	// of case <-stopper.ShouldQuiesce()?
+	ctx, sm.taskCancel = context.WithCancel(ctx)
+	if err := stopper.RunAsyncTask(ctx, "stream-muxer-run", func(ctx context.Context) {
+		defer sm.wg.Done()
 		if err := sm.Run(ctx, stopper); err != nil {
-			select {
-			case errCh <- err:
-			default:
-			}
+			sm.errCh <- err
 		}
 	}); err != nil {
-		cancel()
-		wg.Done()
-		return func() {}, err // noop if error
+		sm.taskCancel()
+		sm.wg.Done()
+		return err // noop if error
 	}
-	return func() {
-		cancel()
-		wg.Wait()
-	}, nil
+	return nil
 }
 
 // Note that the cleanup function has to be thread safe.

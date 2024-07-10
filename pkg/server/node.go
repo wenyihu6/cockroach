@@ -1895,29 +1895,27 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) (err error)
 	defer cancel()
 
 	streamMuxer := rangefeed.NewStreamMuxer(muxStream, n.metrics)
-
-	errCh := make(chan error, 1)
-	streamMuxerStop, err := streamMuxer.Start(ctx, n.stopper, errCh)
-	if err != nil {
+	if err := streamMuxer.Start(ctx, n.stopper); err != nil {
 		return err
 	}
 
 	bufferedStream := rangefeed.NewLockedBufferedStream(muxStream)
-	bufferedStreamStop, err := bufferedStream.Start(ctx, n.stopper, errCh)
-	if err != nil {
+	if err := bufferedStream.Start(ctx, n.stopper); err != nil {
 		return err
 	}
 
 	defer func() {
-		streamMuxerStop()
-		bufferedStreamStop()
+		streamMuxer.Stop()
+		bufferedStream.Stop()
 		streamMuxer.DisconnectAllWithErr(err)
 		bufferedStream.CleanUp()
 	}()
 
 	for {
 		select {
-		case err := <-errCh:
+		case err := <-bufferedStream.Error():
+			return err
+		case err := <-streamMuxer.Error():
 			return err
 		case <-ctx.Done():
 			return ctx.Err()

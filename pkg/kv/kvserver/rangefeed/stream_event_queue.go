@@ -20,6 +20,13 @@ import (
 )
 
 type LockedBufferedStream struct {
+	taskCancel context.CancelFunc
+
+	// wg is used to wait for the muxer to shut down.
+	wg sync.WaitGroup
+
+	errCh chan error
+
 	wrapped severStreamSender
 
 	queueMu struct {
@@ -108,27 +115,30 @@ func (b *LockedBufferedStream) RunOutputLoop(ctx context.Context, stopper *stop.
 	}
 }
 
+func (b *LockedBufferedStream) Error() chan error {
+	return b.errCh
+}
+
+func (b *LockedBufferedStream) Stop() {
+	b.taskCancel()
+	b.wg.Wait()
+}
+
 func (b *LockedBufferedStream) Start(
-	ctx context.Context, stopper *stop.Stopper, errCh chan error,
-) (func(), error) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	ctx, cancel := context.WithCancel(ctx)
+	ctx context.Context, stopper *stop.Stopper,
+) error {
+	b.errCh = make(chan error, 1)
+	b.wg.Add(1)
+	ctx, b.taskCancel = context.WithCancel(ctx)
 	if err := stopper.RunAsyncTask(ctx, "buffered stream output", func(ctx context.Context) {
-		defer wg.Done()
+		defer b.wg.Done()
 		if err := b.RunOutputLoop(ctx, stopper); err != nil {
-			select {
-			case errCh <- err:
-			default:
-			}
+			b.errCh <- err
 		}
 	}); err != nil {
-		cancel()
-		wg.Done()
-		return func() {}, err // noop if error
+		b.taskCancel()
+		b.wg.Done()
+		return err
 	}
-	return func() {
-		cancel()
-		wg.Wait()
-	}, nil
+	return nil
 }
