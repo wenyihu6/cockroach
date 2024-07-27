@@ -39,11 +39,15 @@ type nonBufferedRegistration struct {
 
 	id            int64
 	keys          interval.Range
-	catchUpBuf    chan *sharedEvent
 	blockWhenFull bool // if true, block when buf is full (for tests)
 
 	mu struct {
 		sync.Locker
+
+		// Need to be under mutex because we write it to nil after draining and we
+		// need to prevent draining and writing to it at the same time.
+		catchUpBuf chan *sharedEvent
+
 		// True if this registration buffer has overflowed, dropping a live event.
 		// This will cause the registration to exit with an error once the buffer
 		// has been emptied.
@@ -67,6 +71,7 @@ type registrationI interface {
 	publish(ctx context.Context, event *kvpb.RangeFeedEvent, alloc *SharedBudgetAllocation)
 	disconnect(pErr *kvpb.Error)
 	runOutputLoop(ctx context.Context, forStacks roachpb.RangeID)
+	disconnectAndDrainCatchUpBuf(ctx context.Context, err error)
 	drainAllocations(ctx context.Context)
 	waitForCaughtUp(ctx context.Context) error
 	setID(int64)
@@ -129,12 +134,14 @@ func newNonBufferedRegistration(
 		metrics:          metrics,
 		stream:           stream,
 		unreg:            unregisterFn,
-		catchUpBuf:       make(chan *sharedEvent, bufferSz),
 		blockWhenFull:    blockWhenFull,
 	}
 	r.mu.Locker = &syncutil.Mutex{}
 	r.mu.caughtUp = true
 	r.mu.catchUpIter = catchUpIter
+	if catchUpIter != nil {
+		r.mu.catchUpBuf = make(chan *sharedEvent, bufferSz)
+	}
 	return &r
 }
 
@@ -151,21 +158,21 @@ func (nr *nonBufferedRegistration) maybePutInCatchUpBuffer(e *sharedEvent) (succ
 	nr.mu.Lock()
 	defer nr.mu.Unlock()
 
-	// Is this thread safe??? MOve up if it is.
-	if nr.catchUpBuf == nil {
-		return false
-	}
-
 	// Treat these as true so that we don't send to buffered stream.
 	if nr.mu.disconnected || nr.mu.catchUpOverflow {
 		// Don't send to catch up buffer. We will drain after catch up scan is done.
 		return true
 	}
 
+	// Is this thread safe??? MOve up if it is.
+	if nr.mu.catchUpBuf == nil {
+		return false
+	}
+
 	// Figure out what to do for memory accounting later.
 	e.alloc.Use(context.Background())
 	select {
-	case nr.catchUpBuf <- e:
+	case nr.mu.catchUpBuf <- e:
 	default:
 		e.alloc.Release(context.Background())
 		putPooledSharedEvent(e)
@@ -184,8 +191,7 @@ func (nr *nonBufferedRegistration) publish(
 ) {
 	assertEvent(ctx, event)
 	e := getPooledSharedEvent(sharedEvent{event: nr.maybeStripEvent(ctx, event), alloc: alloc})
-	success := nr.maybePutInCatchUpBuffer(e)
-	if success {
+	if nr.maybePutInCatchUpBuffer(e) {
 		return
 	}
 	if err := nr.stream.Send(e.event); err != nil {
@@ -284,10 +290,12 @@ func (nr *nonBufferedRegistration) disconnect(pErr *kvpb.Error) {
 	}
 }
 
+// We promise catchUpBuf is drained and nil after this.
 func (nr *nonBufferedRegistration) runOutputLoop(ctx context.Context, _forStacks roachpb.RangeID) {
 	nr.mu.Lock()
 	if nr.mu.disconnected {
-		// The registration has already been disconnected.
+		// The registration has already been disconnected. Catch up iter should be
+		// closed already.
 		nr.mu.Unlock()
 		return
 	}
@@ -295,22 +303,51 @@ func (nr *nonBufferedRegistration) runOutputLoop(ctx context.Context, _forStacks
 	nr.mu.Unlock()
 
 	if err := nr.maybeRunCatchUpScan(ctx); err != nil {
-		nr.disconnect(kvpb.NewError(err))
+		// Drain allocations after disconnecting to avoid any leaks. If catch up scan
+		// and publish were successful, catchBuf would be nil and this drain would be
+		// no-op. nr.mu shouldn't be held when the function returns here.
+		nr.disconnectAndDrainCatchUpBuf(ctx, err)
+		return
 	}
+	if err := nr.publishCatchUpBuffer(ctx); err != nil {
+		// In any error cases,
+		// Disconnect first so that we can avoid acquiring for catch up buffer while
+		// draining allocations.
+		nr.disconnectAndDrainCatchUpBuf(ctx, err)
+		return
+	}
+	// Publish catch up buffer is responsible for draining allocations if err
+	// returns nil.
+}
+
+// Noop for non-buffered registration since it doesn't buffer events. Catch up
+// buffer draining is handled in runOutputLoop goroutine.
+func (nr *nonBufferedRegistration) drainAllocations(ctx context.Context) {
+	return
 }
 
 // drainAllocations should be done after registration is disconnected from
-// processor to release all memory budget that its pending events hold.
-func (nr *nonBufferedRegistration) drainAllocations(ctx context.Context) {
-	if len(nr.catchUpBuf) == 0 {
-		// note this is thread safe
-		return
-	}
+// processor to release all memory budget that its pending events hold. There
+// should be no more updates after this or even during this. It it set to nil
+// catch up buf. We need to make sure no more updates are sent here while this
+// is running. Check if this is fine. It could take a long time.
+func (nr *nonBufferedRegistration) disconnectAndDrainCatchUpBuf(ctx context.Context, err error) {
+	// In any error cases,
+	// Disconnect first so that we can avoid more updates being sent while
+	// draining acquiring for catch up buffer while draining allocations. This is
+	// also how tell publish the difference between successful and unsuccessful
+	// draining of catch up buf.
+	nr.disconnect(kvpb.NewError(err))
+
+	nr.mu.Lock()
+	defer nr.mu.Unlock()
+
+	// we need lock to prevent any more updates while draining.
 	func() {
 		for {
 			select {
 			// Check if we should check for e, ok here.
-			case e := <-nr.catchUpBuf:
+			case e := <-nr.mu.catchUpBuf:
 				e.alloc.Release(ctx)
 				putPooledSharedEvent(e)
 			default:
@@ -320,16 +357,15 @@ func (nr *nonBufferedRegistration) drainAllocations(ctx context.Context) {
 	}()
 
 	// we unregister before we drain. so it is impossible to receive updates inbetween.
-	nr.mu.Lock()
-	defer nr.mu.Unlock()
-	nr.catchUpBuf = nil
+	nr.mu.catchUpBuf = nil
+	nr.mu.catchUpScanCancelFn = nil
 }
 
 func (nr *nonBufferedRegistration) drainAndPublishCatchUpBufferLocked(ctx context.Context) error {
 	for {
 		select {
 		// Check if we should check for e, ok here.
-		case e := <-nr.catchUpBuf:
+		case e := <-nr.mu.catchUpBuf:
 			if err := nr.stream.Send(e.event); err != nil {
 				// nr already disconnect. Possible if we disconnect while draining. We
 				// will drain everything as part of p.unregister in the end.
@@ -337,6 +373,9 @@ func (nr *nonBufferedRegistration) drainAndPublishCatchUpBufferLocked(ctx contex
 			}
 			e.alloc.Release(ctx)
 			putPooledSharedEvent(e)
+		case <-ctx.Done():
+			// Cancelled. It will drain the rest of the buffer.
+			return ctx.Err()
 		default:
 			return nil
 		}
@@ -344,7 +383,9 @@ func (nr *nonBufferedRegistration) drainAndPublishCatchUpBufferLocked(ctx contex
 }
 
 func (nr *nonBufferedRegistration) publishCatchUpBuffer(ctx context.Context) error {
-	// Do it without locked first to avoid holding it for too long.
+	// Do it without locked first to avoid holding it for too long. More updates
+	// could come while this happens. But we cannot have multiple goroutines
+	// reading from it.
 	if err := nr.drainAndPublishCatchUpBufferLocked(ctx); err != nil {
 		return err
 	}
@@ -355,11 +396,13 @@ func (nr *nonBufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 	}
 
 	if nr.mu.catchUpOverflow {
+		// Don't set catchUpBuf to nil here since we want to prevent more raft
+		// updates being sent to publish.
 		return newErrBufferCapacityExceeded().GoError()
 	}
 
 	// success: any future events will be sent directly to the stream since catchUpBuf is nil.
-	nr.catchUpBuf = nil
+	nr.mu.catchUpBuf = nil
 	nr.mu.catchUpScanCancelFn = nil
 	return nil
 }
@@ -391,13 +434,7 @@ func (nr *nonBufferedRegistration) maybeRunCatchUpScan(ctx context.Context) erro
 	}()
 
 	err := catchUpIter.CatchUpScan(ctx, nr.stream.Send, nr.withDiff, nr.withFiltering)
-
-	if err != nil || ctx.Err() != nil {
-		err = errors.Wrap(errors.CombineErrors(err, ctx.Err()), "catch-up scan failed")
-		log.Errorf(ctx, "%v", err)
-		return err
-	}
-	return nr.publishCatchUpBuffer(ctx)
+	return err
 }
 
 // ID implements interval.Interface.
@@ -423,7 +460,7 @@ func (nr *nonBufferedRegistration) waitForCaughtUp(ctx context.Context) error {
 	}
 	for re := retry.StartWithCtx(ctx, opts); re.Next(); {
 		nr.mu.Lock()
-		caughtUp := len(nr.catchUpBuf) == 0 && nr.mu.caughtUp
+		caughtUp := len(nr.mu.catchUpBuf) == 0 && nr.mu.caughtUp
 		// TODO(wenyihu6): check how we should do this for the new thing
 		nr.mu.Unlock()
 		if caughtUp {

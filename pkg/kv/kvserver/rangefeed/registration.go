@@ -383,6 +383,10 @@ func (r *registration) runOutputLoop(ctx context.Context, _forStacks roachpb.Ran
 	r.disconnect(kvpb.NewError(err))
 }
 
+func (r *registration) disconnectAndDrainCatchUpBuf(ctx context.Context, err error) {
+	return
+}
+
 // drainAllocations should be done after registration is disconnected from
 // processor to release all memory budget that its pending events hold.
 func (r *registration) drainAllocations(ctx context.Context) {
