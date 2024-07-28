@@ -12,6 +12,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -221,6 +222,7 @@ func (p *ScheduledProcessor) processPushTxn(ctx context.Context) {
 }
 
 func (p *ScheduledProcessor) processStop() {
+	fmt.Println("processStop is called")
 	p.cleanup()
 	p.Metrics.RangeFeedProcessorsScheduler.Dec(1)
 }
@@ -243,6 +245,7 @@ func (p *ScheduledProcessor) cleanup() {
 
 	p.taskCancel()
 	close(p.stoppedC)
+	fmt.Println("cleanup for processStop is done")
 	p.MemBudget.Close(ctx)
 }
 
@@ -257,6 +260,7 @@ func (p *ScheduledProcessor) Stop() {
 // specified error. Safe to call on nil Processor. It is not valid to restart a
 // processor after it has been stopped.
 func (p *ScheduledProcessor) StopWithErr(pErr *kvpb.Error) {
+	fmt.Println("Stopping processor")
 	// Flush any remaining events before stopping.
 	p.syncEventC()
 	// Send the processor a stop signal.
@@ -276,11 +280,14 @@ func (p *ScheduledProcessor) DisconnectSpanWithErr(span roachpb.Span, pErr *kvpb
 
 func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
 	p.enqueueRequest(func(ctx context.Context) {
+		fmt.Println("sendstop request callback is called")
 		p.reg.DisconnectWithErr(ctx, all, pErr)
+		fmt.Println("sendstop in progress")
 		// First set stopping flag to ensure that once all registrations are removed
 		// processor should stop.
 		p.stopping = true
 		p.scheduler.StopProcessor()
+		fmt.Println("sendstop done")
 	})
 }
 
@@ -604,11 +611,14 @@ func runRequest[T interface{}](
 	p *ScheduledProcessor, f func(ctx context.Context, p *ScheduledProcessor) T,
 ) (r T) {
 	result := make(chan T, 1)
+	fmt.Println("enqueued")
 	p.enqueueRequest(func(ctx context.Context) {
+		fmt.Println("running enqueued request: ", p.stopping)
 		result <- f(ctx, p)
 		// Assert that we never process requests after stoppedC is closed. This is
 		// necessary to coordinate catchup iter ownership and avoid double-closing.
 		// Note that request/stop processing is always sequential, see process().
+		fmt.Println("running enqueued request: ", p.stopping)
 		if buildutil.CrdbTestBuild {
 			select {
 			case <-p.stoppedC:
@@ -617,10 +627,13 @@ func runRequest[T interface{}](
 			}
 		}
 	})
+	fmt.Println("enqueued request successfully: ", p.stopping)
 	select {
 	case r = <-result:
+		fmt.Println("result received")
 		return r
 	case <-p.stoppedC:
+		fmt.Println("p.stoppedC")
 		// If a request and stop were processed in rapid succession, and the node is
 		// overloaded, this select may observe them happening at the same time and
 		// take this branch instead of the result with 50% probability. Check again.
@@ -630,6 +643,7 @@ func runRequest[T interface{}](
 		}
 		return r
 	}
+
 }
 
 func (p *ScheduledProcessor) enqueueRequest(req request) {
