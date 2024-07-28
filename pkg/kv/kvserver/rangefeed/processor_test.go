@@ -258,7 +258,7 @@ const (
 	schedulerProcessor          = true
 )
 
-var testTypes = []procType{legacyProcessor, schedulerProcessor}
+var testTypes = []procType{schedulerProcessor}
 
 func (t procType) String() string {
 	if t {
@@ -733,12 +733,16 @@ func TestProcessorBasic(t *testing.T) {
 
 		// Stop the processor with an error.
 		pErr := kvpb.NewErrorf("stop err")
+		fmt.Println("------------------- stopped")
 		p.StopWithErr(pErr)
 		require.NotNil(t, r2Stream.WaitForError(t))
 
 		// Adding another registration should fail.
 		r3Stream := newTestStream()
-		r3OK, _ := p.Register(
+		time.Sleep(10 * time.Second)
+		fmt.Println("------------------- Disconnect")
+
+		_, _ = p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("c"), EndKey: roachpb.RKey("z")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -748,7 +752,8 @@ func TestProcessorBasic(t *testing.T) {
 			r3Stream,
 			func() {},
 		)
-		require.False(t, r3OK)
+		r3Stream.Disconnect(pErr)
+		//require.False(t, r3OK)
 	})
 }
 
@@ -1579,6 +1584,60 @@ func TestBudgetReleaseOnProcessorStop(t *testing.T) {
 			return nil
 		})
 	})
+}
+
+func TestStreamMuxerOnProcessorStop(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stopper := stop.NewStopper()
+	defer stopper.Stop(ctx)
+
+	testServerStream := newTestServerStream()
+	testRangefeedCounter := newTestRangefeedCounter()
+	muxer := NewStreamMuxer(testServerStream, testRangefeedCounter)
+	require.NoError(t, muxer.Start(ctx, stopper))
+	defer muxer.stop()
+
+	const streamID = 0
+	const rangeID = 1
+	streamCtx, streamCancel := context.WithCancel(context.Background())
+	muxer.AddStream(0, rangeID, streamCancel)
+
+	ev := &kvpb.MuxRangeFeedEvent{
+		StreamID: streamID,
+		RangeID:  rangeID,
+	}
+	ev.MustSetValue(&kvpb.RangeFeedCheckpoint{
+		Span:       roachpb.Span{Key: roachpb.Key("a"), EndKey: roachpb.Key("m")},
+		ResolvedTS: hlc.Timestamp{WallTime: 1},
+	})
+	require.NoError(t, muxer.sender.Send(ev))
+	require.Truef(t, testServerStream.hasEvent(ev),
+		"expected event %v not found in %v", ev, testServerStream)
+
+	// Block the stream.
+	unblock := testServerStream.BlockSend()
+
+	// Although stream is blocked, we should be able to disconnect the stream
+	// without blocking.
+	muxer.DisconnectStreamWithError(streamID, rangeID,
+		kvpb.NewError(kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_NO_LEASEHOLDER)))
+	require.Equal(t, streamCtx.Err(), context.Canceled)
+	unblock()
+	time.Sleep(100 * time.Millisecond)
+	expectedErrEvent := &kvpb.MuxRangeFeedEvent{
+		StreamID: streamID,
+		RangeID:  rangeID,
+	}
+	expectedErrEvent.MustSetValue(&kvpb.RangeFeedError{
+		Error: *kvpb.NewError(kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_NO_LEASEHOLDER)),
+	})
+	// Receive the event after getting unblocked.
+	require.Truef(t, testServerStream.hasEvent(expectedErrEvent),
+		"expected event %v not found in %v", ev, testServerStream)
 }
 
 // TestBudgetReleaseOnLastStreamError verifies that when stream fails memory

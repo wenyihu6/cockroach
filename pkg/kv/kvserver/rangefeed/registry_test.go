@@ -104,10 +104,16 @@ func (s *testStream) BlockSend() func() {
 // Disconnect implements the Stream interface. It mocks the disconnect behavior
 // by sending the error to the done channel.
 func (s *testStream) Disconnect(err *kvpb.Error) {
+	fmt.Println("disconnecting stream")
 	s.done <- err
+	fmt.Println("done channel sent")
 	if s.cleanUp != nil {
-		go s.cleanUp()
-		time.Sleep(10 * time.Millisecond)
+		go func() {
+			fmt.Println("again")
+			s.cleanUp()
+			fmt.Println("cleaned up done for stream.Disconnect")
+		}()
+		time.Sleep(10 * time.Second)
 	}
 }
 

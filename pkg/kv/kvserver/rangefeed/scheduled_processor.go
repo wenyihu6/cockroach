@@ -12,6 +12,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -226,6 +227,7 @@ func (p *ScheduledProcessor) processStop() {
 }
 
 func (p *ScheduledProcessor) cleanup() {
+	fmt.Println("doing cleanup for processor")
 	ctx := p.AmbientContext.AnnotateCtx(context.Background())
 	// Cleanup is normally called when all registrations are disconnected and
 	// unregistered or were not created yet (processor start failure).
@@ -242,6 +244,7 @@ func (p *ScheduledProcessor) cleanup() {
 	p.scheduler.Unregister()
 
 	p.taskCancel()
+	fmt.Println("stoppedC")
 	close(p.stoppedC)
 	p.MemBudget.Close(ctx)
 }
@@ -257,6 +260,7 @@ func (p *ScheduledProcessor) Stop() {
 // specified error. Safe to call on nil Processor. It is not valid to restart a
 // processor after it has been stopped.
 func (p *ScheduledProcessor) StopWithErr(pErr *kvpb.Error) {
+	fmt.Println("stopping processor")
 	// Flush any remaining events before stopping.
 	p.syncEventC()
 	// Send the processor a stop signal.
@@ -275,13 +279,16 @@ func (p *ScheduledProcessor) DisconnectSpanWithErr(span roachpb.Span, pErr *kvpb
 }
 
 func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
+	fmt.Println("sending stop")
 	p.enqueueRequest(func(ctx context.Context) {
 		p.reg.DisconnectWithErr(ctx, all, pErr)
 		// First set stopping flag to ensure that once all registrations are removed
 		// processor should stop.
 		p.stopping = true
 		p.scheduler.StopProcessor()
+		fmt.Println("stop processor done after enq	ueu")
 	})
+	fmt.Println("enqueue done")
 }
 
 // Register registers the stream over the specified span of keys.
@@ -343,6 +350,7 @@ func (p *ScheduledProcessor) Register(
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
 		r.stream.RegisterRangefeedCleanUp(func() {
+			fmt.Println("doing cleanup for registration")
 			r.setDisconnected()
 			// Invoke rangefeed clean up callback regardless of whether registration
 			// has been disconnected during the callback.
@@ -378,6 +386,7 @@ func (p *ScheduledProcessor) Register(
 }
 
 func (p *ScheduledProcessor) unregisterClient(r *registration) bool {
+	fmt.Println("unregistering client")
 	return runRequest(p, func(ctx context.Context, p *ScheduledProcessor) bool {
 		p.reg.Unregister(ctx, r)
 		return true
@@ -604,8 +613,11 @@ func runRequest[T interface{}](
 	p *ScheduledProcessor, f func(ctx context.Context, p *ScheduledProcessor) T,
 ) (r T) {
 	result := make(chan T, 1)
+	fmt.Println("enqueue request for processor")
 	p.enqueueRequest(func(ctx context.Context) {
+		fmt.Println("doing request callback")
 		result <- f(ctx, p)
+		fmt.Println("done request callback: ", p.stopping)
 		// Assert that we never process requests after stoppedC is closed. This is
 		// necessary to coordinate catchup iter ownership and avoid double-closing.
 		// Note that request/stop processing is always sequential, see process().

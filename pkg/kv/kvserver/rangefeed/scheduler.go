@@ -322,6 +322,7 @@ func (s *Scheduler) Stop() {
 // Once stop is called all subsequent Schedule calls for this id will return
 // error.
 func (s *Scheduler) stopProcessor(id int64) {
+	fmt.Println("stopProcessor enqueued")
 	s.enqueue(id, Stopped)
 }
 
