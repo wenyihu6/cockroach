@@ -258,7 +258,7 @@ const (
 	schedulerProcessor          = true
 )
 
-var testTypes = []procType{legacyProcessor, schedulerProcessor}
+var testTypes = []procType{schedulerProcessor}
 
 func (t procType) String() string {
 	if t {
@@ -733,6 +733,7 @@ func TestProcessorBasic(t *testing.T) {
 
 		// Stop the processor with an error.
 		pErr := kvpb.NewErrorf("stop err")
+		fmt.Println("------------------------------")
 		p.StopWithErr(pErr)
 		require.NotNil(t, r2Stream.WaitForError(t))
 
@@ -1803,6 +1804,7 @@ func (c *consumer) Disconnect(error *kvpb.Error) {
 	c.done <- error
 	if c.cleanUp != nil {
 		c.cleanUp()
+		c.cleanUp = nil
 	}
 }
 

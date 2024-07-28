@@ -306,6 +306,7 @@ func (s *Scheduler) unregister(id int64) {
 }
 
 func (s *Scheduler) Stop() {
+	fmt.Println("Scheduler.Stop()")
 	// Stop all shard workers.
 	for _, shard := range s.shards {
 		shard.quiesce()
@@ -322,6 +323,7 @@ func (s *Scheduler) Stop() {
 // Once stop is called all subsequent Schedule calls for this id will return
 // error.
 func (s *Scheduler) stopProcessor(id int64) {
+	fmt.Println("processor stopped id: ", id)
 	s.enqueue(id, Stopped)
 }
 
@@ -379,15 +381,18 @@ func (ss *schedulerShard) unregister(id int64) {
 func (ss *schedulerShard) enqueue(id int64, evt processorEventType) {
 	// We get time outside of lock to get more realistic delay in case there's a
 	// scheduler contention.
+	fmt.Println("enqueue id: ", id)
 	now := ss.maybeEnqueueStartTime()
 	ss.Lock()
 	defer ss.Unlock()
+	fmt.Println("enqueuing")
 	if ss.enqueueLocked(queueEntry{id: id, startTime: now}, evt) {
 		// Wake up potential waiting worker.
 		// We are allowed to do this under cond lock.
 		ss.cond.Signal()
 		ss.metrics.QueueSize.Inc(1)
 	}
+	fmt.Println("enqueue done")
 }
 
 // maybeEnqueueStartTime returns now in nanos or 0. 0 means event will have no start
@@ -658,12 +663,14 @@ func (cs *ClientScheduler) Enqueue(event processorEventType) {
 // StopProcessor instructs processor to stop gracefully by sending it Stopped event.
 // Once stop is called all subsequent Schedule calls will return error.
 func (cs *ClientScheduler) StopProcessor() {
+	fmt.Println("stop processor id: ", cs.id)
 	cs.s.stopProcessor(cs.id)
 }
 
 // Unregister will remove callback associated with this processor. No stopped
 // event will be scheduled. See Scheduler.Unregister for details.
 func (cs *ClientScheduler) Unregister() {
+	fmt.Println("unregister id: ", cs.id)
 	cs.s.unregister(cs.id)
 }
 

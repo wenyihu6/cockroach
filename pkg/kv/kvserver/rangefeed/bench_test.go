@@ -217,6 +217,7 @@ func (s *noopStream) Disconnect(error *kvpb.Error) {
 	s.done <- error
 	if s.cleanUp != nil {
 		s.cleanUp()
+		s.cleanUp = nil
 	}
 }
 

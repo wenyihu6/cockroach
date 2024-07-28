@@ -492,6 +492,7 @@ func (s *dummyStream) Disconnect(err *kvpb.Error) {
 	s.done <- err
 	if s.cleanUp != nil {
 		s.cleanUp()
+		s.cleanUp = nil
 	}
 }
 

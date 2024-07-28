@@ -12,6 +12,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -106,6 +107,7 @@ func (p *ScheduledProcessor) Start(
 	p.taskCtx, p.taskCancel = p.stopper.WithCancelOnQuiesce(
 		p.Config.AmbientContext.AnnotateCtx(context.Background()))
 
+	fmt.Println("start called")
 	// Note that callback registration must be performed before starting resolved
 	// timestamp init because resolution posts resolvedTS event when it is done.
 	if err := p.scheduler.Register(p.process, p.Priority); err != nil {
@@ -137,6 +139,7 @@ func (p *ScheduledProcessor) Start(
 // process is a scheduler callback that is processing scheduled events and
 // requests.
 func (p *ScheduledProcessor) process(e processorEventType) processorEventType {
+	fmt.Println("process called")
 	ctx := p.processCtx
 	if e&RequestQueued != 0 {
 		p.processRequests(ctx)
@@ -171,6 +174,7 @@ func (p *ScheduledProcessor) processRequests(ctx context.Context) {
 func (p *ScheduledProcessor) processEvents(ctx context.Context) {
 	// Only process as much data as was present at the start of the processing
 	// run to avoid starving other processors.
+	fmt.Println("processing events")
 	for max := len(p.eventC); max > 0; max-- {
 		select {
 		case e := <-p.eventC:
@@ -221,11 +225,13 @@ func (p *ScheduledProcessor) processPushTxn(ctx context.Context) {
 }
 
 func (p *ScheduledProcessor) processStop() {
+	fmt.Println("processStop called")
 	p.cleanup()
 	p.Metrics.RangeFeedProcessorsScheduler.Dec(1)
 }
 
 func (p *ScheduledProcessor) cleanup() {
+	fmt.Println("cleanup called")
 	ctx := p.AmbientContext.AnnotateCtx(context.Background())
 	// Cleanup is normally called when all registrations are disconnected and
 	// unregistered or were not created yet (processor start failure).
@@ -259,6 +265,7 @@ func (p *ScheduledProcessor) Stop() {
 func (p *ScheduledProcessor) StopWithErr(pErr *kvpb.Error) {
 	// Flush any remaining events before stopping.
 	p.syncEventC()
+	fmt.Println("send stop")
 	// Send the processor a stop signal.
 	p.sendStop(pErr)
 }
@@ -276,7 +283,9 @@ func (p *ScheduledProcessor) DisconnectSpanWithErr(span roachpb.Span, pErr *kvpb
 
 func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
 	p.enqueueRequest(func(ctx context.Context) {
+		fmt.Println("send stop callback called")
 		p.reg.DisconnectWithErr(ctx, all, pErr)
+		fmt.Println("send stop1")
 		// First set stopping flag to ensure that once all registrations are removed
 		// processor should stop.
 		p.stopping = true
@@ -313,6 +322,7 @@ func (p *ScheduledProcessor) Register(
 	// Synchronize the event channel so that this registration doesn't see any
 	// events that were consumed before this registration was called. Instead,
 	// it should see these events during its catch up scan.
+	fmt.Println("Register")
 	p.syncEventC()
 
 	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
@@ -347,9 +357,10 @@ func (p *ScheduledProcessor) Register(
 			// Invoke rangefeed clean up callback regardless of whether registration
 			// has been disconnected during the callback.
 			// What happens if p is stopped here already
+			//p.reg.Unregister(ctx, &r)
+			// unreg callback is set by replica to tear down processors that have
+			// zero registrations left and to update event filters.
 			if p.unregisterClient(&r) {
-				// unreg callback is set by replica to tear down processors that have
-				// zero registrations left and to update event filters.
 				if r.unreg != nil {
 					r.unreg()
 				}
@@ -378,6 +389,7 @@ func (p *ScheduledProcessor) Register(
 
 func (p *ScheduledProcessor) unregisterClient(r *registration) bool {
 	return runRequest(p, func(ctx context.Context, p *ScheduledProcessor) bool {
+		fmt.Println("unregisterClient called ")
 		p.reg.Unregister(ctx, r)
 		return true
 	})
@@ -557,11 +569,14 @@ func (p *ScheduledProcessor) syncEventC() {
 // Exposed to allow special test syneEvents that contain span to be sent.
 func (p *ScheduledProcessor) syncSendAndWait(se *syncEvent) {
 	ev := getPooledEvent(event{sync: se})
+	fmt.Println("waiting for syncSendAndWait")
 	select {
 	case p.eventC <- ev:
+		fmt.Println("syncSendAndWait sent")
 		// This shouldn't happen as there should be no sync events after disconnect,
 		// but if there's a bug don't wait it can hang waiting for sync chan.
 		p.scheduler.Enqueue(EventQueued)
+		fmt.Println("waiting for se.c")
 		select {
 		case <-se.c:
 		// Synchronized.
@@ -572,6 +587,7 @@ func (p *ScheduledProcessor) syncSendAndWait(se *syncEvent) {
 		// Already stopped. Do nothing.
 		putPooledEvent(ev)
 	}
+	fmt.Println("done")
 }
 
 // Len returns the number of registrations attached to the processor.
@@ -603,8 +619,11 @@ func runRequest[T interface{}](
 	p *ScheduledProcessor, f func(ctx context.Context, p *ScheduledProcessor) T,
 ) (r T) {
 	result := make(chan T, 1)
+	fmt.Println("runRequest")
 	p.enqueueRequest(func(ctx context.Context) {
+		fmt.Println("waiting for f to complete")
 		result <- f(ctx, p)
+		fmt.Println("f completed")
 		// Assert that we never process requests after stoppedC is closed. This is
 		// necessary to coordinate catchup iter ownership and avoid double-closing.
 		// Note that request/stop processing is always sequential, see process().
@@ -634,6 +653,7 @@ func runRequest[T interface{}](
 func (p *ScheduledProcessor) enqueueRequest(req request) {
 	select {
 	case p.requestQueue <- req:
+		fmt.Println("request enqueued")
 		p.scheduler.Enqueue(RequestQueued)
 	case <-p.stoppedC:
 	}

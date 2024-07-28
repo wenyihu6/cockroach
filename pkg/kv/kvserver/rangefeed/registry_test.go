@@ -106,7 +106,11 @@ func (s *testStream) BlockSend() func() {
 func (s *testStream) Disconnect(err *kvpb.Error) {
 	s.done <- err
 	if s.cleanUp != nil {
-		s.cleanUp()
+		fmt.Println("cleanUp during Disconnect")
+		f := s.cleanUp
+		s.cleanUp = nil
+		f()
+		fmt.Println("cleanUp done")
 	}
 }
 

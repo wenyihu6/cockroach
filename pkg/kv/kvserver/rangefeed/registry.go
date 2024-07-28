@@ -308,10 +308,13 @@ func (r *registration) setDisconnected() (alreadyDisconnected bool) {
 // error to the output error stream for the registration.
 // Safe to run multiple times, but subsequent errors would be discarded.
 func (r *registration) disconnect(pErr *kvpb.Error) {
+	fmt.Println("disconnect")
 	if alreadyDisconnected := r.setDisconnected(); !alreadyDisconnected {
 		// It is fine to not hold the lock here as the registration has been set as
 		// disconnected.
+		fmt.Println("again")
 		r.stream.Disconnect(pErr)
+		fmt.Println("done")
 	}
 }
 

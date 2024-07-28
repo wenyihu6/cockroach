@@ -1666,6 +1666,7 @@ func (c *channelSink) Disconnect(err *kvpb.Error) {
 	c.done <- err
 	if c.cleanUp != nil {
 		c.cleanUp()
+		c.cleanUp = nil
 	}
 }
 
