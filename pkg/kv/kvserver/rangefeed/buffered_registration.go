@@ -241,10 +241,13 @@ func (br *bufferedRegistration) maybeStripEvent(
 	}
 	return ret
 }
-
-func (br *bufferedRegistration) setDisconnected() (alreadyDisconnected bool) {
+func (br *bufferedRegistration) setDisconnectedIfNot() {
 	br.mu.Lock()
 	defer br.mu.Unlock()
+	br.setDisconnectedIfNotWithRMu()
+}
+
+func (br *bufferedRegistration) setDisconnectedIfNotWithRMu() (alreadyDisconnected bool) {
 	if br.mu.disconnected {
 		return true
 	}
@@ -264,7 +267,9 @@ func (br *bufferedRegistration) setDisconnected() (alreadyDisconnected bool) {
 // error to the output error stream for the registration.
 // Safe to run multiple times, but subsequent errors would be discarded.
 func (br *bufferedRegistration) disconnect(pErr *kvpb.Error) {
-	if alreadyDisconnected := br.setDisconnected(); !alreadyDisconnected {
+	br.mu.Lock()
+	defer br.mu.Unlock()
+	if alreadyDisconnected := br.setDisconnectedIfNotWithRMu(); !alreadyDisconnected {
 		// It is fine to not hold the lock here as the registration has been set as
 		// disconnected.
 		br.stream.Disconnect(pErr)

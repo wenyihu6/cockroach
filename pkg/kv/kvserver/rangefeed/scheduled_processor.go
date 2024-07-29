@@ -347,7 +347,7 @@ func (p *ScheduledProcessor) Register(
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
 		stream.RegisterRangefeedCleanUp(func() {
-			r.setDisconnected()
+			r.setDisconnectedIfNot()
 			// Invoke rangefeed clean up callback regardless of whether registration
 			// has been disconnected during the callback.
 			// What happens if p is stopped here already

@@ -197,7 +197,7 @@ func (nbr *nonBufferedRegistration) maybeStripEvent(
 	return ret
 }
 
-func (nbr *nonBufferedRegistration) setDisconnected() (alreadyDisconnected bool) {
+func (nbr *nonBufferedRegistration) setDisconnectedIfNot() (alreadyDisconnected bool) {
 
 }
 
