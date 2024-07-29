@@ -1946,8 +1946,8 @@ func (s *perRangeEventSink) Context() context.Context {
 // declares its Send method to be thread-safe.
 func (s *perRangeEventSink) SendIsThreadSafe() {}
 
-func (s *perRangeEventSink) ShouldUseBufferedRegistration() bool {
-	return s.wrapped.ShouldUseBufferedRegistration()
+func (s *perRangeEventSink) SendIsBuffered() bool {
+	return s.wrapped.SendIsBuffered()
 }
 
 func (s *perRangeEventSink) Send(event *kvpb.RangeFeedEvent) error {
@@ -2005,10 +2005,7 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) (err error)
 	}
 	// TODO(wenyihu6): check if we should still try sending the error back to
 	// client when n.stopper is stopping or stream is broken.
-	defer func() {
-		// err should be non-nil here.
-		streamMuxer.StopWithErr(err)
-	}()
+	defer streamMuxer.Stop()
 
 	for {
 		select {

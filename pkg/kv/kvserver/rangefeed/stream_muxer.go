@@ -156,8 +156,8 @@ type streamInfo struct {
 	cancel  context.CancelFunc
 }
 
-func (sm *StreamMuxer) ShouldUseBufferedRegistration() bool {
-	return !sm.sender.SendIsBuffered()
+func (sm *StreamMuxer) SendIsBuffered() bool {
+	return sm.sender.SendIsBuffered()
 }
 
 // AddStream registers a server rangefeed stream with the StreamMuxer. It
@@ -345,9 +345,10 @@ func (sm *StreamMuxer) Error() chan error {
 // nothing if StreamMuxer.run is already finished. It is expected to be called
 // after StreamMuxer.Start. Note that the caller is responsible for handling any
 // cleanups for any active streams.
-func (sm *StreamMuxer) stop() {
+func (sm *StreamMuxer) Stop() {
 	sm.taskCancel()
 	sm.wg.Wait()
+	sm.DisconnectAllWithErr(nil)
 }
 
 // Start launches StreamMuxer.run in the background if no error is returned.
@@ -381,28 +382,24 @@ func (sm *StreamMuxer) Start(ctx context.Context, stopper *stop.Stopper) error {
 	return nil
 }
 
-// err should be non-nil here.
-func (sm *StreamMuxer) StopWithErr(err error) {
-	sm.stop()
-	sm.disconnectAllWithErr(err)
-}
-
 // It is possible to disconnect with nil error, which means stream is broken do
 // not send any error back to the client but does disconnect all active
 // rangefeeds.
-func (sm *StreamMuxer) disconnectAllWithErr(err error) {
+func (sm *StreamMuxer) DisconnectAllWithErr(err error) {
 	sm.activeStreams.Range(func(streamID int64, info *streamInfo) bool {
 		info.cancel()
-		ev := &kvpb.MuxRangeFeedEvent{
-			StreamID: streamID,
-			RangeID:  info.rangeID,
+		if err != nil {
+			ev := &kvpb.MuxRangeFeedEvent{
+				StreamID: streamID,
+				RangeID:  info.rangeID,
+			}
+			ev.SetValue(&kvpb.RangeFeedError{
+				Error: *kvpb.NewError(err),
+			})
+			// TODO(wenyihu6): check if we should handle this err and maybe do early
+			// return next iteration
+			_ = sm.sender.Send(ev)
 		}
-		ev.SetValue(&kvpb.RangeFeedError{
-			Error: *kvpb.NewError(err),
-		})
-		// TODO(wenyihu6): check if we should handle this err and maybe do early
-		// return next iteration
-		_ = sm.sender.Send(ev)
 		// Remove the stream from the activeStreams map.
 		sm.activeStreams.Delete(streamID)
 		sm.metrics.UpdateMetricsOnRangefeedDisconnect()

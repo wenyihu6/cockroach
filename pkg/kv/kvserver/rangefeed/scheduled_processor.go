@@ -316,16 +316,17 @@ func (p *ScheduledProcessor) Register(
 	p.syncEventC()
 
 	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
+	useNonBufferedRegistration := stream.SendIsBuffered()
 
 	var r registration
-	if stream.ShouldUseBufferedRegistration() {
+	if useNonBufferedRegistration {
+		r = newNonBufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn)
+	} else {
 		r = newBufferedRegistration(
 			span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
 			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
 		)
-	} else {
-		r = newNonBufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
-			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn)
 	}
 
 	filter := runRequest(p, func(ctx context.Context, p *ScheduledProcessor) *Filter {
@@ -349,24 +350,35 @@ func (p *ScheduledProcessor) Register(
 		// once they observe the first checkpoint event.
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
-		stream.RegisterRangefeedCleanUp(func() {
-			r.setDisconnectedIfNot()
-			// Invoke rangefeed clean up callback regardless of whether registration
-			// has been disconnected during the callback.
-			// What happens if p is stopped here already
-			//p.reg.Unregister(ctx, &r)
-			if p.unregisterClient(r) {
-				// unreg callback is set by replica to tear down processors that have
-				// zero registrations left and to update event filters.
-				if f := r.getUnreg(); f != nil {
-					f()
+		if useNonBufferedRegistration {
+			stream.RegisterRangefeedCleanUp(func() {
+				r.setDisconnectedIfNot()
+				// Invoke rangefeed clean up callback regardless of whether registration
+				// has been disconnected during the callback.
+				// What happens if p is stopped here already
+				//p.reg.Unregister(ctx, &r)
+				if p.unregisterClient(r) {
+					// unreg callback is set by replica to tear down processors that have
+					// zero registrations left and to update event filters.
+					if f := r.getUnreg(); f != nil {
+						f()
+					}
 				}
-			}
-		})
+			})
+		}
 
 		// Run an output loop for the registry.
 		runOutputLoop := func(ctx context.Context) {
 			r.runOutputLoop(ctx, p.RangeID)
+			if !useNonBufferedRegistration {
+				if p.unregisterClient(r) {
+					// unreg callback is set by replica to tear down processors that have
+					// zero registrations left and to update event filters.
+					if f := r.getUnreg(); f != nil {
+						f()
+					}
+				}
+			}
 		}
 		// NB: use ctx, not p.taskCtx, as the registry handles teardown itself.
 		if err := p.Stopper.RunAsyncTask(ctx, "rangefeed: output loop", runOutputLoop); err != nil {

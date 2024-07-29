@@ -358,7 +358,7 @@ func (nbr *nonBufferedRegistration) runOutputLoop(ctx context.Context, _forStack
 }
 
 // no allocations other than catch up buf.
-func (nbr *nonBufferedRegistration) drainAllocations(ctx context.Context) { return }
+func (nbr *nonBufferedRegistration) drainAllocations(ctx context.Context) {}
 
 // maybeRunCatchUpScan starts a catch-up scan which will output entries for all
 // recorded changes in the replica that are newer than the catchUpTimestamp.

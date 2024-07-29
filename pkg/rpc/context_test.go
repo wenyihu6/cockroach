@@ -293,6 +293,8 @@ func (s *rangefeedEventSink) Context() context.Context {
 // thread-safety for Send.
 func (s *rangefeedEventSink) SendIsThreadSafe() {}
 
+func (s *rangefeedEventSink) SendIsBuffered() bool { return false }
+
 func (s *rangefeedEventSink) Send(event *kvpb.RangeFeedEvent) error {
 	return s.stream.Send(&kvpb.MuxRangeFeedEvent{RangeFeedEvent: *event})
 }

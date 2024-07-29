@@ -211,7 +211,7 @@ func (s *noopStream) Send(*kvpb.RangeFeedEvent) error {
 // in a single threaded environment in this test, ensuring thread-safety.
 func (s *noopStream) SendIsThreadSafe() {}
 
-func (s *noopStream) ShouldUseBufferedRegistration() bool { return true }
+func (s *noopStream) SendIsBuffered() bool { return false }
 
 // Disconnect implements the Stream interface. It mocks the disconnect behavior
 // by sending the error to the done channel.

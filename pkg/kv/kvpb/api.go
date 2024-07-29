@@ -2534,6 +2534,7 @@ type RangeFeedEventSink interface {
 	// SendIsThreadSafe is a no-op declaration method. It is a contract that the
 	// interface has a thread-safe Send method.
 	SendIsThreadSafe()
+	SendIsBuffered() bool
 }
 
 // RangeFeedEventProducer is an adapter for receiving rangefeed events with either

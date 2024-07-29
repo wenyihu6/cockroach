@@ -1640,7 +1640,7 @@ func (c *channelSink) Context() context.Context {
 
 func (c *channelSink) SendIsThreadSafe() {}
 
-func (c *channelSink) ShouldUseBufferedRegistration() bool { return true }
+func (c *channelSink) SendIsBuffered() bool { return false }
 
 func (c *channelSink) Send(e *kvpb.RangeFeedEvent) error {
 	select {

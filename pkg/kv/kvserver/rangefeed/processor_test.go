@@ -1769,7 +1769,7 @@ func newConsumer(blockAfter int) *consumer {
 
 func (c *consumer) SendIsThreadSafe() {}
 
-func (c *consumer) ShouldUseBufferedRegistration() bool { return true }
+func (c *consumer) SendIsBuffered() bool { return false }
 
 func (c *consumer) Send(e *kvpb.RangeFeedEvent) error {
 	if e.Val != nil {
