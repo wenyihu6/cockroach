@@ -33,7 +33,7 @@ type registration interface {
 	getWithOmitRemote() bool
 	Range() interval.Range
 	ID() uintptr
-	setDisconnectedIfNot() (needCleanUp bool)
+	setDisconnectedIfNot()
 	getUnreg() func()
 	getWithDiff() bool
 }

@@ -182,6 +182,12 @@ func (sm *StreamMuxer) AddStream(
 func (sm *StreamMuxer) SendIsThreadSafe() {}
 
 func (sm *StreamMuxer) Send(e *kvpb.MuxRangeFeedEvent) error {
+	if _, ok := sm.activeStreams.Load(e.StreamID); !ok {
+		// TODO(wenyihu6): check if this is necessary and if we should return an
+		// error instead
+		log.Infof(context.Background(), "sending event to a disconnected stream %d", e.StreamID)
+		return nil
+	}
 	return sm.sender.Send(e)
 }
 
