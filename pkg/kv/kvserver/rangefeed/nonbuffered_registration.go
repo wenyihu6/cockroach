@@ -14,17 +14,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/interval"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
-	"github.com/cockroachdb/errors"
 )
 
 // registration is an instance of a rangefeed subscriber who has
@@ -42,10 +39,12 @@ type nonBufferedRegistration struct {
 	// Input.
 	span             roachpb.Span
 	catchUpTimestamp hlc.Timestamp // exclusive
-	withDiff         bool
-	withFiltering    bool
-	withOmitRemote   bool
-	metrics          *Metrics
+	// TODO(wenyihu6): refactor here and embed another base registration struct
+	// which handles these and id and keys.
+	withDiff       bool
+	withFiltering  bool
+	withOmitRemote bool
+	metrics        *Metrics
 
 	// Output.
 	stream Stream
@@ -271,24 +270,7 @@ func (nbr *nonBufferedRegistration) String() string {
 
 // Wait for this registration to completely process its internal buffer.
 func (nbr *nonBufferedRegistration) waitForCaughtUp(ctx context.Context) error {
-	opts := retry.Options{
-		InitialBackoff: 5 * time.Millisecond,
-		Multiplier:     2,
-		MaxBackoff:     10 * time.Second,
-		MaxRetries:     50,
-	}
-	for re := retry.StartWithCtx(ctx, opts); re.Next(); {
-		nbr.mu.Lock()
-		caughtUp := len(nbr.buf) == 0 && nbr.mu.caughtUp
-		nbr.mu.Unlock()
-		if caughtUp {
-			return nil
-		}
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return errors.Errorf("registration %v failed to empty in time", nbr.Range())
+
 }
 
 // detachCatchUpIter detaches the catchUpIter that was previously attached.
