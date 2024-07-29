@@ -397,7 +397,7 @@ func (nbr *nonBufferedRegistration) String() string {
 
 // Wait for this registration to completely process its internal buffer.
 func (nbr *nonBufferedRegistration) waitForCaughtUp(ctx context.Context) error {
-	return nil
+	panic("unimplemented nonBufferedRegistration.waitForCaughtUp")
 }
 
 // detachCatchUpIter detaches the catchUpIter that was previously attached.

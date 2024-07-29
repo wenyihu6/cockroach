@@ -323,6 +323,9 @@ func (p *ScheduledProcessor) Register(
 			span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
 			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
 		)
+	} else {
+		r = newNonBufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn)
 	}
 
 	filter := runRequest(p, func(ctx context.Context, p *ScheduledProcessor) *Filter {
