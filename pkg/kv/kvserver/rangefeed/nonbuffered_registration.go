@@ -22,6 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/cockroachdb/errors"
 )
 
 // registration is an instance of a rangefeed subscriber who has
@@ -136,13 +137,50 @@ func newNonBufferedRegistration(
 func (nbr *nonBufferedRegistration) publish(
 	ctx context.Context, event *kvpb.RangeFeedEvent, alloc *SharedBudgetAllocation,
 ) {
+	assertEvent(ctx, event)
+	e := getPooledSharedEvent(sharedEvent{event: nbr.maybeStripEvent(ctx, event), alloc: alloc})
 
+	shouldSendToUnderlyingStream := func() bool {
+		nbr.mu.Lock()
+		defer nbr.mu.Unlock()
+		if nbr.mu.catchUpOverflowed || nbr.mu.disconnected {
+			// Dropping events. The registration is either disconnected or will be
+			// disconnected soon after catch up scan is done and we will disconnect. It
+			// will need a catch up scan when it reconnects. Treat these as true to
+			// avoid sending to stream.
+			return false
+		}
+		if nbr.mu.catchUpBuf == nil {
+			// Catch up buf has been drained and not due to disconnected. Safe to send
+			// to underlying stream. Important to check disconnected first since it is
+			// nil after draining as well.
+			return true
+		}
+
+		// TODO(wenyihu6): add memory accounting here
+		select {
+		case nbr.mu.catchUpBuf <- e:
+		default:
+			// Dropping events.
+			nbr.mu.catchUpOverflowed = true
+			putPooledSharedEvent(e)
+		}
+		return false
+	}()
+
+	if shouldSendToUnderlyingStream {
+		// not disconnected yet -> should send to underlying stream
+		if err := nbr.stream.Send(e.event); err != nil {
+			nbr.disconnect(kvpb.NewError(err))
+		}
+	}
 }
 
 // maybeStripEvent determines whether the event contains excess information not
 // applicable to the current registration. If so, it makes a copy of the event
 // and strips the incompatible information to match only what the registration
 // requested.
+// TODO(wenyihu6): change this to be part of base registration
 func (nbr *nonBufferedRegistration) maybeStripEvent(
 	ctx context.Context, event *kvpb.RangeFeedEvent,
 ) *kvpb.RangeFeedEvent {
@@ -196,42 +234,131 @@ func (nbr *nonBufferedRegistration) maybeStripEvent(
 	}
 	return ret
 }
+func (nbr *nonBufferedRegistration) setDisconnectedIfNot() {
+	nbr.mu.Lock()
+	defer nbr.mu.Unlock()
+	nbr.setDisconnectedIfNotWithRMu()
+}
 
-func (nbr *nonBufferedRegistration) setDisconnectedIfNot() (alreadyDisconnected bool) {
-
+func (nbr *nonBufferedRegistration) setDisconnectedIfNotWithRMu() (alreadyDisconnected bool) {
+	// TODO(wenyihu6): think about if you should just drain catchUpBuf here we
+	// never publish anything in catch up buf if disconnected. But this might take
+	// a long time and you are on a hot path.
+	if nbr.mu.disconnected {
+		return true
+	}
+	if nbr.mu.catchUpIter != nil {
+		// Catch up scan hasn't started yet.
+		nbr.mu.catchUpIter.Close()
+		nbr.mu.catchUpIter = nil
+	}
+	if nbr.mu.catchUpScanCancelFn != nil {
+		nbr.mu.catchUpScanCancelFn()
+	}
+	nbr.mu.disconnected = true
+	return false
 }
 
 // disconnect cancels the output loop context for the registration and passes an
-// error to the output error stream for the registration.
-// Safe to run multiple times, but subsequent errors would be discarded.
+// error to the output error stream for the registration. Safe to run multiple
+// times, but subsequent errors would be discarded. Catch up goroutine is
+// responsible for draining catch up buffer.
 func (nbr *nonBufferedRegistration) disconnect(pErr *kvpb.Error) {
-
+	nbr.mu.Lock()
+	defer nbr.mu.Unlock()
+	if alreadyDisconnected := nbr.setDisconnectedIfNotWithRMu(); !alreadyDisconnected {
+		// It is fine to not hold the lock here as the registration has been set as
+		// disconnected.
+		nbr.stream.Disconnect(pErr)
+	}
 }
 
-// outputLoop is the operational loop for a single registration. The behavior
-// is as thus:
-//
-// 1. If a catch-up scan is indicated, run one before beginning the proper
-// output loop.
-// 2. After catch-up is complete, begin reading from the registration buffer
-// channel and writing to the output stream until the buffer is empty *and*
-// the overflow flag has been set.
-//
-// The loop exits with any error encountered, if the provided context is
-// canceled, or when the buffer has overflowed and all pre-overflow entries
-// have been emitted.
-func (nbr *nonBufferedRegistration) outputLoop(ctx context.Context) error {
+func (nbr *nonBufferedRegistration) publishCatchUpBuffer(ctx context.Context) error {
+	nbr.mu.Lock()
+	defer nbr.mu.Unlock()
 
+	// TODO(wenyihu6): check if you can drain first without holding locks
+	drainAndPublish := func() error {
+		for {
+			select {
+			case e := <-nbr.mu.catchUpBuf:
+				if err := nbr.stream.Send(e.event); err != nil {
+					return err
+				}
+				putPooledSharedEvent(e)
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+				return nil
+			}
+		}
+	}
+
+	if err := drainAndPublish(); err != nil {
+		return err
+	}
+
+	// Must disconnect first before setting catchUpBuf to nil.
+	if nbr.mu.catchUpOverflowed {
+		return newErrBufferCapacityExceeded().GoError()
+	}
+
+	// success
+	nbr.mu.catchUpBuf = nil
+	nbr.mu.catchUpScanCancelFn = nil
+	return nil
+}
+
+func (nbr *nonBufferedRegistration) discardCatchUpBufferWithRMu() {
+	func() {
+		for {
+			select {
+			case e := <-nbr.mu.catchUpBuf:
+				putPooledSharedEvent(e)
+			default:
+				return
+			}
+		}
+	}()
+
+	nbr.mu.catchUpBuf = nil
+	nbr.mu.catchUpScanCancelFn = nil
+}
+
+func (nbr *nonBufferedRegistration) disconnectAndDiscardCatchUpBuffer(pErr *kvpb.Error) {
+	nbr.disconnect(pErr)
+	nbr.mu.Lock()
+	defer nbr.mu.Unlock()
+	nbr.discardCatchUpBufferWithRMu()
 }
 
 func (nbr *nonBufferedRegistration) runOutputLoop(ctx context.Context, _forStacks roachpb.RangeID) {
+	nbr.mu.Lock()
 
+	if nbr.mu.disconnected {
+		// The registration has already been disconnected.
+		nbr.discardCatchUpBufferWithRMu()
+		nbr.mu.Unlock()
+		return
+	}
+
+	ctx, nbr.mu.catchUpScanCancelFn = context.WithCancel(ctx)
+	nbr.mu.Unlock()
+
+	if err := nbr.maybeRunCatchUpScan(ctx); err != nil {
+		nbr.disconnectAndDiscardCatchUpBuffer(kvpb.NewError(errors.Wrap(err, "catch-up scan failed")))
+		return
+	}
+
+	if err := nbr.publishCatchUpBuffer(ctx); err != nil {
+		nbr.disconnectAndDiscardCatchUpBuffer(kvpb.NewError(err))
+		return
+	}
+	// publishCatchUpBuffer will drain the catch up buffer.
 }
 
-// drainAllocations should be done after registration is disconnected from
-// processor to release all memory budget that its pending events hold.
-func (nbr *nonBufferedRegistration) drainAllocations(ctx context.Context) {
-}
+// no allocations other than catch up buf.
+func (nbr *nonBufferedRegistration) drainAllocations(ctx context.Context) { return }
 
 // maybeRunCatchUpScan starts a catch-up scan which will output entries for all
 // recorded changes in the replica that are newer than the catchUpTimestamp.
@@ -270,7 +397,7 @@ func (nbr *nonBufferedRegistration) String() string {
 
 // Wait for this registration to completely process its internal buffer.
 func (nbr *nonBufferedRegistration) waitForCaughtUp(ctx context.Context) error {
-
+	return nil
 }
 
 // detachCatchUpIter detaches the catchUpIter that was previously attached.

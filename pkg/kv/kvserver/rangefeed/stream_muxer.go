@@ -184,7 +184,9 @@ func (sm *StreamMuxer) SendIsThreadSafe() {}
 func (sm *StreamMuxer) Send(e *kvpb.MuxRangeFeedEvent) error {
 	if _, ok := sm.activeStreams.Load(e.StreamID); !ok {
 		// TODO(wenyihu6): check if this is necessary and if we should return an
-		// error instead
+		// error instead should be fine for you to be at this state, it should be
+		// disconnected already there is not much it can do other than trying to
+		// disconnect again
 		log.Infof(context.Background(), "sending event to a disconnected stream %d", e.StreamID)
 		return nil
 	}

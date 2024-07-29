@@ -241,6 +241,7 @@ func (br *bufferedRegistration) maybeStripEvent(
 	}
 	return ret
 }
+
 func (br *bufferedRegistration) setDisconnectedIfNot() {
 	br.mu.Lock()
 	defer br.mu.Unlock()
