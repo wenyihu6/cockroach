@@ -12,6 +12,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -124,8 +125,10 @@ func (br *bufferedRegistration) publish(
 		return
 	}
 	alloc.Use(ctx)
+	fmt.Println("bufferedRegistration before publish: ", len(br.buf), time.Now())
 	select {
 	case br.buf <- e:
+		fmt.Println("bufferedRegistration publish: ", len(br.buf), e.event, time.Now())
 		br.mu.caughtUp = false
 	default:
 		// If we're asked to block (in tests), do a blocking send after releasing
@@ -136,6 +139,7 @@ func (br *bufferedRegistration) publish(
 			br.mu.Unlock()
 			select {
 			case br.buf <- e:
+				fmt.Println("bufferedRegistration publish2: ", len(br.buf))
 				br.mu.Lock()
 				br.mu.caughtUp = false
 			case <-ctx.Done():
@@ -207,8 +211,10 @@ func (br *bufferedRegistration) outputLoop(ctx context.Context) error {
 			return newErrBufferCapacityExceeded().GoError()
 		}
 		firstIteration = false
+		fmt.Println("bufferedRegistration outputLoop here1: ", len(br.buf), time.Now())
 		select {
 		case nextEvent := <-br.buf:
+			fmt.Println("bufferedRegistration outputLoop next event: ", nextEvent.event, time.Now())
 			err := br.stream.Send(nextEvent.event)
 			nextEvent.alloc.Release(ctx)
 			putPooledSharedEvent(nextEvent)
@@ -284,7 +290,10 @@ func (br *bufferedRegistration) waitForCaughtUp(ctx context.Context) error {
 	}
 	for re := retry.StartWithCtx(ctx, opts); re.Next(); {
 		br.mu.Lock()
-		caughtUp := len(br.buf) == 0 && br.mu.caughtUp
+		caughtUp := len(br.buf) == 0
+		if !br.mu.caughtUp && caughtUp {
+			fmt.Println("not actually caughtUp whyyyy")
+		}
 		br.mu.Unlock()
 		if caughtUp {
 			return nil
