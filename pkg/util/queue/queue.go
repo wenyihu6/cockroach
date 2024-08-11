@@ -10,7 +10,11 @@
 
 package queue
 
-import "github.com/cockroachdb/errors"
+import (
+	"sync"
+
+	"github.com/cockroachdb/errors"
+)
 
 // An Option is a configurable parameter of the queue.
 type Option[T any] func(q *Queue[T]) error
@@ -32,12 +36,26 @@ func WithChunkSize[T any](i int) Option[T] {
 
 const defaultChunkSize = 128
 
+var sharedEventQueueChunkSyncPool = sync.Pool{
+	New: func() interface{} {
+		return new(queueChunk[any])
+	},
+}
+
+func getPooledEventQueueChunk[T any]() *queueChunk[T] {
+	return sharedEventQueueChunkSyncPool.Get().(*queueChunk[T])
+}
+
+func putPooledEventQueueChunk[T any](e *queueChunk[T]) {
+	*e = queueChunk[T]{}
+	sharedEventQueueChunkSyncPool.Put(e)
+}
+
 // Queue is a FIFO queue implemented as a chunked linked list. The default chunk
 // size is 128.
 type Queue[T any] struct {
 	head, tail *queueChunk[T]
-
-	chunkSize int
+	chunkSize  int
 }
 
 // NewQueue returns a Queue of T.
@@ -56,14 +74,16 @@ func NewQueue[T any](opts ...Option[T]) (*Queue[T], error) {
 // Enqueue adds an element to the back of the queue.
 func (q *Queue[T]) Enqueue(e T) {
 	if q.tail == nil {
-		chunk := newQueueChunk[T](q.chunkSize)
+		chunk := getPooledEventQueueChunk[T]()
+		chunk.events = make([]T, q.chunkSize)
 		q.head, q.tail = chunk, chunk
 		q.head.push(e) // guaranteed to insert into new chunk
 		return
 	}
 
 	if !q.tail.push(e) {
-		chunk := newQueueChunk[T](q.chunkSize)
+		chunk := getPooledEventQueueChunk[T]()
+		chunk.events = make([]T, q.chunkSize)
 		q.tail.next = chunk
 		q.tail = chunk
 		q.tail.push(e) // guaranteed to insert into new chunk
@@ -91,8 +111,10 @@ func (q *Queue[T]) Dequeue() (e T, ok bool) {
 		if q.tail == q.head {
 			q.tail = q.head.next
 		}
+		removed := q.head
 		q.head = q.head.next
 		// The previous value of q.head will be garbage collected.
+		putPooledEventQueueChunk(removed)
 	}
 
 	return e, true
@@ -100,8 +122,10 @@ func (q *Queue[T]) Dequeue() (e T, ok bool) {
 
 func (q *Queue[T]) purge() {
 	for q.head != nil {
+		remove := q.head
 		q.head = q.head.next
 		// The previous value of q.head will be garbage collected.
+		putPooledEventQueueChunk(remove)
 	}
 	q.tail = q.head
 }
@@ -110,12 +134,6 @@ type queueChunk[T any] struct {
 	events     []T
 	head, tail int
 	next       *queueChunk[T] // linked-list element
-}
-
-func newQueueChunk[T any](sz int) *queueChunk[T] {
-	return &queueChunk[T]{
-		events: make([]T, sz),
-	}
 }
 
 func (c *queueChunk[T]) push(e T) (inserted bool) {
@@ -134,6 +152,9 @@ func (c *queueChunk[T]) pop() (e T, ok bool) {
 	}
 
 	e = c.events[c.head]
+	var zeroValue T
+	// Clear the value to help the GC.
+	c.events[c.head] = zeroValue
 	c.head++
 	return e, true
 }

@@ -122,7 +122,8 @@ func (ubr *unbufferedRegistration) publish(
 	}()
 
 	if shouldSendToStream {
-		// not disconnected yet -> should send to underlying stream
+		// not disconnected yet -> should send to underlying stream fine if
+		// disconnected right after this - okay to slip some events in
 		if err := ubr.stream.SendBuffered(e.event, e.alloc); err != nil {
 			ubr.disconnect(kvpb.NewError(err))
 		}

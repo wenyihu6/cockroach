@@ -27,19 +27,6 @@ type RangefeedMetricsRecorder interface {
 	UpdateMetricsOnRangefeedDisconnect()
 }
 
-type BufferedServerStreamSenderAdapter struct {
-	ServerStreamSender
-}
-
-var _ ServerStreamSender = (*BufferedServerStreamSenderAdapter)(nil)
-
-func (bs *BufferedServerStreamSenderAdapter) SendBuffered(
-	*kvpb.MuxRangeFeedEvent, *SharedBudgetAllocation,
-) error {
-	log.Fatalf(context.Background(), "unimplemented: buffered stream sender")
-	return nil
-}
-
 // ServerStreamSender forwards MuxRangefeedEvents from StreamMuxer to the
 // underlying stream.
 type ServerStreamSender interface {
