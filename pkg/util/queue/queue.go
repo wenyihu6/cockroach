@@ -113,7 +113,7 @@ func (q *Queue[T]) purge() {
 	q.tail = q.head
 }
 
-const eventSize = 1000
+const eventSize = 1
 
 type queueChunk[T any] struct {
 	events     [eventSize]T

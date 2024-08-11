@@ -17,51 +17,57 @@ import (
 )
 
 type testQueueItem struct {
-	i int64
+	t int64
 }
 
 func BenchmarkQueue(b *testing.B) {
-	rng, _ := randutil.NewTestRand()
-	b.ReportAllocs()
+	b.Run("", func(b *testing.B) {
+		b.ReportAllocs()
+		rng, _ := randutil.NewTestRand()
+		eventCount := 2000000
+		q, _ := NewQueue[*testQueueItem]()
+		// Add one event and remove it
+		q.Enqueue(&testQueueItem{
+			t: int64(*new(int)),
+		})
+		q.Dequeue()
 
-	eventCount := 2000000
-	q, _ := NewQueue[*testQueueItem]()
-	// Add one event and remove it
-	q.Enqueue(&testQueueItem{})
-	q.Dequeue()
-
-	// Fill 5 chunks and then pop each one, ensuring empty() returns the correct
-	// value each time.
-	for i := 0; i < eventCount; i++ {
-		q.Enqueue(&testQueueItem{})
-	}
-	for {
-		_, ok := q.Dequeue()
-		if !ok {
-			break
-		} else {
-			eventCount--
+		// Fill 5 chunks and then pop each one, ensuring empty() returns the correct
+		// value each time.
+		for i := 0; i < eventCount; i++ {
+			q.Enqueue(&testQueueItem{
+				t: int64(*new(int)),
+			})
 		}
-	}
-	q.Enqueue(&testQueueItem{})
-	q.Dequeue()
-
-	// Add events to fill 5 chunks and assert they are consumed in fifo order.
-	var lastPop int64 = -1
-	var lastPush int64 = -1
-	for eventCount > 0 {
-		op := rng.Intn(5)
-		if op < 3 {
-			q.Enqueue(&testQueueItem{i: lastPush + 1})
-			lastPush++
-		} else {
+		for {
 			_, ok := q.Dequeue()
-			if ok {
-				lastPop++
+			if !ok {
+				break
+			} else {
 				eventCount--
 			}
 		}
-	}
+		q.Enqueue(&testQueueItem{
+			t: int64(*new(int)),
+		})
+		q.Dequeue()
 
-	q.purge()
+		// Add events to fill 5 chunks and assert they are consumed in fifo order.
+		var lastPop int64 = -1
+		var lastPush int64 = -1
+		for eventCount > 0 {
+			op := rng.Intn(5)
+			if op < 3 {
+				q.Enqueue(&testQueueItem{t: lastPush + 1})
+				lastPush++
+			} else {
+				_, ok := q.Dequeue()
+				if ok {
+					lastPop++
+					eventCount--
+				}
+			}
+		}
+		q.purge()
+	})
 }
