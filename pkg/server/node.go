@@ -2011,8 +2011,9 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 	defer cancel()
 
 	var muxStream rangefeed.ServerStreamSender
-	if kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV) {
-		muxStream = &rangefeed.BufferedServerStreamSenderAdapter{
+	useBufferedStream := kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV)
+	if useBufferedStream {
+		muxStream = &rangefeed.{
 			ServerStreamSender: &lockedMuxStream{wrapped: stream},
 		}
 		log.Fatalf(stream.Context(), "buffered sender unimplemented")
@@ -2062,7 +2063,7 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 				streamID: req.StreamID,
 				wrapped:  streamMuxer,
 			}
-			if _, ok := muxStream.(*rangefeed.BufferedServerStreamSenderAdapter); ok {
+			if useBufferedStream {
 				streamSink = &bufferedPerRangeEventSinkAdapter{
 					perRangeEventSink: sink,
 				}
