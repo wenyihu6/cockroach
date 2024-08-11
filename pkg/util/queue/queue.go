@@ -36,24 +36,27 @@ func WithChunkSize[T any](i int) Option[T] {
 
 const defaultChunkSize = 128
 
-var sharedEventQueueChunkSyncPool = sync.Pool{
-	New: func() interface{} {
-		return new(queueChunk[any])
-	},
+func sharedEventQueueChunkSyncPool[T any]() *sync.Pool {
+	return &sync.Pool{
+		New: func() interface{} {
+			return new(queueChunk[T])
+		},
+	}
 }
 
-func getPooledEventQueueChunk[T any]() *queueChunk[T] {
-	return sharedEventQueueChunkSyncPool.Get().(*queueChunk[T])
+func getPooledEventQueueChunk[T any](p *sync.Pool) *queueChunk[T] {
+	return p.Get().(*queueChunk[T])
 }
 
-func putPooledEventQueueChunk[T any](e *queueChunk[T]) {
+func putPooledEventQueueChunk[T any](p *sync.Pool, e *queueChunk[T]) {
 	*e = queueChunk[T]{}
-	sharedEventQueueChunkSyncPool.Put(e)
+	p.Put(e)
 }
 
 // Queue is a FIFO queue implemented as a chunked linked list. The default chunk
 // size is 128.
 type Queue[T any] struct {
+	pool       *sync.Pool
 	head, tail *queueChunk[T]
 	chunkSize  int
 }
@@ -62,6 +65,7 @@ type Queue[T any] struct {
 func NewQueue[T any](opts ...Option[T]) (*Queue[T], error) {
 	q := &Queue[T]{
 		chunkSize: defaultChunkSize,
+		pool:      sharedEventQueueChunkSyncPool[T](),
 	}
 	for _, opt := range opts {
 		if err := opt.apply(q); err != nil {
@@ -74,7 +78,7 @@ func NewQueue[T any](opts ...Option[T]) (*Queue[T], error) {
 // Enqueue adds an element to the back of the queue.
 func (q *Queue[T]) Enqueue(e T) {
 	if q.tail == nil {
-		chunk := getPooledEventQueueChunk[T]()
+		chunk := getPooledEventQueueChunk[T](q.pool)
 		chunk.events = make([]T, q.chunkSize)
 		q.head, q.tail = chunk, chunk
 		q.head.push(e) // guaranteed to insert into new chunk
@@ -82,7 +86,7 @@ func (q *Queue[T]) Enqueue(e T) {
 	}
 
 	if !q.tail.push(e) {
-		chunk := getPooledEventQueueChunk[T]()
+		chunk := getPooledEventQueueChunk[T](q.pool)
 		chunk.events = make([]T, q.chunkSize)
 		q.tail.next = chunk
 		q.tail = chunk
@@ -114,7 +118,7 @@ func (q *Queue[T]) Dequeue() (e T, ok bool) {
 		removed := q.head
 		q.head = q.head.next
 		// The previous value of q.head will be garbage collected.
-		putPooledEventQueueChunk(removed)
+		putPooledEventQueueChunk(q.pool, removed)
 	}
 
 	return e, true
@@ -125,7 +129,7 @@ func (q *Queue[T]) purge() {
 		remove := q.head
 		q.head = q.head.next
 		// The previous value of q.head will be garbage collected.
-		putPooledEventQueueChunk(remove)
+		putPooledEventQueueChunk(q.pool, remove)
 	}
 	q.tail = q.head
 }
