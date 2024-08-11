@@ -30,7 +30,7 @@ func WithChunkSize[T any](i int) Option[T] {
 	}
 }
 
-const defaultChunkSize = 128
+const defaultChunkSize = 1000
 
 // Queue is a FIFO queue implemented as a chunked linked list. The default chunk
 // size is 128.
