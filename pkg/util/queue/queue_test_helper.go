@@ -36,7 +36,40 @@ func (q *Queue[T]) checkNil(t *testing.T) {
 	require.Nil(t, q.tail)
 }
 
+func (q *QueueWithFixedChunkSize[T]) checkNil(t *testing.T) {
+	require.Nil(t, q.head)
+	require.Nil(t, q.tail)
+}
+
 func (q *Queue[T]) checkInvariants(t *testing.T) {
+	if q.head == nil && q.tail == nil {
+		require.True(t, q.Empty())
+	} else if q.head != nil && q.tail == nil {
+		t.Fatal("head is nil but tail is non-nil")
+	} else if q.head == nil && q.tail != nil {
+		t.Fatal("tail is nil but head is non-nil")
+	} else {
+		// The queue maintains an invariant that it contains no finished chunks.
+		require.False(t, q.head.finished())
+		require.False(t, q.tail.finished())
+
+		if q.head == q.tail {
+			require.Nil(t, q.head.next)
+		} else {
+			// q.tail is non-nil and not equal to q.head. There must be a non-empty
+			// chunk after q.head.
+			require.False(t, q.Empty())
+			if q.head.empty() {
+				require.False(t, q.head.next.empty())
+			}
+			// The q.tail is never empty in this case. The tail can only be empty
+			// when it is equal to q.head and q.head is empty.
+			require.False(t, q.tail.empty())
+		}
+	}
+}
+
+func (q *QueueWithFixedChunkSize[T]) checkInvariants(t *testing.T) {
 	if q.head == nil && q.tail == nil {
 		require.True(t, q.Empty())
 	} else if q.head != nil && q.tail == nil {
