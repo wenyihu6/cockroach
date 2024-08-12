@@ -71,16 +71,25 @@ func (q *muxEventQueue) pushback(data *sharedMuxEvent) {
 
 	// we can write at q.write now -> assert that we can now write at q.write [0,eventQueueChunkSize)
 	q.tail.data[q.write] = data
-	q.write += 1
-	q.eventLen += 1
+	q.write++
+	q.eventLen++
 }
 
 func (q *muxEventQueue) popfront() (*sharedMuxEvent, bool) {
-	if q.eventLen == 0 {
+	if q.eventLen == 0 || q.head == nil {
 		return nil, false
 	}
 
+	// q.read should always be within the [0, len(queue))
+	res := q.tail.data[q.read]
+	q.tail.data[q.read] = nil // Free data in sharedmux
+	q.read++
+	q.eventLen--
+
 	if q.read == eventQueueChunkSize {
+		if q.head == q.tail {
+			q.tail = q.head.nextChunk
+		}
 		removed := q.head
 		q.head = q.head.nextChunk
 		q.read = 0
@@ -88,10 +97,6 @@ func (q *muxEventQueue) popfront() (*sharedMuxEvent, bool) {
 		// prev q.head should be garbage collected at this point
 		releasePooledEventQueueChunk(removed)
 	}
-	res := q.tail.data[q.read]
-	q.tail.data[q.read] = nil // Free data in sharedmux
-	q.read++
-	q.eventLen--
 	return res, true
 }
 
