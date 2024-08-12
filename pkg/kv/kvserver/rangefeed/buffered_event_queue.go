@@ -9,3 +9,82 @@
 // licenses/APL.txt.
 
 package rangefeed
+
+import (
+	"context"
+
+	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
+)
+
+const eventQueueChunkSize = 4000
+
+type sharedMuxEvent struct {
+	event *kvpb.MuxRangeFeedEvent
+	alloc *SharedBudgetAllocation
+}
+
+type eventQueueChunk struct {
+	data      [eventQueueChunkSize]*sharedMuxEvent
+	nextChunk *eventQueueChunk
+}
+
+type muxEventQueue struct {
+	head, tail *eventQueueChunk
+	// What we will read and write next.
+	read, write int
+	eventLen    int
+}
+
+func newMuxEventQueue() *muxEventQueue {
+	// q.head or q.tail should never be nil
+	dummyChunk := new(eventQueueChunk)
+	return &muxEventQueue{
+		head: dummyChunk,
+		tail: dummyChunk,
+	}
+}
+
+func (q *muxEventQueue) pushback(data *sharedMuxEvent) {
+	if q.write == eventQueueChunkSize {
+		// Insert a new chunk in the back.
+		newChunk := new(eventQueueChunk)
+		q.tail.nextChunk = newChunk
+		q.tail = newChunk
+		q.write = 0
+	}
+
+	// we can write at q.write now -> assert that we can now write at q.write [0,eventQueueChunkSize)
+	q.tail.data[q.write] = data
+	q.write += 1
+	q.eventLen += 1
+}
+
+func (q *muxEventQueue) popfront() (*sharedMuxEvent, bool) {
+	if q.eventLen == 0 {
+		return nil, false
+	}
+
+	if q.read == eventQueueChunkSize {
+		q.head = q.head.nextChunk
+		q.read = 0
+		// q.head has to be non-nil since q.eventCount != 0
+		// prev q.head should be garbage collected at this point
+	}
+	res := q.tail.data[q.read]
+	q.tail.data[q.read] = nil // Free data in sharedmux
+	q.read += 1
+	q.eventLen -= 1
+	return res, true
+}
+
+// q.head could be nil now -> cannot do pushback again
+// make sure q.head is not empty after removeAll
+func (q *muxEventQueue) removeAll(ctx context.Context) {
+	for {
+		e, success := q.popfront()
+		if !success {
+			return
+		}
+		e.alloc.Release(ctx)
+	}
+}
