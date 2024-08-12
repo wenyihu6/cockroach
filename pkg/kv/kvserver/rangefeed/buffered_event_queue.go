@@ -12,11 +12,27 @@ package rangefeed
 
 import (
 	"context"
+	"sync"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 )
 
 const eventQueueChunkSize = 4000
+
+var sharedEventQueueChunkSyncPool = sync.Pool{
+	New: func() interface{} {
+		return new(eventQueueChunk)
+	},
+}
+
+func newPooledEventQueueChunk() *eventQueueChunk {
+	return sharedEventQueueChunkSyncPool.Get().(*eventQueueChunk)
+}
+
+func releasePooledEventQueueChunk(e *eventQueueChunk) {
+	*e = eventQueueChunk{}
+	sharedEventQueueChunkSyncPool.Put(e)
+}
 
 type sharedMuxEvent struct {
 	event *kvpb.MuxRangeFeedEvent
@@ -47,7 +63,7 @@ func newMuxEventQueue() *muxEventQueue {
 func (q *muxEventQueue) pushback(data *sharedMuxEvent) {
 	if q.write == eventQueueChunkSize {
 		// Insert a new chunk in the back.
-		newChunk := new(eventQueueChunk)
+		newChunk := newPooledEventQueueChunk()
 		q.tail.nextChunk = newChunk
 		q.tail = newChunk
 		q.write = 0
@@ -65,20 +81,23 @@ func (q *muxEventQueue) popfront() (*sharedMuxEvent, bool) {
 	}
 
 	if q.read == eventQueueChunkSize {
+		removed := q.head
 		q.head = q.head.nextChunk
 		q.read = 0
 		// q.head has to be non-nil since q.eventCount != 0
 		// prev q.head should be garbage collected at this point
+		releasePooledEventQueueChunk(removed)
 	}
 	res := q.tail.data[q.read]
 	q.tail.data[q.read] = nil // Free data in sharedmux
-	q.read += 1
-	q.eventLen -= 1
+	q.read++
+	q.eventLen--
 	return res, true
 }
 
 // q.head could be nil now -> cannot do pushback again
 // make sure q.head is not empty after removeAll
+// q.head should be nil after this
 func (q *muxEventQueue) removeAll(ctx context.Context) {
 	for {
 		e, success := q.popfront()
