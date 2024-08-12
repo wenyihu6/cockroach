@@ -131,3 +131,23 @@ func TestChunkSize(t *testing.T) {
 	require.Equal(t, defaultChunkSize, q.chunkSize)
 	require.NoError(t, err)
 }
+
+func BenchmarkQueue(b *testing.B) {
+	b.ReportAllocs()
+	q, _ := NewQueue[*testQueueItem]()
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < 2000000; i++ {
+			q.Enqueue(&testQueueItem{})
+		}
+		q.purge()
+	}
+
+	for i := 0; i < b.N; i++ {
+		for i := 0; i < 2000000; i++ {
+			q.Enqueue(&testQueueItem{})
+		}
+		for i := 0; i < 2000000; i++ {
+			q.Dequeue()
+		}
+	}
+}
