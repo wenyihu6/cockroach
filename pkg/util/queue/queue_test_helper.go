@@ -15,7 +15,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/util/randutil"
 	"github.com/stretchr/testify/require"
-	"github.com/zeebo/assert"
 )
 
 type testQueueItem struct {
@@ -27,7 +26,7 @@ type testQueueInterface interface {
 	Empty() bool
 	Dequeue() (*testQueueItem, bool)
 	purge()
-	checkInvariants(*testing.T)
+	checkInvariants(*testing.T, int64)
 	checkNil(*testing.T)
 }
 
@@ -41,7 +40,7 @@ func (q *QueueWithFixedChunkSize[T]) checkNil(t *testing.T) {
 	require.Nil(t, q.tail)
 }
 
-func (q *Queue[T]) checkInvariants(t *testing.T) {
+func (q *Queue[T]) checkInvariants(t *testing.T, _ int64) {
 	if q.head == nil && q.tail == nil {
 		require.True(t, q.Empty())
 	} else if q.head != nil && q.tail == nil {
@@ -69,7 +68,8 @@ func (q *Queue[T]) checkInvariants(t *testing.T) {
 	}
 }
 
-func (q *QueueWithFixedChunkSize[T]) checkInvariants(t *testing.T) {
+func (q *QueueWithFixedChunkSize[T]) checkInvariants(t *testing.T, eventCount int64) {
+	require.Equal(t, eventCount, q.Len())
 	if q.head == nil && q.tail == nil {
 		require.True(t, q.Empty())
 	} else if q.head != nil && q.tail == nil {
@@ -98,62 +98,110 @@ func (q *QueueWithFixedChunkSize[T]) checkInvariants(t *testing.T) {
 }
 
 func runQueueTest(t *testing.T, q testQueueInterface, eventCount int) {
-	rng, _ := randutil.NewTestRand()
-	// Add one event and remove it
-	assert.True(t, q.Empty())
-	q.Enqueue(&testQueueItem{})
-	assert.False(t, q.Empty())
-	_, ok := q.Dequeue()
-	assert.True(t, ok)
-	assert.True(t, q.Empty())
-
-	// Fill events and then pop each one, ensuring empty() returns the correct
-	// value each time.
-	q.checkInvariants(t)
-	for i := 0; i < eventCount; i++ {
+	t.Run("basic operation: add one event and remove it", func(t *testing.T) {
+		// Add one event and remove it
+		require.True(t, q.Empty())
 		q.Enqueue(&testQueueItem{})
-	}
-	q.checkInvariants(t)
-	for {
-		assert.Equal(t, eventCount <= 0, q.Empty())
-		_, ok = q.Dequeue()
-		if !ok {
-			assert.True(t, q.Empty())
-			break
-		} else {
+		require.False(t, q.Empty())
+		_, ok := q.Dequeue()
+		require.True(t, ok)
+		require.True(t, q.Empty())
+		q.checkInvariants(t, 0)
+	})
+
+	t.Run("fill and empty queue", func(t *testing.T) {
+		for i := 0; i < eventCount; i++ {
+			q.Enqueue(&testQueueItem{})
+		}
+		q.checkInvariants(t, int64(eventCount))
+		for eventCount != 0 {
+			require.Equal(t, eventCount <= 0, q.Empty())
+			_, ok := q.Dequeue()
+			require.True(t, ok)
 			eventCount--
 		}
-		q.checkInvariants(t)
-	}
-	assert.Equal(t, 0, eventCount)
-	q.Enqueue(&testQueueItem{})
-	assert.False(t, q.Empty())
-	q.Dequeue()
-	assert.True(t, q.Empty())
+		require.True(t, q.Empty())
+		q.checkInvariants(t, int64(0))
+		_, ok := q.Dequeue()
+		require.False(t, ok)
+		require.True(t, q.Empty())
+	})
 
-	// Add events and assert they are consumed in fifo order.
-	var lastPop int64 = -1
-	var lastPush int64 = -1
-	q.checkInvariants(t)
-	for eventCount > 0 {
-		op := rng.Intn(5)
-		if op < 3 {
-			q.Enqueue(&testQueueItem{i: lastPush + 1})
-			lastPush++
-		} else {
-			e, ok := q.Dequeue()
-			if !ok {
-				assert.Equal(t, lastPop, lastPush)
-				assert.True(t, q.Empty())
+	t.Run("purge is noop for an empty queue", func(t *testing.T) {
+		q.purge()
+		q.checkNil(t)
+		q.checkInvariants(t, int64(0))
+		require.True(t, q.Empty())
+	})
+
+	t.Run("empty queue", func(t *testing.T) {
+		q.Enqueue(&testQueueItem{})
+		require.False(t, q.Empty())
+		q.Dequeue()
+		require.True(t, q.Empty())
+	})
+
+	t.Run("fill and empty queue with random operations", func(t *testing.T) {
+		// Add events and assert they are consumed in fifo order.
+		var lastPop int64 = -1
+		var lastPush int64 = -1
+		for eventCount > 0 {
+			q.checkInvariants(t, int64(eventCount))
+			rng, _ := randutil.NewTestRand()
+			op := rng.Intn(5)
+			if op < 3 {
+				v := lastPush + 1
+				q.Enqueue(&testQueueItem{i: v})
+				lastPush++
 			} else {
-				assert.Equal(t, lastPop+1, e.i)
-				lastPop++
-				eventCount--
+				e, ok := q.Dequeue()
+				if !ok {
+					require.Equal(t, lastPop, lastPush)
+					require.True(t, q.Empty())
+				} else {
+					require.Equal(t, lastPop+1, e.i)
+					lastPop++
+					eventCount--
+				}
 			}
 		}
-		q.checkInvariants(t)
-	}
 
-	q.purge()
-	q.checkNil(t)
+		t.Run("purge", func(t *testing.T) {
+			for eventCount > 0 {
+				q.checkInvariants(t, int64(eventCount))
+				rng, _ := randutil.NewTestRand()
+				op := rng.Intn(15)
+				sum := int64(0)
+				if op < 10 {
+					v := int64(rng.Intn(20000))
+					q.Enqueue(&testQueueItem{i: v})
+					sum += v
+				} else if op < 12 {
+					e, ok := q.Dequeue()
+					if !ok {
+						require.True(t, q.Empty())
+					} else {
+						sum -= e.i
+						eventCount--
+					}
+				} else {
+					fixedQ, ok := q.(*QueueWithFixedChunkSize[*testQueueItem])
+					if op < 13 && !ok {
+						q.purge()
+						q.checkNil(t)
+						eventCount = 0
+						q.checkInvariants(t, int64(0))
+					} else {
+						actualSum := int64(0)
+						fixedQ.removeAll(func(e *testQueueItem) {
+							actualSum += e.i
+							eventCount--
+						})
+						fixedQ.checkNil(t)
+						require.Equal(t, sum, actualSum)
+					}
+				}
+			}
+		})
+	})
 }

@@ -37,6 +37,7 @@ func putPooledEventQueueChunk[T any](p *sync.Pool, e *queueChunkWithFixedSize[T]
 type QueueWithFixedChunkSize[T any] struct {
 	pool       *sync.Pool
 	head, tail *queueChunkWithFixedSize[T]
+	eventCount int64
 }
 
 // NewQueueWithFixedChunkSize returns a QueueWithFixedChunkSize of T.
@@ -46,8 +47,15 @@ func NewQueueWithFixedChunkSize[T any]() *QueueWithFixedChunkSize[T] {
 	}
 }
 
+func (q *QueueWithFixedChunkSize[T]) Len() int64 {
+	return q.eventCount
+}
+
 // Enqueue adds an element to the back of the queue.
 func (q *QueueWithFixedChunkSize[T]) Enqueue(e T) {
+	defer func() {
+		q.eventCount++
+	}()
 	if q.tail == nil {
 		chunk := getPooledEventQueueChunk[T](q.pool)
 		q.head, q.tail = chunk, chunk
@@ -65,7 +73,7 @@ func (q *QueueWithFixedChunkSize[T]) Enqueue(e T) {
 
 // Empty returns true IFF the Queue is empty.
 func (q *QueueWithFixedChunkSize[T]) Empty() bool {
-	return q.head == nil || q.head.empty()
+	return q.eventCount == 0
 }
 
 // Dequeue removes an element from the front of the queue and returns it.
@@ -89,12 +97,16 @@ func (q *QueueWithFixedChunkSize[T]) Dequeue() (e T, ok bool) {
 		// The previous value of q.head will be garbage collected.
 		putPooledEventQueueChunk[T](q.pool, removed)
 	}
-
+	q.eventCount--
 	return e, true
 }
 
-func (q *QueueWithFixedChunkSize[T]) purge() {
+func (q *QueueWithFixedChunkSize[T]) removeAll(callback func(e T)) {
 	for q.head != nil {
+		q.head.clearAll(func(e T) {
+			callback(e)
+			q.eventCount--
+		})
 		remove := q.head
 		q.head = q.head.next
 		// The previous value of q.head will be garbage collected.
@@ -103,10 +115,22 @@ func (q *QueueWithFixedChunkSize[T]) purge() {
 	q.tail = q.head
 }
 
+func (q *QueueWithFixedChunkSize[T]) purge() {
+	q.removeAll(func(e T) {})
+}
+
 type queueChunkWithFixedSize[T any] struct {
 	events     [fixedChunkSize]T
 	head, tail int
 	next       *queueChunkWithFixedSize[T] // linked-list element
+}
+
+func (c *queueChunkWithFixedSize[T]) clearAll(callback func(e T)) {
+	for i := c.head; i < c.tail; i++ {
+		callback(c.events[i])
+		var zeroValue T
+		c.events[i] = zeroValue
+	}
 }
 
 func (c *queueChunkWithFixedSize[T]) push(e T) (inserted bool) {
