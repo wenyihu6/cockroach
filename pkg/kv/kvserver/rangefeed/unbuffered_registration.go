@@ -16,6 +16,8 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 )
 
 type unbufferedRegistration struct {
@@ -44,6 +46,40 @@ type unbufferedRegistration struct {
 }
 
 var _ registration = (*unbufferedRegistration)(nil)
+
+func newUnbufferedRegistration(
+	span roachpb.Span,
+	startTS hlc.Timestamp,
+	catchUpIter *CatchUpIterator,
+	withDiff bool,
+	withFiltering bool,
+	withOmitRemote bool,
+	bufferSz int,
+	metrics *Metrics,
+	stream BufferedStream,
+	unregisterFn func(),
+) *unbufferedRegistration {
+	br := &unbufferedRegistration{
+		baseRegistration: baseRegistration{
+			span:             span,
+			catchUpTimestamp: startTS,
+			withDiff:         withDiff,
+			withFiltering:    withFiltering,
+			withOmitRemote:   withOmitRemote,
+			unreg:            unregisterFn,
+		},
+		metrics: metrics,
+		stream:  stream,
+	}
+	br.mu.Locker = &syncutil.Mutex{}
+	br.mu.catchUpIter = catchUpIter
+	br.mu.caughtUp = true
+	if br.mu.catchUpIter != nil {
+		// Send to underlying stream directly if catch up scan is not needed.
+		br.mu.catchUpBuf = make(chan *sharedEvent, bufferSz)
+	}
+	return br
+}
 
 func (ubr *unbufferedRegistration) setDisconnectedIfNot() {
 	//TODO implement me

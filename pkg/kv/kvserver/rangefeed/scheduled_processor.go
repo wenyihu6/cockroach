@@ -318,10 +318,10 @@ func (p *ScheduledProcessor) Register(
 	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
 
 	var r registration
-	_, isBufferedStream := stream.(BufferedStream)
+	bufferedStream, isBufferedStream := stream.(BufferedStream)
 	if isBufferedStream {
-		log.Fatalf(context.Background(),
-			"unimplemented: unbuffered registrations for rangefeed, see #126560")
+		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+			p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
 	} else {
 		r = newBufferedRegistration(
 			span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
@@ -352,7 +352,7 @@ func (p *ScheduledProcessor) Register(
 
 		if isBufferedStream {
 			r.(*unbufferedRegistration).setDisconnectedIfNot()
-			stream.(BufferedStream).RegisterRangefeedCleanUp(func() {
+			bufferedStream.RegisterRangefeedCleanUp(func() {
 				// Invoke rangefeed clean up callback regardless of whether registration
 				// has been disconnected during the callback.
 				// What happens if p is stopped here already
