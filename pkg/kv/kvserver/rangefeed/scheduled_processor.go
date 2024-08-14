@@ -350,8 +350,19 @@ func (p *ScheduledProcessor) Register(
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
 		if bs, ok := stream.(BufferedStream); ok {
+			nr.setDisconnectedIfNot()
 			bs.RegisterRangefeedCleanUp(func() {
-				log.Fatalf(context.Background(), "unimplemented: see #126560")
+				// Invoke rangefeed clean up callback regardless of whether registration
+				// has been disconnected during the callback.
+				// What happens if p is stopped here already
+				//p.reg.Unregister(cstx, &r)
+				if p.unregisterClient(r) {
+					// unreg callback is set by replica to tear down processors that have
+					// zero registrations left and to update event filters.
+					if f := r.getUnreg(); f != nil {
+						f()
+					}
+				}
 			})
 		}
 
