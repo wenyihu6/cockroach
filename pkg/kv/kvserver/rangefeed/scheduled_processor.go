@@ -318,7 +318,8 @@ func (p *ScheduledProcessor) Register(
 	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
 
 	var r registration
-	if _, ok := stream.(BufferedStream); ok {
+	_, isBufferedStream := stream.(BufferedStream)
+	if isBufferedStream {
 		log.Fatalf(context.Background(),
 			"unimplemented: unbuffered registrations for rangefeed, see #126560")
 	} else {
@@ -349,9 +350,9 @@ func (p *ScheduledProcessor) Register(
 		// once they observe the first checkpoint event.
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
-		if bs, ok := stream.(BufferedStream); ok {
-			nr.setDisconnectedIfNot()
-			bs.RegisterRangefeedCleanUp(func() {
+		if isBufferedStream {
+			r.(*unbufferedRegistration).setDisconnectedIfNot()
+			stream.(BufferedStream).RegisterRangefeedCleanUp(func() {
 				// Invoke rangefeed clean up callback regardless of whether registration
 				// has been disconnected during the callback.
 				// What happens if p is stopped here already
@@ -369,11 +370,13 @@ func (p *ScheduledProcessor) Register(
 		// Run an output loop for the registry.
 		runOutputLoop := func(ctx context.Context) {
 			r.runOutputLoop(ctx, p.RangeID)
-			if p.unregisterClient(r) {
-				// unreg callback is set by replica to tear down processors that have
-				// zero registrations left and to update event filters.
-				if f := r.getUnreg(); f != nil {
-					f()
+			if !isBufferedStream {
+				if p.unregisterClient(r) {
+					// unreg callback is set by replica to tear down processors that have
+					// zero registrations left and to update event filters.
+					if f := r.getUnreg(); f != nil {
+						f()
+					}
 				}
 			}
 		}
