@@ -160,6 +160,13 @@ func (f randTestingFramework) runRandTestRepeated() testResultsReport {
 	}
 }
 
+func genClusterWithLocality(storesPerNode int, regions []string, nodes []int) gen.LoadedCluster {
+	clusterInfo := state.ClusterInfoWithLocality(storesPerNode, regions, nodes)
+	return gen.LoadedCluster{
+		Info: clusterInfo,
+	}
+}
+
 // loadClusterInfo creates a LoadedCluster from a matching ClusterInfo based on
 // the given configNam, or panics if no match is found in existing
 // configurations.
