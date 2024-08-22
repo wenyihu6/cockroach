@@ -1925,54 +1925,55 @@ func (n *Node) RangeLookup(
 	return resp, nil
 }
 
-// lockedMuxStream provides support for concurrent calls to Send. The underlying
-// MuxRangeFeedServer (default grpc.Stream) is not safe for concurrent calls to
-// Send.
-type lockedMuxStream struct {
-	wrapped kvpb.Internal_MuxRangeFeedServer
-	sendMu  syncutil.Mutex
-}
-
-func (s *lockedMuxStream) SendIsThreadSafe() {}
-
-func (s *lockedMuxStream) SendUnbuffered(e *kvpb.MuxRangeFeedEvent) error {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
-	return s.wrapped.Send(e)
+func makeMuxRangefeedErrorEvent(
+	streamID int64, rangeID roachpb.RangeID, err *kvpb.Error,
+) *kvpb.MuxRangeFeedEvent {
+	ev := &kvpb.MuxRangeFeedEvent{
+		StreamID: streamID,
+		RangeID:  rangeID,
+	}
+	ev.MustSetValue(&kvpb.RangeFeedError{
+		Error: *err,
+	})
+	return ev
 }
 
 // MuxRangeFeed implements the roachpb.InternalServer interface.
-func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
-	var muxStream rangefeed.ServerStreamSender = &lockedMuxStream{wrapped: stream}
+func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) error {
+	//var muxStream rangefeed.ServerStreamSender = &lockedMuxStream{wrapped: stream}
 
 	// All context created below should derive from this context, which is
 	// cancelled once MuxRangeFeed exits.
-	ctx, cancel := context.WithCancel(n.AnnotateCtx(stream.Context()))
+	ctx, cancel := context.WithCancel(n.AnnotateCtx(muxStream.Context()))
 	defer cancel()
 
-	if kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV) {
-		muxStream = &rangefeed.BufferedStreamSender{
-			ServerStreamSender: muxStream,
-		}
-		log.Fatalf(ctx, "unimplemented: buffered sender for rangefeed #126560")
-	}
-
 	streamMuxer := rangefeed.NewStreamMuxer(muxStream, n.metrics)
-	if err := streamMuxer.Start(ctx, n.stopper); err != nil {
-		return err
+	defer streamMuxer.DisconnectAll()
+
+	var ubSender *rangefeed.UnbufferedSender
+	var bSender *rangefeed.BufferedSender
+	useBufferedSender := kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV)
+	if useBufferedSender {
+		bSender = rangefeed.NewBufferedSender(streamMuxer)
+		log.Fatalf(ctx, "unimplemented: buffered sender for rangefeed #126560")
+	} else {
+		ubSender = rangefeed.NewUnbufferedSender(streamMuxer)
+		if err := ubSender.Start(ctx, n.stopper); err != nil {
+			return err
+		}
+		defer ubSender.Stop()
 	}
-	defer streamMuxer.Stop()
 
 	for {
 		select {
-		case err := <-streamMuxer.Error():
+		case err := <-ubSender.Error():
 			return err
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-n.stopper.ShouldQuiesce():
 			return stop.ErrUnavailable
 		default:
-			req, err := stream.Recv()
+			req, err := muxStream.Recv()
 			if err != nil {
 				return err
 			}
@@ -1981,8 +1982,13 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 				// Note that we will call DisconnectStreamWithError again when
 				// registration.disconnect happens, but DisconnectStreamWithError will
 				// ignore subsequent errors.
-				streamMuxer.DisconnectStreamWithError(req.StreamID, req.RangeID,
-					kvpb.NewError(kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED)))
+				// This cannot happen until the stream clean up is registered or will
+				// not be registered.
+				if err := streamMuxer.DisconnectStreamWithError(
+					makeMuxRangefeedErrorEvent(req.StreamID, req.RangeID, kvpb.NewError(kvpb.NewRangeFeedRetryError(
+						kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED)))); err != nil {
+					return err
+				}
 				continue
 			}
 
@@ -1991,15 +1997,13 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 			streamCtx = logtags.AddTag(streamCtx, "s", req.Replica.StoreID)
 			streamCtx = logtags.AddTag(streamCtx, "sid", req.StreamID)
 
-			var streamSink rangefeed.Stream
-			sink := rangefeed.NewPerRangeEventSink(streamCtx, req.RangeID, req.StreamID, streamMuxer)
-			if _, ok := muxStream.(*rangefeed.BufferedStreamSender); ok {
-				streamSink = &rangefeed.BufferedPerRangeEventSink{
-					PerRangeEventSink: sink,
-				}
+			var sink rangefeed.Stream
+			if useBufferedSender {
+				sink = rangefeed.NewPerRangeEventSink(streamCtx, cancel, req.RangeID, req.StreamID, ubSender)
 			} else {
-				streamSink = sink
+				sink = rangefeed.NewBufferedPerRangeEventSink(streamCtx, req.RangeID, req.StreamID, bSender)
 			}
+
 			streamMuxer.AddStream(req.StreamID, req.RangeID, cancel)
 
 			// Rangefeed attempts to register rangefeed a request over the specified
@@ -2007,9 +2011,14 @@ func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
 			// nil without blocking on rangefeed completion. Events are then sent to
 			// the provided streamSink. If the rangefeed disconnects after being
 			// successfully registered, it calls streamSink.Disconnect with the error.
-			if err := n.stores.RangeFeed(req, streamSink); err != nil {
-				streamMuxer.DisconnectStreamWithError(req.StreamID, req.RangeID, kvpb.NewError(err))
+			cleanup, err := n.stores.RangeFeed(req, sink)
+			if err != nil {
+				if sendErr := streamMuxer.DisconnectStreamWithError(
+					makeMuxRangefeedErrorEvent(req.StreamID, req.RangeID, kvpb.NewError(err))); sendErr != nil {
+					return sendErr
+				}
 			}
+			streamMuxer.RegisterRangefeedCleanUp(req.StreamID, cleanup)
 		}
 	}
 }

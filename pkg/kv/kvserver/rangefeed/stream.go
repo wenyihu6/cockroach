@@ -15,6 +15,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
 // Stream is an object capable of transmitting RangeFeedEvents from a server
@@ -39,23 +40,29 @@ type BufferedStream interface {
 	// be invoked after Disconnect is called. It is up to the implementation on
 	// when or whether the callback is invoked. The caller should coordinate with
 	// the implementation.
-	RegisterRangefeedCleanUp(func())
+	//RegisterRangefeedCleanUp(func())
 }
 
 // PerRangeEventSink is an implementation of Stream which annotates each
 // response with rangeID and streamID. It is used by MuxRangeFeed.
 type PerRangeEventSink struct {
 	ctx      context.Context
+	cancel   context.CancelFunc
 	rangeID  roachpb.RangeID
 	streamID int64
-	wrapped  *StreamMuxer
+	wrapped  *UnbufferedSender
 }
 
 func NewPerRangeEventSink(
-	ctx context.Context, rangeID roachpb.RangeID, streamID int64, wrapped *StreamMuxer,
+	ctx context.Context,
+	cancel context.CancelFunc,
+	rangeID roachpb.RangeID,
+	streamID int64,
+	wrapped *UnbufferedSender,
 ) *PerRangeEventSink {
 	return &PerRangeEventSink{
 		ctx:      ctx,
+		cancel:   cancel,
 		rangeID:  rangeID,
 		streamID: streamID,
 		wrapped:  wrapped,
@@ -88,18 +95,62 @@ func (s *PerRangeEventSink) SendUnbuffered(event *kvpb.RangeFeedEvent) error {
 // actual disconnection and additional cleanup. Note that Caller should not rely
 // on immediate disconnection as cleanup takes place async.
 func (s *PerRangeEventSink) Disconnect(err *kvpb.Error) {
-	s.wrapped.DisconnectStreamWithError(s.streamID, s.rangeID, err)
+	s.cancel()
+	ev := &kvpb.MuxRangeFeedEvent{
+		RangeID:  s.rangeID,
+		StreamID: s.streamID,
+	}
+	ev.MustSetValue(&kvpb.RangeFeedError{
+		Error: *err,
+	})
+	// Already disconnecting, not much else can be done. If SendUnbuffered fails,
+	// a node level is coming anyway. Sneding an error event, error is nil.
+	if err := s.wrapped.SendUnbuffered(ev); err != nil {
+		log.Errorf(s.ctx, "failed to send disconnect error: %v", err)
+	}
 }
 
 // BufferedPerRangeEventSink is an implementation of rangefeed.BufferedStream
 // which buffers events before sending them to the underlying grpc stream.
+// TODO(wenyihu6): does not need cancel since
 type BufferedPerRangeEventSink struct {
-	*PerRangeEventSink
+	ctx      context.Context
+	rangeID  roachpb.RangeID
+	streamID int64
+	wrapped  *BufferedSender
+}
+
+func NewBufferedPerRangeEventSink(
+	ctx context.Context, rangeID roachpb.RangeID, streamID int64, wrapped *BufferedSender,
+) *BufferedPerRangeEventSink {
+	return &BufferedPerRangeEventSink{
+		ctx:      ctx,
+		rangeID:  rangeID,
+		streamID: streamID,
+		wrapped:  wrapped,
+	}
 }
 
 var _ kvpb.RangeFeedEventSink = (*BufferedPerRangeEventSink)(nil)
 var _ Stream = (*BufferedPerRangeEventSink)(nil)
 var _ BufferedStream = (*BufferedPerRangeEventSink)(nil)
+
+func (bs *BufferedPerRangeEventSink) Context() context.Context {
+	return bs.ctx
+}
+
+func (bs *BufferedPerRangeEventSink) SendUnbuffered(event *kvpb.RangeFeedEvent) error {
+	muxEvent := &kvpb.MuxRangeFeedEvent{
+		RangeFeedEvent: *event,
+		RangeID:        bs.rangeID,
+		StreamID:       bs.streamID,
+	}
+	return bs.wrapped.SendUnbuffered(muxEvent)
+}
+
+// TODO(wenyihu6): For disconnect context cancellation, this happens very late
+// in the stage. This shouldn't be a problem since buffered sender should not
+// rely on this cpontext on anything. But double check this at reviews.
 
 // SendBuffered buffers the event in StreamMuxer.BufferedStreamSender,
 // transferring the ownership of the allocated SharedBudgetAllocation to
@@ -110,24 +161,30 @@ var _ BufferedStream = (*BufferedPerRangeEventSink)(nil)
 //
 // Note that this should only be called if the StreamMuxer has a
 // BufferedStreamSender as the sender. Panics otherwise.
-func (s *BufferedPerRangeEventSink) SendBuffered(
+func (bs *BufferedPerRangeEventSink) SendBuffered(
 	event *kvpb.RangeFeedEvent, alloc *SharedBudgetAllocation,
 ) error {
 	response := &kvpb.MuxRangeFeedEvent{
 		RangeFeedEvent: *event,
-		RangeID:        s.rangeID,
-		StreamID:       s.streamID,
+		RangeID:        bs.rangeID,
+		StreamID:       bs.streamID,
 	}
-	return s.wrapped.SendBuffered(response, alloc)
+	return bs.wrapped.SendBuffered(response, alloc)
 }
 
-// RegisterRangefeedCleanUp registers a cleanup callback to be called in a
-// background async job when the stream is disconnected. Note that the callback will
-// not be invoked immediately during DisconnectStreamWithError and may not be
-// called if the StreamMuxer.Stop has been called. It is up to the caller to
-// ensure that this is not called after StreamMuxer.Stop. For p.Register, it is
-// currently done by waiting for runRequest to complete for each
-// stores.RangeFeed call.
-func (s *BufferedPerRangeEventSink) RegisterRangefeedCleanUp(f func()) {
-	s.wrapped.RegisterRangefeedCleanUp(s.streamID, f)
+func (bs *BufferedPerRangeEventSink) SendIsThreadSafe() {}
+
+func (bs *BufferedPerRangeEventSink) Disconnect(err *kvpb.Error) {
+	ev := &kvpb.MuxRangeFeedEvent{
+		RangeID:  bs.rangeID,
+		StreamID: bs.streamID,
+	}
+	ev.MustSetValue(&kvpb.RangeFeedError{
+		Error: *err,
+	})
+	// Already disconnecting, not much else can be done. If SendUnbuffered fails,
+	// a node level is coming anyway. Sneding an error event, error is nil.
+	if err := bs.wrapped.SendBuffered(ev, nil); err != nil {
+		log.Errorf(bs.ctx, "failed to send disconnect error: %v", err)
+	}
 }

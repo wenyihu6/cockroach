@@ -20,6 +20,7 @@ go_library(
         "task.go",
         "testutil.go",
         "unbuffered_registration.go",
+        "unbuffered_stream_sender.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/rangefeed",
     visibility = ["//visibility:public"],
@@ -57,7 +58,6 @@ go_library(
 
 go_test(
     name = "rangefeed_test",
-    size = "large",
     srcs = [
         "bench_test.go",
         "budget_test.go",
