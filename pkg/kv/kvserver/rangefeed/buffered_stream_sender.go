@@ -12,10 +12,28 @@ package rangefeed
 
 import "github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 
-// BufferedStreamSender is a StreamSender that buffers events before sending
-// them to the underlying rpc ServerStreamSender stream.
-type BufferedStreamSender struct {
-	ServerStreamSender
+// type MuxStream struct {
+// }
+//
+// var _ Stream = (*MuxStream)(nil)
+//
+// // BufferedStreamSender is a StreamSender that buffers events before sending
+// // them to the underlying rpc ServerStreamSender stream.
+
+type Sender struct {
+	sm *StreamMuxer
+}
+
+func (s *Sender) SendUnbuffered(
+	event *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
+) error {
+	// Currently, this is only used in testing. For simplicity, we just send to
+	// underlying stream directly. In the future, we will start buffering events.
+	return s.sm.Send(event)
+}
+
+type BufferedSender struct {
+	sm *StreamMuxer
 }
 
 // SendBuffered buffers the event before sending them to the underlying
@@ -23,10 +41,10 @@ type BufferedStreamSender struct {
 // stopped. BufferedStreamSender is responsible for properly releasing it from
 // now on. The event is guaranteed to be sent unless the buffered stream
 // terminates before sending (e.g. broken grpc stream).
-func (bs *BufferedStreamSender) SendBuffered(
+func (bs *BufferedSender) SendBuffered(
 	event *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
 ) error {
 	// Currently, this is only used in testing. For simplicity, we just send to
 	// underlying stream directly. In the future, we will start buffering events.
-	return bs.SendUnbuffered(event)
+	return bs.sm.Send(event)
 }

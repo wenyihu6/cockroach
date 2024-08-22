@@ -39,7 +39,7 @@ type BufferedStream interface {
 	// be invoked after Disconnect is called. It is up to the implementation on
 	// when or whether the callback is invoked. The caller should coordinate with
 	// the implementation.
-	RegisterRangefeedCleanUp(func())
+	//RegisterRangefeedCleanUp(func())
 }
 
 // PerRangeEventSink is an implementation of Stream which annotates each
@@ -48,11 +48,11 @@ type PerRangeEventSink struct {
 	ctx      context.Context
 	rangeID  roachpb.RangeID
 	streamID int64
-	wrapped  *StreamMuxer
+	wrapped  *BufferedSender
 }
 
 func NewPerRangeEventSink(
-	ctx context.Context, rangeID roachpb.RangeID, streamID int64, wrapped *StreamMuxer,
+	ctx context.Context, rangeID roachpb.RangeID, streamID int64, wrapped *BufferedSender,
 ) *PerRangeEventSink {
 	return &PerRangeEventSink{
 		ctx:      ctx,

@@ -109,10 +109,6 @@ type StreamMuxer struct {
 	// shutdown signal in this case and handle error appropriately.
 	errCh chan error
 
-	// Note that lockedMuxStream wraps the underlying grpc server stream, ensuring
-	// thread safety.
-	sender ServerStreamSender
-
 	// metrics is used to record rangefeed metrics for the node.
 	metrics RangefeedMetricsRecorder
 
@@ -134,6 +130,12 @@ type StreamMuxer struct {
 	// corresponding clean up callback registered during run.
 	notifyRangefeedCleanUp chan struct{}
 
+	// Wrap the underlying grpc server stream in a mutex to ensure thread safety.
+	sendMu struct {
+		syncutil.Mutex
+		wrapped kvpb.Internal_MuxRangeFeedServer
+	}
+
 	mu struct {
 		syncutil.Mutex
 		// muxErrors is a slice of mux rangefeed completion errors to be sent back
@@ -150,13 +152,16 @@ type StreamMuxer struct {
 
 // NewStreamMuxer creates a new StreamMuxer. There should only one for each
 // incoming node.MuxRangefeed RPC stream.
-func NewStreamMuxer(sender ServerStreamSender, metrics RangefeedMetricsRecorder) *StreamMuxer {
-	return &StreamMuxer{
-		sender:                 sender,
+func NewStreamMuxer(
+	stream kvpb.Internal_MuxRangeFeedServer, metrics RangefeedMetricsRecorder,
+) *StreamMuxer {
+	sm := &StreamMuxer{
 		metrics:                metrics,
 		notifyMuxError:         make(chan struct{}, 1),
 		notifyRangefeedCleanUp: make(chan struct{}, 1),
 	}
+	sm.sendMu.wrapped = stream
+	return sm
 }
 
 // streamInfo contains the rangeID and cancel function for an active rangefeed.
@@ -187,19 +192,21 @@ func (sm *StreamMuxer) AddStream(
 // also declares its Send method to be thread-safe.
 func (sm *StreamMuxer) SendIsThreadSafe() {}
 
-func (sm *StreamMuxer) SendUnbuffered(e *kvpb.MuxRangeFeedEvent) error {
-	return sm.sender.SendUnbuffered(e)
+func (sm *StreamMuxer) Send(e *kvpb.MuxRangeFeedEvent) error {
+	sm.sendMu.Lock()
+	defer sm.sendMu.Unlock()
+	return sm.sendMu.wrapped.Send(e)
 }
 
-// SendBuffered sends a buffered MuxRangeFeedEvent to the client. Note that this
-// method can only be called if the wrapped sender is a BufferedStreamSender.
-func (sm *StreamMuxer) SendBuffered(
-	e *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
-) error {
-	// Panics if sender is not a BufferedStreamSender. This is a programming
-	// error. Check memory accounting for sharedmux vs sharedevent.
-	return sm.sender.(*BufferedStreamSender).SendBuffered(e, alloc)
-}
+//// SendBuffered sends a buffered MuxRangeFeedEvent to the client. Note that this
+//// method can only be called if the wrapped sender is a BufferedStreamSender.
+//func (sm *StreamMuxer) SendBuffered(
+//	e *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
+//) error {
+//	// Panics if sender is not a BufferedStreamSender. This is a programming
+//	// error. Check memory accounting for sharedmux vs sharedevent.
+//	return sm.sender.(*BufferedStreamSender).SendBuffered(e, alloc)
+//}
 
 func (sm *StreamMuxer) appendCleanUp(streamID int64) {
 	sm.mu.Lock()
@@ -217,7 +224,8 @@ func (sm *StreamMuxer) appendCleanUp(streamID int64) {
 // DisconnectStreamWithError. Note that the cleanup callback is not called
 // immediately after DisconnectStreamWithError and will not be called if
 // StreamMuxer.Stop has been called (which happens when node.MuxRangefeed
-// returns).
+// returns). RegisterRangefeedCleanUp should not happen until Disconnect of a
+// stream should be impossible before RegisterRangefeedCleanUp returns.
 func (sm *StreamMuxer) RegisterRangefeedCleanUp(streamID int64, cleanUp func()) {
 	sm.rangefeedCleanup.Store(streamID, &cleanUp)
 }
@@ -410,22 +418,22 @@ func (sm *StreamMuxer) disconnectAll() {
 //	}
 //
 // defer streamMuxer.Stop()
-func (sm *StreamMuxer) Start(ctx context.Context, stopper *stop.Stopper) error {
-	if sm.errCh != nil {
-		log.Fatalf(ctx, "StreamMuxer.Start called multiple times")
-	}
-	sm.errCh = make(chan error, 1)
-	ctx, sm.taskCancel = context.WithCancel(ctx)
-	sm.wg.Add(1)
-	if err := stopper.RunAsyncTask(ctx, "test-stream-muxer", func(ctx context.Context) {
-		defer sm.wg.Done()
-		if err := sm.run(ctx, stopper); err != nil {
-			sm.errCh <- err
-		}
-	}); err != nil {
-		sm.taskCancel()
-		sm.wg.Done()
-		return err
-	}
-	return nil
-}
+//func (sm *StreamMuxer) Start(ctx context.Context, stopper *stop.Stopper) error {
+//	if sm.errCh != nil {
+//		log.Fatalf(ctx, "StreamMuxer.Start called multiple times")
+//	}
+//	sm.errCh = make(chan error, 1)
+//	ctx, sm.taskCancel = context.WithCancel(ctx)
+//	sm.wg.Add(1)
+//	if err := stopper.RunAsyncTask(ctx, "test-stream-muxer", func(ctx context.Context) {
+//		defer sm.wg.Done()
+//		if err := sm.run(ctx, stopper); err != nil {
+//			sm.errCh <- err
+//		}
+//	}); err != nil {
+//		sm.taskCancel()
+//		sm.wg.Done()
+//		return err
+//	}
+//	return nil
+//}

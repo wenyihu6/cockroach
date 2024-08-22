@@ -1925,43 +1925,28 @@ func (n *Node) RangeLookup(
 	return resp, nil
 }
 
-// lockedMuxStream provides support for concurrent calls to Send. The underlying
-// MuxRangeFeedServer (default grpc.Stream) is not safe for concurrent calls to
-// Send.
-type lockedMuxStream struct {
-	wrapped kvpb.Internal_MuxRangeFeedServer
-	sendMu  syncutil.Mutex
-}
-
-func (s *lockedMuxStream) SendIsThreadSafe() {}
-
-func (s *lockedMuxStream) SendUnbuffered(e *kvpb.MuxRangeFeedEvent) error {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
-	return s.wrapped.Send(e)
-}
-
 // MuxRangeFeed implements the roachpb.InternalServer interface.
 func (n *Node) MuxRangeFeed(stream kvpb.Internal_MuxRangeFeedServer) error {
-	var muxStream rangefeed.ServerStreamSender = &lockedMuxStream{wrapped: stream}
+	//var muxStream rangefeed.ServerStreamSender = &lockedMuxStream{wrapped: stream}
 
 	// All context created below should derive from this context, which is
 	// cancelled once MuxRangeFeed exits.
 	ctx, cancel := context.WithCancel(n.AnnotateCtx(stream.Context()))
 	defer cancel()
 
-	if kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV) {
-		muxStream = &rangefeed.BufferedStreamSender{
-			ServerStreamSender: muxStream,
-		}
-		log.Fatalf(ctx, "unimplemented: buffered sender for rangefeed #126560")
-	}
-
-	streamMuxer := rangefeed.NewStreamMuxer(muxStream, n.metrics)
+	streamMuxer := rangefeed.NewStreamMuxer(stream, n.metrics)
 	if err := streamMuxer.Start(ctx, n.stopper); err != nil {
 		return err
 	}
 	defer streamMuxer.Stop()
+
+	var stream rangefeed.Stream
+	if kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV) {
+		stream = &rangefeed.BufferedMuxStream{
+			ServerStreamSender: muxStream,
+		}
+		log.Fatalf(ctx, "unimplemented: buffered sender for rangefeed #126560")
+	}
 
 	for {
 		select {
