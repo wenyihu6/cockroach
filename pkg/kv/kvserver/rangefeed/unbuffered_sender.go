@@ -36,6 +36,17 @@ type ServerStreamSender interface {
 	SendIsThreadSafe()
 }
 
+// UnbufferedSender is embedded in every rangefeed.PerRangeEventSink, serving as
+// a helper to forward events to the underlying gRPC stream.
+// - For non-error events, SendUnbuffered is blocking until the event is sent.
+// - For error events, SendBufferedError is non-blocking and ensures
+// 1) stream context is canceled
+// 2) exactly one error is sent back to the client on behalf of the stream
+// 3) metrics updates.
+// It makes sure SendBufferedError is non-blocking by delegating the
+// responsibility of sending mux error to UnbufferedSender.run (in a separate
+// goroutine). There should only be one UnbufferedSender per Node.MuxRangefeed.
+//
 //			                            ┌───────────────────────────┐
 //			                            │ DistSender.RangefeedSpans │  rangefeedMuxer
 //			                            └───────────────────────────┘
@@ -87,18 +98,7 @@ type ServerStreamSender interface {
 //		                       │      								   │							 │						           				 │
 //			  	                 │                         │               │                               │
 //			         	 	         └─────────────────────────┘───────────────┘───────────────────────────────┘
-//			          			                            Stream.Send    Stream.Disconnect
-//
-// UnbufferedSender is embedded in every rangefeed.PerRangeEventSink, serving as
-// a helper to forward events to the underlying gRPC stream.
-// - For non-error events, SendUnbuffered is blocking until the event is sent.
-// - For error events, SendBufferedError is non-blocking and ensures
-// 1) stream context is canceled
-// 2) exactly one error is sent back to the client on behalf of the stream
-// 3) metrics updates.
-// It makes sure SendBufferedError is non-blocking by delegating the
-// responsibility of sending mux error to UnbufferedSender.run (in a separate
-// goroutine). There should only be one UnbufferedSender per Node.MuxRangefeed.
+//			          			                  PerRangeEventSink.Send   PerRangeEventSink.Disconnect
 type UnbufferedSender struct {
 	// taskCancel is a function to cancel UnbufferedSender.run spawned in the
 	// background. It is called by UnbufferedSender.Stop. It is expected to be
@@ -196,7 +196,7 @@ func (ubs *UnbufferedSender) SendUnbuffered(event *kvpb.MuxRangeFeedEvent) error
 
 // run forwards rangefeed completion errors back to the client. run is expected
 // to be called in a goroutine and will block until the context is done or the
-// stopper is quiesced. StreamMuxer will stop forward rangefeed completion
+// stopper is quiesced. UnbufferedSender will stop forward rangefeed completion
 // errors after run completes, but a node level shutdown from Node.MuxRangefeed
 // should happen soon.
 func (ubs *UnbufferedSender) run(ctx context.Context, stopper *stop.Stopper) error {
