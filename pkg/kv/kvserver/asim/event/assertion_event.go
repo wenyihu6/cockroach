@@ -20,10 +20,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/history"
 )
 
-// assertionEvent represents a single event containing assertions to be checked.
+// AssertionEvent represents a single event containing assertions to be checked.
 // For proper initialization, please use NewAssertionEvent constructor instead
 // of direct struct literal assignment.
-type assertionEvent struct {
+type AssertionEvent struct {
 	// assertions represents set of assertions to be checked during this event.
 	assertions []assertion.SimulationAssertion
 	// result represents results of executed assertions for this event. It
@@ -50,12 +50,12 @@ func (ar assertionResult) String() string {
 	}
 }
 
-// NewAssertionEvent is assertionEvent's constructor. It ensures proper
+// NewAssertionEvent is AssertionEvent's constructor. It ensures proper
 // initialization of assertionResults, preventing panics like accessing a nil
 // pointer.
-func NewAssertionEvent(assertions []assertion.SimulationAssertion) assertionEvent {
+func NewAssertionEvent(assertions []assertion.SimulationAssertion) AssertionEvent {
 	assertionResults := make([]assertionResult, 0, len(assertions))
-	return assertionEvent{
+	return AssertionEvent{
 		assertions: assertions,
 		result:     &assertionResults,
 	}
@@ -63,7 +63,7 @@ func NewAssertionEvent(assertions []assertion.SimulationAssertion) assertionEven
 
 // String provides a string representation of an assertion event. It is called
 // when the event executor summarizes the executed events in the end.
-func (ag assertionEvent) String() string {
+func (ag AssertionEvent) String() string {
 	if ag.result == nil {
 		panic("unexpected nil")
 	}
@@ -87,12 +87,12 @@ func (ag assertionEvent) String() string {
 }
 
 // Func returns an assertion event function that runs the assertions defined in
-// assertionEvent and fills the result field upon checking. It is designed to be
+// AssertionEvent and fills the result field upon checking. It is designed to be
 // invoked externally.
-func (ag assertionEvent) Func() EventFunc {
+func (ag AssertionEvent) Func() EventFunc {
 	return AssertionFunc(func(ctx context.Context, t time.Time, h history.History) bool {
 		if ag.result == nil {
-			panic("assertionEvent.result is nil; use NewAssertionEvent for proper initialization.")
+			panic("AssertionEvent.result is nil; use NewAssertionEvent for proper initialization.")
 		}
 		allHolds := true
 		for _, eachAssert := range ag.assertions {

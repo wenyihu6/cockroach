@@ -20,7 +20,7 @@ import (
 )
 
 // Event outlines the necessary behaviours that event structs must implement.
-// Some key implementations of the interface includes assertionEvent,
+// Some key implementations of the interface includes AssertionEvent,
 // SetSpanConfigEvent, AddNodeEvent, SetNodeLivenessEvent,
 // SetCapacityOverrideEvent.
 type Event interface {
@@ -74,7 +74,7 @@ func (MutationFunc) GetType() eventFuncType {
 // confirm before using.
 type MutationWithAssertionEvent struct {
 	MutationEvent    Event
-	AssertionEvent   assertionEvent
+	AssertionEvent   AssertionEvent
 	DurationToAssert time.Duration
 }
 
