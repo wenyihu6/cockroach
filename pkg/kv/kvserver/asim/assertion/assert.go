@@ -13,7 +13,10 @@ package assertion
 import (
 	"context"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/validator"
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver"
@@ -301,6 +304,8 @@ func (sa StoreStatAssertion) String() string {
 }
 
 type ConformanceAssertion struct {
+	WithExpensiveValidator    bool
+	WithPrettyFormat          bool
 	Underreplicated           int
 	Overreplicated            int
 	ViolatingConstraints      int
@@ -392,11 +397,14 @@ func (ca ConformanceAssertion) Assert(
 		buf.WriteString(PrintSpanConfigConformanceList(
 			"over replicated", replicaReport.OverReplicated))
 	}
+
+	// Check for the first constraint violation.
 	if ca.ViolatingConstraints != ConformanceAssertionSentinel &&
 		ca.ViolatingConstraints != violatingConstraints {
 		maybeInitHolds()
 		buf.WriteString(PrintSpanConfigConformanceList(
-			"violating constraints", replicaReport.ViolatingConstraints))
+			"violating constraints", replicaReport.ViolatingConstraints,
+			withValidator(ca.WithExpensiveValidator, h.S), withPrettyFormat(ca.WithPrettyFormat, h.S)))
 	}
 	if ca.ViolatingLeasePreferences != ConformanceAssertionSentinel &&
 		ca.ViolatingLeasePreferences != violatingLeases {
@@ -439,6 +447,83 @@ func (ca ConformanceAssertion) String() string {
 	return buf.String()
 }
 
+func formatReplicaType(replicaT roachpb.ReplicaType, replicaNum int) string {
+	plural := ""
+	if replicaNum > 1 {
+		plural = "s"
+	}
+
+	var role string
+	switch replicaT {
+	case roachpb.VOTER_FULL:
+		role = "voter"
+	default:
+		role = strings.ToLower(replicaT.String())
+	}
+	return fmt.Sprintf("%d %s%s", replicaNum, role, plural)
+}
+
+// Summarize replicas info across all nodes. Count number of replica types for
+// each locality tier.
+func summarizeNodeInfo(nodes map[state.NodeID]roachpb.Locality, replicas []roachpb.ReplicaDescriptor) string {
+	if len(replicas) <= 0 {
+		return "<no replicas>"
+	}
+
+	tiers := make(map[string][]int)
+
+	// O(replicas)*O(tiers)
+	for _, rep := range replicas {
+		locality, ok := nodes[state.NodeID(rep.NodeID)]
+		if !ok {
+			panic(fmt.Sprintf("node %d not found", rep.NodeID))
+		}
+		for _, tier := range locality.Tiers {
+			if _, ok := tiers[tier.Value]; !ok {
+				tiers[tier.Value] = make([]int, len(roachpb.ReplicaType_name))
+			}
+			tiers[tier.Value][roachpb.ReplicaType_value[rep.Type.String()]]++
+		}
+	}
+
+	// O(tiers*log(tiers))
+	tiersValues := make([]string, 0, len(tiers))
+	for tv := range tiers {
+		tiersValues = append(tiersValues, tv)
+	}
+	sort.Strings(tiersValues)
+
+	var buf strings.Builder
+	// O(tiers*len(roachpb.ReplicaType_name))
+	for _, tv := range tiersValues {
+		v := tiers[tv]
+		if buf.Len() > 0 {
+			buf.WriteString(" ")
+		}
+		buf.WriteString(fmt.Sprintf("(%s:", tv))
+		for repType, repTypeNum := range v {
+			if repTypeNum == 0 {
+				continue
+			}
+			if repType != 0 {
+				buf.WriteString(" ")
+			}
+			buf.WriteString(formatReplicaType(roachpb.ReplicaType(repType), repTypeNum))
+		}
+		buf.WriteString(")")
+	}
+	return buf.String()
+}
+
+func prettyPrintRangeDesc(nodes map[state.NodeID]roachpb.Locality, r roachpb.RangeDescriptor) string {
+	var buf strings.Builder
+	buf.WriteString(fmt.Sprintf("r%d:", r.RangeID))
+	buf.WriteString(" [")
+	buf.WriteString(summarizeNodeInfo(nodes, r.Replicas().Descriptors()))
+	buf.WriteString("]")
+	return buf.String()
+}
+
 func printRangeDesc(r roachpb.RangeDescriptor) string {
 	var buf strings.Builder
 	buf.WriteString(fmt.Sprintf("r%d:", r.RangeID))
@@ -458,7 +543,29 @@ func printRangeDesc(r roachpb.RangeDescriptor) string {
 	return buf.String()
 }
 
-func PrintSpanConfigConformanceList(tag string, ranges []roachpb.ConformanceReportedRange) string {
+type printConfigs struct {
+	withPrettyFormat bool
+	withValidator    bool
+	withState        state.State
+}
+
+type option func(t *printConfigs)
+
+func withValidator(b bool, s state.State) option {
+	return func(t *printConfigs) {
+		t.withValidator = b
+		t.withState = s
+	}
+}
+
+func withPrettyFormat(b bool, s state.State) option {
+	return func(t *printConfigs) {
+		t.withPrettyFormat = b
+		t.withState = s
+	}
+}
+
+func printSpanConfigConformanceList(tag string, ranges []roachpb.ConformanceReportedRange) string {
 	var buf strings.Builder
 	for i, r := range ranges {
 		if i == 0 {
@@ -471,4 +578,60 @@ func PrintSpanConfigConformanceList(tag string, ranges []roachpb.ConformanceRepo
 		}
 	}
 	return buf.String()
+}
+
+func prettyPrintSpanConfigConformanceList(tag string, ranges []roachpb.ConformanceReportedRange,
+	nodes map[state.NodeID]roachpb.Locality) string {
+	var buf strings.Builder
+	const rangesCount = 6
+	for i, r := range ranges {
+		if i == 0 {
+			buf.WriteString(fmt.Sprintf("%s:\n", tag))
+		}
+		if i == rangesCount {
+			return buf.String() + fmt.Sprintf("... and %d more", len(ranges)-rangesCount)
+		}
+
+		buf.WriteString(fmt.Sprintf("  %s", prettyPrintRangeDesc(nodes, r.RangeDescriptor)))
+		if i != len(ranges)-1 {
+			buf.WriteString("\n")
+		}
+	}
+	return buf.String()
+}
+
+func nodeLocalityMap(s state.State) map[state.NodeID]roachpb.Locality {
+	nodeLocality := make(map[state.NodeID]roachpb.Locality, len(s.Nodes()))
+	for _, n := range s.Nodes() {
+		nodeLocality[n.NodeID()] = n.Descriptor().Locality
+	}
+	return nodeLocality
+}
+
+func PrintSpanConfigConformanceList(tag string, ranges []roachpb.ConformanceReportedRange, opts ...option) string {
+	cfg := printConfigs{}
+	for _, o := range opts {
+		o(&cfg)
+	}
+
+	buf := strings.Builder{}
+
+	if cfg.withPrettyFormat {
+		// Okay to skip check for state == nil. Programming error otherwise.
+		buf.WriteString(prettyPrintSpanConfigConformanceList(tag, ranges, nodeLocalityMap(cfg.withState)))
+		buf.WriteString("\n")
+	} else {
+		buf.WriteString(printSpanConfigConformanceList(tag, ranges))
+		buf.WriteString("\n")
+	}
+
+	if cfg.withValidator {
+		buf.WriteString(ValidateResult(ranges[0].Config, cfg.withState))
+	}
+	return buf.String()
+}
+
+func ValidateResult(config roachpb.SpanConfig, s state.State) string {
+	v := validator.NewValidator(s.ClusterInfo().Regions)
+	return v.ValidateConfig(config).String()
 }
