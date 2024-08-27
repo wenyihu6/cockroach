@@ -23,7 +23,7 @@ set_span_config
 [2000,10000): num_replicas=3 num_voters=3 constraints={'+region=b':3} lease_preferences=[['+region=c']]
 ----
 
-assertion type=conformance lease-violating=1 lease-less-preferred=1
+assertion type=conformance lease-violating=1 lease-less-preferred=1 pretty-format=true validator=true
 ----
 
 eval duration=10m

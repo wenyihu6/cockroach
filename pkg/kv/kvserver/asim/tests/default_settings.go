@@ -129,6 +129,8 @@ func (f randTestingFramework) defaultBasicRangesGen() gen.BasicRanges {
 func defaultAssertions() []assertion.SimulationAssertion {
 	return []assertion.SimulationAssertion{
 		assertion.ConformanceAssertion{
+			WithPrettyFormat:          true,
+			WithExpensiveValidator:    true,
 			Underreplicated:           0,
 			Overreplicated:            0,
 			ViolatingConstraints:      0,

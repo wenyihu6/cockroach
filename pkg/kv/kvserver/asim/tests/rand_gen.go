@@ -328,10 +328,12 @@ func constructSetZoneConfigEventWithConformanceAssertion(
 		},
 		AssertionEvent: event.NewAssertionEvent([]assertion.SimulationAssertion{
 			assertion.ConformanceAssertion{
-				Underreplicated:      0,
-				Overreplicated:       0,
-				ViolatingConstraints: 0,
-				Unavailable:          0,
+				WithPrettyFormat:       true,
+				WithExpensiveValidator: true,
+				Underreplicated:        0,
+				Overreplicated:         0,
+				ViolatingConstraints:   0,
+				Unavailable:            0,
 			},
 		}),
 		DurationToAssert: durationToAssert,
