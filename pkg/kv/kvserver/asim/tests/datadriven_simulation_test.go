@@ -431,13 +431,18 @@ func TestDataDriven(t *testing.T) {
 					violating = assertion.ConformanceAssertionSentinel
 					leaseLessPref = assertion.ConformanceAssertionSentinel
 					leaseViolating = assertion.ConformanceAssertionSentinel
+					var prettyFormat, validator bool
 					scanIfExists(t, d, "under", &under)
 					scanIfExists(t, d, "over", &over)
 					scanIfExists(t, d, "unavailable", &unavailable)
 					scanIfExists(t, d, "violating", &violating)
 					scanIfExists(t, d, "lease-violating", &leaseViolating)
 					scanIfExists(t, d, "lease-less-preferred", &leaseLessPref)
+					scanIfExists(t, d, "pretty-format", &prettyFormat)
+					scanIfExists(t, d, "validator", &validator)
 					assertions = append(assertions, assertion.ConformanceAssertion{
+						WithPrettyFormat:          prettyFormat,
+						WithExpensiveValidator:    validator,
 						Underreplicated:           under,
 						Overreplicated:            over,
 						ViolatingConstraints:      violating,
