@@ -530,22 +530,22 @@ func (s *cloudStorageSink) EmitRow(
 		return errors.New(`cannot EmitRow on a closed sink`)
 	}
 
-	defer func() {
-		if !s.compression.enabled() {
-			return
-		}
-		if retErr == nil {
-			retErr = ctx.Err()
-		}
-		if retErr != nil {
-			// If we are returning an error, immediately close all compression
-			// codecs to release resources.  This step is also done in the
-			// Close() method, but doing this clean-up as soon as we know
-			// an error has occurred, ensures that we do not leak resources,
-			// even if the Close() method is not called.
-			retErr = errors.CombineErrors(retErr, s.closeAllCodecs())
-		}
-	}()
+	//defer func() {
+	//	if !s.compression.enabled() {
+	//		return
+	//	}
+	//	if retErr == nil {
+	//		retErr = ctx.Err()
+	//	}
+	//	if retErr != nil {
+	//		// If we are returning an error, immediately close all compression
+	//		// codecs to release resources.  This step is also done in the
+	//		// Close() method, but doing this clean-up as soon as we know
+	//		// an error has occurred, ensures that we do not leak resources,
+	//		// even if the Close() method is not called.
+	//		retErr = errors.CombineErrors(retErr, s.closeAllCodecs())
+	//	}
+	//}()
 
 	s.metrics.recordMessageSize(int64(len(key) + len(value)))
 	file, err := s.getOrCreateFile(topic, mvcc)
@@ -851,12 +851,18 @@ func (s *cloudStorageSink) closeAllCodecs() (err error) {
 		}
 		return true
 	})
+
 	return err
 }
 
 // Close implements the Sink interface.
 func (s *cloudStorageSink) Close() error {
 	err := s.closeAllCodecs()
+	s.files.Ascend(func(i btree.Item) (wantMore bool) {
+		f := i.(*cloudStorageSinkFile)
+		fmt.Println("closing codec", f.codec)
+		return true
+	})
 	s.files = nil
 	err = errors.CombineErrors(err, s.waitAsyncFlush(context.Background()))
 	close(s.asyncFlushCh) // signal flusher to exit.

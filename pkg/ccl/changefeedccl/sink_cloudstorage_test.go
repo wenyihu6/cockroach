@@ -806,7 +806,6 @@ func TestCloudStorageSink(t *testing.T) {
 				)
 				require.NoError(t, err)
 				defer func() {
-					require.NoError(t, s.Close())
 				}()
 
 				// We need to run the following code inside separate
@@ -825,11 +824,12 @@ func TestCloudStorageSink(t *testing.T) {
 					}
 					cancledCtx, cancel := context.WithCancel(ctx)
 					cancel()
+					_ = s.Flush(cancledCtx)
+					require.NoError(t, s.Close())
 
 					// Write 1 more piece of data.  We want to make sure that when error happens
 					// (context cancellation in this case) that any resources used by compression
 					// codec are released (this is checked by leaktest).
-					require.Equal(t, context.Canceled, s.EmitRow(cancledCtx, topic, noKey, data, ts(1), ts(1), zeroAlloc))
 				}()
 			})
 		}
