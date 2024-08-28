@@ -87,7 +87,9 @@ c
 			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
   actual unavailable=0 under=0, over=0 violating=1 lease-violating=0 lease-less-preferred=0
 violating constraints:
-  r1: [b: voter_full=2slearner=0voter_incoming=0voter_outgoing=0voter_demoting_learner=0non_voter=0voter_demoting_non_voter=0, b1: voter_full=2slearner=0voter_incoming=0voter_outgoing=0voter_demoting_learner=0non_voter=0voter_demoting_non_voter=0, c: voter_full=1learner=0voter_incoming=0voter_outgoing=0voter_demoting_learner=0non_voter=0voter_demoting_non_voter=0, c2: voter_full=1learner=0voter_incoming=0voter_outgoing=0voter_demoting_learner=0non_voter=0voter_demoting_non_voter=0]
+  r1: [(b:2voters) (b1:2voters) (c:1voter) (c2:1voter)]
+expected constraints: replicas=3 voters=3 constraints=[] voter_constraints=[+region=b]
+unsatisfiable: failed to satisfy constraints for region b
 
 	executed at: 2022-03-21 11:25:00
 		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 num_voters:5 voter_constraints:<num_replicas:2 constraints:<key:"region" value:"c" > > lease_preferences:<constraints:<key:"region" value:"c" > > 

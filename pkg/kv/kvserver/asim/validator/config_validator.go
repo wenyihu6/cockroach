@@ -20,9 +20,9 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 )
 
-// processClusterInfo handles region data and returns: 1. A map of zone names to
-// their respective region names 2. A map of zone names to the number of
-// available nodes in the zones 3. A map of region names to the number of
+// processClusterInfo handles Region data and returns: 1. A map of Zone names to
+// their respective Region names 2. A map of Zone names to the number of
+// available nodes in the zones 3. A map of Region names to the number of
 // available nodes in the regions
 func processClusterInfo(
 	regions []state.Region,
@@ -43,98 +43,98 @@ func processClusterInfo(
 	return zoneToRegion, zone, region, total
 }
 
-type allocationDetailsAtEachLevel struct {
+type AllocationDetailsAtEachLevel struct {
 	unassigned        int
-	assignedVoters    int
-	assignedNonVoters int
+	AssignedVoters    int
+	AssignedNonVoters int
 }
 
-func (a allocationDetailsAtEachLevel) String() string {
+func (a AllocationDetailsAtEachLevel) String() string {
 	buf := strings.Builder{}
-	if a.assignedVoters != 0 {
-		if a.assignedVoters > 1 {
-			buf.WriteString(fmt.Sprintf("%d voters", a.assignedVoters))
+	if a.AssignedVoters != 0 {
+		if a.AssignedVoters > 1 {
+			buf.WriteString(fmt.Sprintf("%d voters", a.AssignedVoters))
 		} else {
-			buf.WriteString(fmt.Sprintf("%d voter", a.assignedVoters))
+			buf.WriteString(fmt.Sprintf("%d voter", a.AssignedVoters))
 		}
 	}
-	if a.assignedNonVoters != 0 {
+	if a.AssignedNonVoters != 0 {
 		if buf.Len() != 0 {
-			buf.WriteString(", ")
+			buf.WriteString(",")
 		}
-		if a.assignedNonVoters > 1 {
-			buf.WriteString(fmt.Sprintf("%d non_voters", a.assignedNonVoters))
+		if a.AssignedNonVoters > 1 {
+			buf.WriteString(fmt.Sprintf("%d non_voters", a.AssignedNonVoters))
 		} else {
-			buf.WriteString(fmt.Sprintf("%d non_voter", a.assignedNonVoters))
+			buf.WriteString(fmt.Sprintf("%d non_voter", a.AssignedNonVoters))
 		}
 	}
 	return buf.String()
 }
 
-func (ma *mockAllocator) String() string {
+func (ma *MockAllocator) String() string {
 	buf := strings.Builder{}
 	buf.WriteString("expected configuration:\n")
 
-	helper := func(m map[string]allocationDetailsAtEachLevel) {
+	helper := func(m map[string]AllocationDetailsAtEachLevel) {
 		keys := make([]string, 0, len(m))
 		for k := range m {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 		for _, k := range keys {
-			if m[k].assignedVoters != 0 || m[k].assignedNonVoters != 0 {
+			if m[k].AssignedVoters != 0 || m[k].AssignedNonVoters != 0 {
 				buf.WriteString(fmt.Sprintf("\t\t%s: %v\n", k, m[k]))
 			}
 		}
 	}
 
 	buf.WriteString("\t1.zone:\n")
-	helper(ma.zone)
+	helper(ma.Zone)
 	buf.WriteString("\t2.region:\n")
-	helper(ma.region)
-	buf.WriteString(fmt.Sprintf("\t3.cluster: %v", ma.cluster))
+	helper(ma.Region)
+	buf.WriteString(fmt.Sprintf("\t3.cluster: %v", ma.Cluster))
 	return buf.String()
 }
 
 // tryToAddVoters attempts to assign numOfVoters from the available nodes as
 // voters. It returns true if there are sufficient available nodes to be
 // assigned as voters, and false otherwise.
-func (a *allocationDetailsAtEachLevel) tryToAddVoters(numOfVoters int) (success bool) {
+func (a *AllocationDetailsAtEachLevel) tryToAddVoters(numOfVoters int) (success bool) {
 	if a.unassigned < numOfVoters {
 		return false
 	}
 	a.unassigned -= numOfVoters
-	a.assignedVoters += numOfVoters
+	a.AssignedVoters += numOfVoters
 	return true
 }
 
 // tryToAddNonVoters attempts to assign numOfNonVoters from the available nodes
 // as nonvoters. It returns true if there are sufficient available nodes to be
 // assigned as voters, and false otherwise.
-func (a *allocationDetailsAtEachLevel) tryToAddNonVoters(numOfNonVoters int) (success bool) {
+func (a *AllocationDetailsAtEachLevel) tryToAddNonVoters(numOfNonVoters int) (success bool) {
 	if a.unassigned < numOfNonVoters {
 		return false
 	}
 	a.unassigned -= numOfNonVoters
-	a.assignedNonVoters += numOfNonVoters
+	a.AssignedNonVoters += numOfNonVoters
 	return true
 }
 
 // promoteNonVoters promotes numOfNonVotersToPromote of nonvoters to voters.
-func (a *allocationDetailsAtEachLevel) promoteNonVoters(numOfNonVotersToPromote int) {
-	if a.assignedNonVoters < numOfNonVotersToPromote {
+func (a *AllocationDetailsAtEachLevel) promoteNonVoters(numOfNonVotersToPromote int) {
+	if a.AssignedNonVoters < numOfNonVotersToPromote {
 		panic("insufficient non-voters for promotion. This is unexpected as computeNecessaryChanges " +
 			"should calculate number of non-voters for promotion correctly.")
 	}
-	a.assignedNonVoters -= numOfNonVotersToPromote
-	a.assignedVoters += numOfNonVotersToPromote
+	a.AssignedNonVoters -= numOfNonVotersToPromote
+	a.AssignedVoters += numOfNonVotersToPromote
 }
 
-type mockAllocator struct {
+type MockAllocator struct {
 	zoneToRegion map[string]string
-	zone         map[string]allocationDetailsAtEachLevel
-	region       map[string]allocationDetailsAtEachLevel
-	cluster      allocationDetailsAtEachLevel
+	Zone         map[string]AllocationDetailsAtEachLevel
+	Region       map[string]AllocationDetailsAtEachLevel
+	Cluster      AllocationDetailsAtEachLevel
 }
 
 func DeepCopyMap(original interface{}) interface{} {
@@ -156,31 +156,31 @@ func DeepCopyMap(original interface{}) interface{} {
 	}
 }
 
-// newMockAllocator creates a mock allocator based on the provided cluster
-// setup. mockAllocator is designed to determine if a config can be satisfied by
+// newMockAllocator creates a mock allocator based on the provided Cluster
+// setup. MockAllocator is designed to determine if a config can be satisfied by
 // trying to assign replicas in a way that meet the constraints. Note that since
 // isSatisfiable directly alters mockAlloactor fields, a new mock allocator
 // should be initialized for each isSatisfiable call.
-func (v Validator) newMockAllocator() mockAllocator {
+func (v Validator) newMockAllocator() MockAllocator {
 	zoneToRegion, zone, region, total := DeepCopyMap(v.zoneToRegion).(map[string]string),
 		DeepCopyMap(v.zone).(map[string]int), DeepCopyMap(v.region).(map[string]int), v.total
-	m := mockAllocator{
+	m := MockAllocator{
 		zoneToRegion: zoneToRegion,
-		zone:         map[string]allocationDetailsAtEachLevel{},
-		region:       map[string]allocationDetailsAtEachLevel{},
-		cluster: allocationDetailsAtEachLevel{
+		Zone:         map[string]AllocationDetailsAtEachLevel{},
+		Region:       map[string]AllocationDetailsAtEachLevel{},
+		Cluster: AllocationDetailsAtEachLevel{
 			unassigned: total,
 		},
 	}
 
 	for k, v := range zone {
-		m.zone[k] = allocationDetailsAtEachLevel{
+		m.Zone[k] = AllocationDetailsAtEachLevel{
 			unassigned: v,
 		}
 	}
 
 	for k, v := range region {
-		m.region[k] = allocationDetailsAtEachLevel{
+		m.Region[k] = AllocationDetailsAtEachLevel{
 			unassigned: v,
 		}
 	}
@@ -194,18 +194,18 @@ type constraint struct {
 
 // validateConstraint returns nil if the constraint is feasible and error
 // (not `nil`) otherwise.
-func (ma *mockAllocator) validateConstraint(c roachpb.Constraint) string {
+func (ma *MockAllocator) validateConstraint(c roachpb.Constraint) string {
 	if c.Type == roachpb.Constraint_PROHIBITED {
 		return "constraints marked as Constraint_PROHIBITED are unsupported"
 	}
 	switch c.Key {
 	case "zone":
-		_, ok := ma.zone[c.Value]
+		_, ok := ma.Zone[c.Value]
 		if !ok {
 			return fmt.Sprintf("zone constraint value %s is not found in the cluster set up", c.Value)
 		}
 	case "region":
-		_, ok := ma.region[c.Value]
+		_, ok := ma.Region[c.Value]
 		if !ok {
 			return fmt.Sprintf("region constraint value %s is not found in the cluster set up", c.Value)
 		}
@@ -220,7 +220,7 @@ func (ma *mockAllocator) validateConstraint(c roachpb.Constraint) string {
 // the validation and updating of the given zoneConstraints and
 // regionConstraints. If all constraints are feasible, it returns nil.
 // Otherwise, it returns error (not `nil`).
-func (ma *mockAllocator) processConstraintsHelper(
+func (ma *MockAllocator) processConstraintsHelper(
 	constraintsConjunction []roachpb.ConstraintsConjunction,
 	isVoterConstraint bool,
 	totalNumOfVotersOrReplicas int,
@@ -260,11 +260,11 @@ func (ma *mockAllocator) processConstraintsHelper(
 	return ""
 }
 
-// processConstraints validates and extracts region and zone-specific replica
+// processConstraints validates and extracts Region and Zone-specific replica
 // and voter constraints, storing them in two separate maps. If certain
 // constraints fail the validation, they are considered as infeasible. In such
 // cases, error(not `nil`) will be returned.
-func (ma *mockAllocator) processConstraints(
+func (ma *MockAllocator) processConstraints(
 	config roachpb.SpanConfig,
 ) (map[string]constraint, map[string]constraint, string) {
 	zoneConstraints := map[string]constraint{}
@@ -316,13 +316,13 @@ func computeNecessaryChanges(
 }
 
 // applyAtRegionLevel attempts to apply the desired changes (nonVotersToPromote,
-// votersToAdd, nonVotersToAdd) at the provided region (specified by
+// votersToAdd, nonVotersToAdd) at the provided Region (specified by
 // regionName). If enough nodes are available, it makes the changes and returns
 // true. Otherwise, it returns false.
-func (ma *mockAllocator) applyAtRegionLevel(
+func (ma *MockAllocator) applyAtRegionLevel(
 	regionName string, nonVotersToPromote int, votersToAdd int, nonVotersToAdd int,
 ) bool {
-	existing, ok := ma.region[regionName]
+	existing, ok := ma.Region[regionName]
 	if !ok {
 		panic("unknown region name in the region constraint. " +
 			"This is unexpected as validateConstraint should have validated it beforehand.")
@@ -330,79 +330,79 @@ func (ma *mockAllocator) applyAtRegionLevel(
 
 	existing.promoteNonVoters(nonVotersToPromote)
 	success := existing.tryToAddVoters(votersToAdd) && existing.tryToAddNonVoters(nonVotersToAdd)
-	ma.region[regionName] = existing
+	ma.Region[regionName] = existing
 	return success
 }
 
 // applyAtClusterLevel attempts to apply the desired changes
-// (nonVotersToPromote, votersToAdd, nonVotersToAdd) at the cluster level. If
+// (nonVotersToPromote, votersToAdd, nonVotersToAdd) at the Cluster level. If
 // enough nodes are available, it makes the changes and returns true. Otherwise,
 // it returns false.
-func (ma *mockAllocator) applyAtClusterLevel(
+func (ma *MockAllocator) applyAtClusterLevel(
 	nonVotersToPromote int, votersToAdd int, nonVotersToAdd int,
 ) bool {
-	ma.cluster.promoteNonVoters(nonVotersToPromote)
-	return ma.cluster.tryToAddVoters(votersToAdd) && ma.cluster.tryToAddNonVoters(nonVotersToAdd)
+	ma.Cluster.promoteNonVoters(nonVotersToPromote)
+	return ma.Cluster.tryToAddVoters(votersToAdd) && ma.Cluster.tryToAddNonVoters(nonVotersToAdd)
 }
 
 // applyAtZoneLevel attempts to apply the desired changes (nonVotersToPromote,
-// votersToAdd, nonVotersToAdd) at the provided zone (specified by zoneName). If
+// votersToAdd, nonVotersToAdd) at the provided Zone (specified by zoneName). If
 // enough nodes are available, it makes the changes and returns true. Otherwise,
 // it returns false.
-func (ma *mockAllocator) applyAtZoneLevel(
+func (ma *MockAllocator) applyAtZoneLevel(
 	zoneName string, nonVotersToPromote int, votersToAdd int, nonVotersToAdd int,
 ) bool {
-	existing, ok := ma.zone[zoneName]
+	existing, ok := ma.Zone[zoneName]
 	if !ok {
 		panic("unknown zone name in the zone constraint. " +
 			"This is unexpected as validateConstraint should have validated it beforehand.")
 	}
 	existing.promoteNonVoters(nonVotersToPromote)
 	success := existing.tryToAddVoters(votersToAdd) && existing.tryToAddNonVoters(nonVotersToAdd)
-	ma.zone[zoneName] = existing
+	ma.Zone[zoneName] = existing
 	return success
 }
 
 // tryToSatisfyRegionConstraint checks whether the allocator can assign voters
 // and replicas in a manner that meets the specified required voters and
-// replicas for the region. If possible, it makes the necessary assignment,
+// replicas for the Region. If possible, it makes the necessary assignment,
 // updates the allocator, and returns true. Otherwise, it returns false.
-func (ma *mockAllocator) tryToSatisfyRegionConstraint(
+func (ma *MockAllocator) tryToSatisfyRegionConstraint(
 	regionName string, requiredVoters int, requiredReplicas int,
 ) bool {
-	existing, ok := ma.region[regionName]
+	existing, ok := ma.Region[regionName]
 	if !ok {
 		panic("unknown region name in the region constraint. " +
 			"This is unexpected as validateConstraint should have validated it beforehand.")
 	}
 	nonVotersToPromote, votersToAdd, nonVotersToAdd := computeNecessaryChanges(
-		existing.assignedVoters, existing.assignedNonVoters, requiredVoters, requiredReplicas)
+		existing.AssignedVoters, existing.AssignedNonVoters, requiredVoters, requiredReplicas)
 	if nonVotersToPromote == 0 && votersToAdd == 0 && nonVotersToAdd == 0 {
 		return true
 	}
-	// Propagate the changes to region and cluster.
+	// Propagate the changes to Region and Cluster.
 	return ma.applyAtRegionLevel(regionName, nonVotersToPromote, votersToAdd, nonVotersToAdd) &&
 		ma.applyAtClusterLevel(nonVotersToPromote, votersToAdd, nonVotersToAdd)
 }
 
 // tryToSatisfyZoneConstraint checks whether the allocator can assign voters and
 // replicas in a manner that meets the specified required voters and replicas
-// for the zone. If possible, it makes the necessary assignment, updates the
+// for the Zone. If possible, it makes the necessary assignment, updates the
 // allocator, and returns true. Otherwise, it returns false.
-func (ma *mockAllocator) tryToSatisfyZoneConstraint(
+func (ma *MockAllocator) tryToSatisfyZoneConstraint(
 	zoneName string, requiredVoters int, requiredReplicas int,
 ) bool {
-	existing, ok := ma.zone[zoneName]
+	existing, ok := ma.Zone[zoneName]
 	if !ok {
 		panic("unknown zone name in the zone constraint. " +
 			"This is unexpected as validateConstraint should have validated it beforehand.")
 	}
 	nonVotersToPromote, votersToAdd, nonVotersToAdd := computeNecessaryChanges(
-		existing.assignedVoters, existing.assignedNonVoters, requiredVoters, requiredReplicas)
+		existing.AssignedVoters, existing.AssignedNonVoters, requiredVoters, requiredReplicas)
 	if nonVotersToPromote == 0 && votersToAdd == 0 && nonVotersToAdd == 0 {
 		return true
 	}
-	// Propagate the changes to zone, region and cluster.
+	// Propagate the changes to Zone, Region and Cluster.
 	return ma.applyAtZoneLevel(zoneName, nonVotersToPromote, votersToAdd, nonVotersToAdd) &&
 		ma.applyAtRegionLevel(ma.zoneToRegion[zoneName], nonVotersToPromote, votersToAdd, nonVotersToAdd) &&
 		ma.applyAtClusterLevel(nonVotersToPromote, votersToAdd, nonVotersToAdd)
@@ -410,41 +410,41 @@ func (ma *mockAllocator) tryToSatisfyZoneConstraint(
 
 // tryToSatisfyClusterConstraint checks whether the allocator can assign voters
 // and replicas in a manner that meets the specified required voters and
-// replicas for the cluster. If possible, it makes the necessary assignment,
+// replicas for the Cluster. If possible, it makes the necessary assignment,
 // updates the allocator, and returns true. Otherwise, it returns false.
-func (ma *mockAllocator) tryToSatisfyClusterConstraint(
+func (ma *MockAllocator) tryToSatisfyClusterConstraint(
 	requiredVoters int, requiredReplicas int,
 ) bool {
-	existing := ma.cluster
+	existing := ma.Cluster
 	nonVotersToPromote, votersToAdd, nonVotersToAdd := computeNecessaryChanges(
-		existing.assignedVoters, existing.assignedNonVoters, requiredVoters, requiredReplicas)
+		existing.AssignedVoters, existing.AssignedNonVoters, requiredVoters, requiredReplicas)
 	if nonVotersToPromote == 0 && votersToAdd == 0 && nonVotersToAdd == 0 {
 		return true
 	}
-	// Propagate the changes to cluster.
+	// Propagate the changes to Cluster.
 	success := ma.applyAtClusterLevel(nonVotersToPromote, votersToAdd, nonVotersToAdd)
-	if ma.cluster.assignedVoters != requiredVoters || ma.cluster.assignedNonVoters+ma.cluster.assignedVoters != requiredReplicas {
+	if ma.Cluster.AssignedVoters != requiredVoters || ma.Cluster.AssignedNonVoters+ma.Cluster.AssignedVoters != requiredReplicas {
 		// Since having unconstrained replicas or voters do not lead to error in
-		// earlier process, we check for exact bound cluster constraint here.
+		// earlier process, we check for exact bound Cluster constraint here.
 		return false
 	}
 	return success
 }
 
 // isSatisfiable is a method that assesses whether a given configuration is
-// satisfiable within the cluster used to initialize the mockAllocator. It
+// satisfiable within the Cluster used to initialize the MockAllocator. It
 // returns (true, nil) for satisfiable configurations and (false, reason) for
-// unsatisfiable configurations. mockAllocator tries to allocate voters and
+// unsatisfiable configurations. MockAllocator tries to allocate voters and
 // nonvoters across nodes in a manner that satisfies the constraints. If no such
 // allocation can be found, the constraint is considered unsatisfiable. The
 // allocation is found through the following process:
 // 1. Preprocess the config constraints to store replica and voter constraints
-// specific to the zone and region in two maps.
-// 2. Try to satisfy zone constraints first, region constraints next, and
-// cluster constraints in the end. As we allocate replicas for zone constraints,
-// some region constraints are also satisfied.
+// specific to the Zone and Region in two maps.
+// 2. Try to satisfy Zone constraints first, Region constraints next, and
+// Cluster constraints in the end. As we allocate replicas for Zone constraints,
+// some Region constraints are also satisfied.
 // 3. While trying to satisfy constraints at each hierarchical level, we
-// allocate voters or replicas specific to the zone or region only when
+// allocate voters or replicas specific to the Zone or Region only when
 // necessary. It first promotes non-voters to voters when possible as voters are
 // also replicas and can satisfy both constraints. Additional voters and
 // non-voters are then assigned as needed. If any zones or regions lack
@@ -453,11 +453,11 @@ func (ma *mockAllocator) tryToSatisfyClusterConstraint(
 //
 // Limitation:
 // - leaseholder preference are not checked and treated as satisfiable. -
-// constraints with a key other than zone and region are unsatisfiable. -
-// constraints with a value that does not correspond to a known zone or region
-// in the cluster setup are unsatisfiable.
+// constraints with a key other than Zone and Region are unsatisfiable. -
+// constraints with a value that does not correspond to a known Zone or Region
+// in the Cluster setup are unsatisfiable.
 // - constraints labeled as Constraint_PROHIBITED are considered unsatisfiable.
-func (ma *mockAllocator) isSatisfiable(config roachpb.SpanConfig) (success bool, reason string) {
+func (ma *MockAllocator) isSatisfiable(config roachpb.SpanConfig) (success bool, reason string) {
 	zoneConstraints, regionConstraints, reason := ma.processConstraints(config)
 	if reason != "" {
 		return false, reason
@@ -476,7 +476,7 @@ func (ma *mockAllocator) isSatisfiable(config roachpb.SpanConfig) (success bool,
 	}
 
 	if !ma.tryToSatisfyClusterConstraint(int(config.GetNumVoters()), int(config.NumReplicas)) {
-		return false, "failed to satisfy constraints for cluster"
+		return false, "failed to satisfy constraints for Cluster"
 	}
 	return true, ""
 }

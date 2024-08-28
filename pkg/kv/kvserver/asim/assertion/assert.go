@@ -460,7 +460,7 @@ func formatReplicaType(replicaT roachpb.ReplicaType, replicaNum int) string {
 	default:
 		role = strings.ToLower(replicaT.String())
 	}
-	return fmt.Sprintf("%d %s%s", replicaNum, role, plural)
+	return fmt.Sprintf("%d%s%s", replicaNum, role, plural)
 }
 
 // Summarize replicas info across all nodes. Count number of replica types for
@@ -617,21 +617,89 @@ func PrintSpanConfigConformanceList(tag string, ranges []roachpb.ConformanceRepo
 	buf := strings.Builder{}
 
 	if cfg.withPrettyFormat {
+		m := nodeLocalityMap(cfg.withState)
 		// Okay to skip check for state == nil. Programming error otherwise.
-		buf.WriteString(prettyPrintSpanConfigConformanceList(tag, ranges, nodeLocalityMap(cfg.withState)))
+		buf.WriteString(prettyPrintSpanConfigConformanceList(tag, ranges, m))
 		buf.WriteString("\n")
+		if cfg.withValidator {
+			buf.WriteString(ValidateResult(m, ranges[0], cfg.withState))
+		}
 	} else {
 		buf.WriteString(printSpanConfigConformanceList(tag, ranges))
 		buf.WriteString("\n")
 	}
 
-	if cfg.withValidator {
-		buf.WriteString(ValidateResult(ranges[0].Config, cfg.withState))
-	}
 	return buf.String()
 }
 
-func ValidateResult(config roachpb.SpanConfig, s state.State) string {
+func ValidateResult(nodes map[state.NodeID]roachpb.Locality, actualRange roachpb.ConformanceReportedRange, s state.State) string {
+	buf := strings.Builder{}
 	v := validator.NewValidator(s.ClusterInfo().Regions)
-	return v.ValidateConfig(config).String()
+	res := v.ValidateConfig(actualRange.Config)
+	buf.WriteString(res.String())
+	if !res.Satisfiable {
+		return buf.String()
+	}
+	expectedConfig := res.Configurations
+	actualReplicas := actualRange.RangeDescriptor.Replicas().Descriptors()
+	type role struct {
+		voters    int
+		nonvoters int
+	}
+
+	tiers := make(map[string]role)
+	k := make([]string, 0)
+	totalNonVoters := 0
+	totalVoters := 0
+	for _, rep := range actualReplicas {
+		locality, ok := nodes[state.NodeID(rep.NodeID)]
+		if !ok {
+			panic(fmt.Sprintf("node %d not found", rep.NodeID))
+		}
+		for _, tier := range locality.Tiers {
+			if _, ok := tiers[tier.Value]; !ok {
+				k = append(k, tier.Value)
+			}
+			r := tiers[tier.Value]
+			if rep.Type == roachpb.VOTER_FULL {
+				r.voters += 1
+				totalVoters += 1
+			} else {
+				r.nonvoters += 1
+				totalNonVoters += 1
+			}
+			tiers[tier.Value] = r
+		}
+	}
+
+	helper := func(expected int, actual int, role string) string {
+		if actual < expected {
+			return fmt.Sprintf("(%d missing %s)", expected-actual, role)
+		} else if actual > expected {
+			return fmt.Sprintf("(%d extra %s)", actual-expected, role)
+		}
+		return ""
+	}
+
+	sort.Strings(k)
+	buf.WriteString("diff:\n")
+	for _, tier := range k {
+		localityTierValue := tier
+		role := tiers[tier]
+		if v, ok := expectedConfig.Zone[localityTierValue]; ok {
+			buf.WriteString(fmt.Sprintf("\tzone %s: ", localityTierValue))
+			buf.WriteString(helper(v.AssignedVoters, role.voters, "voters"))
+			buf.WriteString(helper(v.AssignedNonVoters, role.nonvoters, "non_voters"))
+		} else if v, ok := expectedConfig.Region[localityTierValue]; ok {
+			buf.WriteString(fmt.Sprintf("\tregion %s: ", localityTierValue))
+			buf.WriteString(helper(v.AssignedVoters, role.voters, "voters"))
+			buf.WriteString(helper(v.AssignedNonVoters, role.nonvoters, "non_voters"))
+		}
+		buf.WriteString("\n")
+	}
+	buf.WriteString("\tcluster: ")
+	buf.WriteString(helper(expectedConfig.Cluster.AssignedVoters, totalVoters, "voters"))
+	buf.WriteString(helper(expectedConfig.Cluster.AssignedNonVoters, totalNonVoters, "non_voters"))
+	buf.WriteString("\n")
+	return buf.String()
 }

@@ -28,48 +28,44 @@ type Validator struct {
 type ValidationResult struct {
 	Config         roachpb.SpanConfig
 	Satisfiable    bool
-	Configurations string
+	Configurations MockAllocator
 	Reason         string
 }
 
 func PrettyFormat(config roachpb.SpanConfig) string {
 	var buf strings.Builder
-	buf.WriteString("constraint:\n")
-	buf.WriteString(fmt.Sprintf("replicas=%v\n", config.NumReplicas))
-	buf.WriteString(fmt.Sprintf("voters=%v\n", config.NumVoters))
-	buf.WriteString(fmt.Sprintf("constraints=%v\n", config.Constraints))
-	buf.WriteString(fmt.Sprintf("voter_constraints=%v", config.VoterConstraints))
+	buf.WriteString(fmt.Sprintf("expected constraints: replicas=%v voters=%v constraints=%v voter_constraints=%v\n",
+		config.NumReplicas, config.NumVoters, config.Constraints, config.VoterConstraints))
 	return buf.String()
 }
 
 func (v ValidationResult) String() string {
 	buf := strings.Builder{}
+	buf.WriteString(PrettyFormat(v.Config))
 	if v.Satisfiable {
-		buf.WriteString(fmt.Sprintf("satisfiable:\n%v\n%v",
-			v.Configurations, PrettyFormat(v.Config)))
+		buf.WriteString("satisfiable\n")
 	} else {
-		buf.WriteString(fmt.Sprintf("unsatisfiable:\n%v\n%v\n%v",
-			v.Configurations, v.Reason, PrettyFormat(v.Config)))
+		buf.WriteString(fmt.Sprintf("unsatisfiable: %v\n", v.Reason))
 	}
 	return buf.String()
 }
 
 func NewValidator(regions []state.Region) Validator {
-	// Since all constraint checks utilize the same cluster info, we process the
-	// cluster info once and reuse it.
+	// Since all constraint checks utilize the same Cluster info, we process the
+	// Cluster info once and reuse it.
 	zoneToRegion, zone, region, total := processClusterInfo(regions)
 	return Validator{zoneToRegion, zone, region, total}
 }
 
 func (v Validator) ValidateConfig(config roachpb.SpanConfig) ValidationResult {
-	// Create a new mockAllocator for every constraint satisfiability check as
-	// isSatisfiable directly modifies mockAllocator fields.
+	// Create a new MockAllocator for every constraint satisfiability check as
+	// isSatisfiable directly modifies MockAllocator fields.
 	ma := v.newMockAllocator()
 	satisfiable, err := ma.isSatisfiable(config)
 	return ValidationResult{
 		Config:         config,
 		Satisfiable:    satisfiable,
-		Configurations: fmt.Sprint(ma.String()),
+		Configurations: ma,
 		Reason:         err,
 	}
 }
