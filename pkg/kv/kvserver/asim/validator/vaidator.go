@@ -38,7 +38,7 @@ func PrettyFormat(config roachpb.SpanConfig) string {
 	buf.WriteString(fmt.Sprintf("replicas=%v\n", config.NumReplicas))
 	buf.WriteString(fmt.Sprintf("voters=%v\n", config.NumVoters))
 	buf.WriteString(fmt.Sprintf("constraints=%v\n", config.Constraints))
-	buf.WriteString(fmt.Sprintf("voter_constraints=%v", config.VoterConstraints))
+	buf.WriteString(fmt.Sprintf("voter_constraints=%v\n", config.VoterConstraints))
 	return buf.String()
 }
 

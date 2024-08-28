@@ -279,6 +279,7 @@ const (
 	// Cycle through randomly generated region and zone survival configurations.
 	// Note that only cluster_gen_type=multi_region can execute this event.
 	cycleViaRandomSurvivalGoals
+	cycleViaInterestingCases
 )
 
 type eventGenSettings struct {
@@ -297,6 +298,8 @@ func (e eventSeriesType) String() string {
 		return "cycle_via_hardcoded_survival_goals"
 	case cycleViaRandomSurvivalGoals:
 		return "cycle_via_random_survival_goals"
+	case cycleViaInterestingCases:
+		return "cycle_via_interesting_cases"
 	default:
 		panic("unknown event series type")
 	}
@@ -308,6 +311,8 @@ func getEventSeriesType(s string) eventSeriesType {
 		return cycleViaHardcodedSurvivalGoals
 	case "cycle_via_random_survival_goals":
 		return cycleViaRandomSurvivalGoals
+	case "cycle_via_interesting_cases":
+		return cycleViaInterestingCases
 	default:
 		panic(fmt.Sprintf("unknown event series type: %s", s))
 	}
@@ -366,6 +371,24 @@ func generateHardcodedSurvivalGoalsEvents(
 	delay := time.Duration(0)
 	// TODO(wenyihu6): enable adding event name tag when registering events for better format span config in output
 	for _, eachConfig := range configs {
+		eventGen.ScheduleMutationWithAssertionEvent(startTime, delay,
+			constructSetZoneConfigEventWithConformanceAssertion(span, eachConfig, durationToAssert))
+		delay += durationToAssert
+	}
+	return eventGen
+}
+
+func generateInterestingEvents(
+	startTime time.Time, durationToAssert time.Duration,
+) gen.StaticEvents {
+	eventGen := gen.NewStaticEventsWithNoEvents()
+	span := roachpb.Span{
+		Key:    state.MinKey.ToRKey().AsRawKey(),
+		EndKey: state.MaxKey.ToRKey().AsRawKey(),
+	}
+
+	delay := time.Duration(0)
+	for _, eachConfig := range GetInterestingSpanConfigs() {
 		eventGen.ScheduleMutationWithAssertionEvent(startTime, delay,
 			constructSetZoneConfigEventWithConformanceAssertion(span, eachConfig, durationToAssert))
 		delay += durationToAssert

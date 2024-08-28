@@ -1,0 +1,835 @@
+rand_cluster cluster_gen_type=multi_region
+----
+
+change_static_option ranges=20
+----
+
+rand_events type=cycle_via_interesting_cases duration_to_assert_on_event=10m
+----
+
+eval duration=5h num_iterations=1 verbose=(events)
+----
+----
+----------------------------------
+sample1: start running
+54 events executed:
+	executed at: 2022-03-21 11:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:2 num_voters:1 
+	executed at: 2022-03-21 11:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 11:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 num_voters:5 constraints:<num_replicas:3 constraints:<key:"region" value:"a" > > constraints:<num_replicas:1 constraints:<key:"region" value:"b" > > constraints:<num_replicas:1 constraints:<key:"region" value:"c" > > voter_constraints:<num_replicas:3 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:1 constraints:<key:"region" value:"b" > > voter_constraints:<num_replicas:1 constraints:<key:"region" value:"c" > > 
+	executed at: 2022-03-21 11:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 11:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:2 num_voters:2 constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > 
+	executed at: 2022-03-21 11:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 11:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:2 num_voters:2 constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > 
+	executed at: 2022-03-21 11:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 11:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:3 constraints:<num_replicas:3 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:3 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > 
+	executed at: 2022-03-21 11:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=24 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:3 voters 1 non_voter) (a3:2 voters 1 non_voter) (a4:1 voter) (b: 2 non_voters) (b1: 2 non_voters)]
+  r2: [(a:3 voters 1 non_voter) (a3:2 voters 1 non_voter) (a4:1 voter) (b: 2 non_voters) (b1: 2 non_voters)]
+  r3: [(a:3 voters 1 non_voter) (a3:2 voters 1 non_voter) (a4:1 voter) (b: 2 non_voters) (b1: 2 non_voters)]
+  r4: [(a:3 voters 1 non_voter) (a3:2 voters 1 non_voter) (a4:1 voter) (b: 2 non_voters) (b1: 2 non_voters)]
+  r5: [(a:3 voters 1 non_voter) (a3:2 voters 1 non_voter) (a4:1 voter) (b: 2 non_voters) (b1: 2 non_voters)]
+  r6: [(a:3 voters) (a1:1 voter) (a3:2 voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 1 non_voter) (c3: 1 non_voter)]
+... and 18 more
+satisfiable:
+expected configuration:
+	1.zone:
+		a2: 2 voters
+		a3: 3 non_voters
+	2.region:
+		a: 3 voters, 2 non_voters
+	3.cluster: 3 voters, 3 non_voters
+constraint:
+replicas=6
+voters=3
+constraints=[+zone=a3:3]
+voter_constraints=[+region=a:3 +zone=a2:2]
+	executed at: 2022-03-21 11:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:15 num_voters:6 constraints:<num_replicas:11 constraints:<key:"region" value:"a" > > constraints:<num_replicas:3 constraints:<key:"region" value:"c" > > constraints:<num_replicas:10 constraints:<key:"zone" value:"a4" > > voter_constraints:<num_replicas:3 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > 
+	executed at: 2022-03-21 12:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=28 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:3 voters 9 non_voters) (a1: 1 non_voter) (a2:1 voter) (a3:1 voter 1 non_voter) (a4:1 voter 7 non_voters) (c:3 voters) (c1:1 voter) (c2:1 voter) (c3:1 voter)]
+  r1: [(a:3 voters 9 non_voters) (a1: 1 non_voter) (a2:1 voter) (a3:1 voter 1 non_voter) (a4:1 voter 7 non_voters) (c:3 voters) (c1:1 voter) (c2:1 voter) (c3:1 voter)]
+  r2: [(a:6 voters 6 non_voters) (a2:1 voter) (a3:1 voter) (a4:4 voters 6 non_voters) (c: 3 non_voters) (c1: 1 non_voter) (c3: 2 non_voters)]
+  r3: [(a:4 voters 8 non_voters) (a3:1 voter 1 non_voter) (a4:3 voters 7 non_voters) (c:2 voters 1 non_voter) (c1:1 voter) (c2: 1 non_voter) (c3:1 voter)]
+  r4: [(a:6 voters 6 non_voters) (a2: 1 non_voter) (a3:1 voter) (a4:5 voters 5 non_voters) (c: 3 non_voters) (c1: 1 non_voter) (c3: 2 non_voters)]
+  r5: [(a:3 voters 9 non_voters) (a2:1 voter) (a3:1 voter 1 non_voter) (a4:1 voter 8 non_voters) (c:3 voters) (c1:2 voters) (c2:1 voter)]
+... and 22 more
+satisfiable:
+expected configuration:
+	1.zone:
+		a3: 1 voter
+		a4: 10 non_voters
+		b1: 1 voter
+	2.region:
+		a: 3 voters, 8 non_voters
+		b: 1 voter
+		c: 3 non_voters
+	3.cluster: 6 voters, 9 non_voters
+constraint:
+replicas=15
+voters=6
+constraints=[+region=a:11 +region=c:3 +zone=a4:10]
+voter_constraints=[+region=a:3 +zone=a3:1 +zone=b1:1]
+	executed at: 2022-03-21 12:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:2 constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > 
+	executed at: 2022-03-21 12:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 12:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:28 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > 
+	executed at: 2022-03-21 12:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 12:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:28 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > constraints:<num_replicas:3 constraints:<key:"zone" value:"a3" > > constraints:<num_replicas:10 constraints:<key:"zone" value:"a4" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > constraints:<num_replicas:3 constraints:<key:"zone" value:"c1" > > constraints:<num_replicas:3 constraints:<key:"zone" value:"c2" > > constraints:<num_replicas:4 constraints:<key:"zone" value:"c3" > > voter_constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > voter_constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:10 constraints:<key:"zone" value:"a4" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"c1" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"c2" > > voter_constraints:<num_replicas:4 constraints:<key:"zone" value:"c3" > > 
+	executed at: 2022-03-21 12:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 12:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:25 constraints:<num_replicas:2 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"a" > > 
+	executed at: 2022-03-21 12:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 12:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:27 num_voters:16 voter_constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > 
+	executed at: 2022-03-21 12:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 12:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:16 num_voters:3 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"a4" > > 
+	executed at: 2022-03-21 13:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 13:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:3 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"c" > > 
+	executed at: 2022-03-21 13:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 13:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:5 constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"a3" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"c1" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"c1" > > 
+	executed at: 2022-03-21 13:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 13:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:5 constraints:<num_replicas:1 constraints:<key:"zone" value:"a2" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a3" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"c1" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > 
+	executed at: 2022-03-21 13:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 13:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:4 num_voters:3 constraints:<num_replicas:1 constraints:<key:"region" value:"a" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > 
+	executed at: 2022-03-21 13:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 13:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > constraints:<constraints:<key:"zone" value:"a1" > > 
+	executed at: 2022-03-21 13:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=20 violating=0 lease-violating=0 lease-less-preferred=0
+over replicated:
+  r1:00000{00000-10000} [(n13,s13):213NON_VOTER, (n1,s1):212] applying num_replicas=0 constraints=[+zone=a1]
+  r2:00000{10000-20000} [(n1,s1):158, (n23,s23):159NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r3:00000{20000-30000} [(n1,s1):148, (n9,s9):149NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r4:00000{30000-40000} [(n1,s1):156, (n5,s5):151NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r5:00000{40000-50000} [(n25,s25):197NON_VOTER, (n1,s1):196] applying num_replicas=0 constraints=[+zone=a1]
+  r6:00000{50000-60000} [(n11,s11):144NON_VOTER, (n1,s1):143] applying num_replicas=0 constraints=[+zone=a1]
+  r7:00000{60000-70000} [(n1,s1):211, (n28,s28):212NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r8:00000{70000-80000} [(n1,s1):187, (n6,s6):185NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r9:00000{80000-90000} [(n1,s1):156, (n21,s21):157NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r10:0000{090000-100000} [(n12,s12):214NON_VOTER, (n1,s1):213] applying num_replicas=0 constraints=[+zone=a1]
+  r11:00001{00000-10000} [(n15,s15):150NON_VOTER, (n1,s1):149] applying num_replicas=0 constraints=[+zone=a1]
+  r12:00001{10000-20000} [(n14,s14):158NON_VOTER, (n1,s1):157] applying num_replicas=0 constraints=[+zone=a1]
+  r13:00001{20000-30000} [(n1,s1):187, (n5,s5):183NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r14:00001{30000-40000} [(n1,s1):149, (n16,s16):150NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r15:00001{40000-50000} [(n6,s6):206NON_VOTER, (n1,s1):208] applying num_replicas=0 constraints=[+zone=a1]
+  r16:00001{50000-60000} [(n22,s22):150NON_VOTER, (n1,s1):149] applying num_replicas=0 constraints=[+zone=a1]
+  r17:00001{60000-70000} [(n1,s1):141, (n5,s5):139NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r18:00001{70000-80000} [(n24,s24):145NON_VOTER, (n1,s1):144] applying num_replicas=0 constraints=[+zone=a1]
+  r19:00001{80000-90000} [(n1,s1):155, (n6,s6):152NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+  r20:{0000190000-2147483647} [(n1,s1):188, (n24,s24):189NON_VOTER] applying num_replicas=0 constraints=[+zone=a1]
+
+	executed at: 2022-03-21 13:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:28 constraints:<num_replicas:17 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > 
+	executed at: 2022-03-21 14:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:16 voters) (a1:1 voter) (a2:2 voters) (a3:3 voters) (a4:10 voters) (b:2 voters) (b1:2 voters) (c:10 voters) (c1:3 voters) (c2:3 voters) (c3:4 voters)]
+  r2: [(a:16 voters) (a1:1 voter) (a2:2 voters) (a3:3 voters) (a4:10 voters) (b:2 voters) (b1:2 voters) (c:10 voters) (c1:3 voters) (c2:3 voters) (c3:4 voters)]
+  r3: [(a:16 voters) (a1:1 voter) (a2:2 voters) (a3:3 voters) (a4:10 voters) (b:2 voters) (b1:2 voters) (c:10 voters) (c1:3 voters) (c2:3 voters) (c3:4 voters)]
+  r4: [(a:16 voters) (a1:1 voter) (a2:2 voters) (a3:3 voters) (a4:10 voters) (b:2 voters) (b1:2 voters) (c:10 voters) (c1:3 voters) (c2:3 voters) (c3:4 voters)]
+  r5: [(a:16 voters) (a1:1 voter) (a2:2 voters) (a3:3 voters) (a4:10 voters) (b:2 voters) (b1:2 voters) (c:10 voters) (c1:3 voters) (c2:3 voters) (c3:4 voters)]
+  r6: [(a:16 voters) (a1:1 voter) (a2:2 voters) (a3:3 voters) (a4:10 voters) (b:2 voters) (b1:2 voters) (c:10 voters) (c1:3 voters) (c2:3 voters) (c3:4 voters)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+	3.cluster: 
+failed to satisfy constraints for region a
+constraint:
+replicas=28
+voters=28
+constraints=[+region=a:17 +region=b:2 +region=c:10]
+voter_constraints=[]
+	executed at: 2022-03-21 14:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:16 num_voters:3 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"c" > > 
+	executed at: 2022-03-21 14:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=1, over=0 violating=22 lease-violating=0 lease-less-preferred=0
+under replicated:
+  r12:00001{10000-20000} [(n1,s1):157, (n24,s24):185, (n10,s10):160, (n4,s4):186NON_VOTER, (n3,s3):187NON_VOTER, (n11,s11):188NON_VOTER, (n9,s9):189NON_VOTER, (n5,s5):190NON_VOTER, (n16,s16):191NON_VOTER, (n7,s7):192NON_VOTER, (n2,s2):193NON_VOTER, (n15,s15):194NON_VOTER, (n8,s8):195NON_VOTER, (n12,s12):196NON_VOTER, (n6,s6):197NON_VOTER] applying num_replicas=16 num_voters=3 constraints=[+region=a:16] voter_constraints=[+region=c:2]
+violating constraints:
+  r1: [(a:3 voters 13 non_voters) (a1: 1 non_voter) (a2: 2 non_voters) (a3: 3 non_voters) (a4:3 voters 7 non_voters)]
+  r2: [(a:3 voters 13 non_voters) (a1: 1 non_voter) (a2:1 voter 1 non_voter) (a3: 3 non_voters) (a4:2 voters 8 non_voters)]
+  r3: [(a:3 voters 13 non_voters) (a1: 1 non_voter) (a2: 2 non_voters) (a3:2 voters 1 non_voter) (a4:1 voter 9 non_voters)]
+  r4: [(a:3 voters 13 non_voters) (a1: 1 non_voter) (a2: 2 non_voters) (a3:1 voter 2 non_voters) (a4:2 voters 8 non_voters)]
+  r5: [(a:3 voters 13 non_voters) (a1: 1 non_voter) (a2:1 voter 1 non_voter) (a3: 3 non_voters) (a4:2 voters 8 non_voters)]
+  r6: [(a:3 voters 13 non_voters) (a1: 1 non_voter) (a2:1 voter 1 non_voter) (a3: 3 non_voters) (a4:2 voters 8 non_voters)]
+... and 16 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+		a: 16 non_voters
+		c: 2 voters
+	3.cluster: 3 voters, 15 non_voters
+failed to satisfy constraints for cluster
+constraint:
+replicas=16
+voters=3
+constraints=[+region=a:16]
+voter_constraints=[+region=c:2]
+	executed at: 2022-03-21 14:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:1 num_voters:2 
+	executed at: 2022-03-21 14:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+	executed at: 2022-03-21 14:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:2 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > 
+	executed at: 2022-03-21 14:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:2 voters 4 non_voters) (a3: 1 non_voter) (a4:2 voters 3 non_voters)]
+  r2: [(a:2 voters 4 non_voters) (a2: 2 non_voters) (a4:2 voters 2 non_voters)]
+  r3: [(a:2 voters 4 non_voters) (a1: 1 non_voter) (a3:1 voter 2 non_voters) (a4:1 voter 1 non_voter)]
+  r4: [(a:2 voters 4 non_voters) (a2: 1 non_voter) (a3: 1 non_voter) (a4:2 voters 2 non_voters)]
+  r5: [(a:2 voters 4 non_voters) (a4:2 voters 4 non_voters)]
+  r6: [(a:2 voters 4 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a4:2 voters 2 non_voters)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+		a: 16 non_voters
+	3.cluster: 2 voters, 14 non_voters
+failed to satisfy constraints for cluster
+constraint:
+replicas=6
+voters=2
+constraints=[+region=a:16]
+voter_constraints=[]
+	executed at: 2022-03-21 14:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:20 num_voters:2 voter_constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > 
+	executed at: 2022-03-21 14:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:2 voters 7 non_voters) (a3: 1 non_voter) (a4:2 voters 6 non_voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 9 non_voters) (c1: 2 non_voters) (c2: 3 non_voters) (c3: 4 non_voters)]
+  r2: [(a:2 voters 9 non_voters) (a2: 2 non_voters) (a3: 2 non_voters) (a4:2 voters 5 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 8 non_voters) (c1: 2 non_voters) (c2: 3 non_voters) (c3: 3 non_voters)]
+  r3: [(a:2 voters 8 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3:1 voter 2 non_voters) (a4:1 voter 4 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 9 non_voters) (c1: 3 non_voters) (c2: 2 non_voters) (c3: 4 non_voters)]
+  r4: [(a:2 voters 11 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3: 3 non_voters) (a4:2 voters 6 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 6 non_voters) (c1: 2 non_voters) (c2: 2 non_voters) (c3: 2 non_voters)]
+  r5: [(a:2 voters 12 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3: 3 non_voters) (a4:2 voters 7 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 5 non_voters) (c2: 2 non_voters) (c3: 3 non_voters)]
+  r6: [(a:2 voters 11 non_voters) (a1: 1 non_voter) (a2: 2 non_voters) (a3: 2 non_voters) (a4:2 voters 6 non_voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 5 non_voters) (c1: 3 non_voters) (c2: 1 non_voter) (c3: 1 non_voter)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+		a: 16 voters
+	3.cluster: 16 voters, 4 non_voters
+failed to satisfy constraints for cluster
+constraint:
+replicas=20
+voters=2
+constraints=[]
+voter_constraints=[+region=a:16]
+	executed at: 2022-03-21 14:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 num_voters:3 constraints:<constraints:<key:"region" value:"a" > > voter_constraints:<constraints:<key:"region" value:"b" > > 
+	executed at: 2022-03-21 14:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=20, over=20 violating=20 lease-violating=0 lease-less-preferred=0
+under replicated:
+  r1:00000{00000-10000} [(n8,s8):233, (n12,s12):231, (n14,s14):257NON_VOTER, (n5,s5):258NON_VOTER, (n16,s16):261NON_VOTER, (n11,s11):260NON_VOTER, (n28,s28):262NON_VOTER, (n18,s18):263NON_VOTER, (n25,s25):264NON_VOTER, (n23,s23):265NON_VOTER, (n22,s22):266NON_VOTER, (n17,s17):267NON_VOTER, (n21,s21):268NON_VOTER, (n15,s15):269NON_VOTER, (n9,s9):270NON_VOTER, (n27,s27):271NON_VOTER, (n26,s26):272NON_VOTER, (n19,s19):273NON_VOTER, (n10,s10):274NON_VOTER, (n24,s24):275NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r2:00000{10000-20000} [(n10,s10):204, (n9,s9):170, (n13,s13):200NON_VOTER, (n3,s3):201NON_VOTER, (n8,s8):202NON_VOTER, (n2,s2):205NON_VOTER, (n26,s26):206NON_VOTER, (n24,s24):207NON_VOTER, (n19,s19):208NON_VOTER, (n27,s27):209NON_VOTER, (n22,s22):210NON_VOTER, (n17,s17):211NON_VOTER, (n6,s6):212NON_VOTER, (n15,s15):213NON_VOTER, (n4,s4):214NON_VOTER, (n25,s25):215NON_VOTER, (n11,s11):216NON_VOTER, (n20,s20):217NON_VOTER, (n7,s7):218NON_VOTER, (n23,s23):219NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r3:00000{20000-30000} [(n12,s12):194, (n4,s4):152, (n5,s5):190NON_VOTER, (n1,s1):191NON_VOTER, (n13,s13):192NON_VOTER, (n6,s6):195NON_VOTER, (n24,s24):196NON_VOTER, (n21,s21):197NON_VOTER, (n17,s17):198NON_VOTER, (n20,s20):199NON_VOTER, (n19,s19):200NON_VOTER, (n28,s28):201NON_VOTER, (n26,s26):202NON_VOTER, (n25,s25):203NON_VOTER, (n8,s8):204NON_VOTER, (n27,s27):205NON_VOTER, (n7,s7):206NON_VOTER, (n16,s16):207NON_VOTER, (n2,s2):208NON_VOTER, (n23,s23):209NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r4:00000{30000-40000} [(n9,s9):208, (n14,s14):210, (n6,s6):204NON_VOTER, (n16,s16):205NON_VOTER, (n15,s15):206NON_VOTER, (n3,s3):207NON_VOTER, (n28,s28):211NON_VOTER, (n20,s20):212NON_VOTER, (n17,s17):213NON_VOTER, (n12,s12):214NON_VOTER, (n7,s7):215NON_VOTER, (n23,s23):216NON_VOTER, (n19,s19):217NON_VOTER, (n4,s4):218NON_VOTER, (n24,s24):219NON_VOTER, (n1,s1):220NON_VOTER, (n11,s11):221NON_VOTER, (n27,s27):222NON_VOTER, (n5,s5):223NON_VOTER, (n13,s13):224NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r5:00000{40000-50000} [(n15,s15):200, (n12,s12):201, (n9,s9):245NON_VOTER, (n14,s14):242NON_VOTER, (n10,s10):246NON_VOTER, (n8,s8):244NON_VOTER, (n22,s22):247NON_VOTER, (n27,s27):248NON_VOTER, (n28,s28):249NON_VOTER, (n24,s24):250NON_VOTER, (n18,s18):251NON_VOTER, (n13,s13):252NON_VOTER, (n2,s2):253NON_VOTER, (n6,s6):254NON_VOTER, (n11,s11):255NON_VOTER, (n1,s1):256NON_VOTER, (n5,s5):257NON_VOTER, (n16,s16):258NON_VOTER, (n25,s25):259NON_VOTER, (n4,s4):260NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r6:00000{50000-60000} [(n16,s16):164, (n14,s14):195, (n1,s1):189NON_VOTER, (n7,s7):190NON_VOTER, (n2,s2):191NON_VOTER, (n15,s15):192NON_VOTER, (n21,s21):196NON_VOTER, (n19,s19):197NON_VOTER, (n20,s20):198NON_VOTER, (n26,s26):199NON_VOTER, (n12,s12):200NON_VOTER, (n17,s17):201NON_VOTER, (n8,s8):202NON_VOTER, (n5,s5):203NON_VOTER, (n13,s13):204NON_VOTER, (n18,s18):205NON_VOTER, (n3,s3):206NON_VOTER, (n22,s22):207NON_VOTER, (n4,s4):208NON_VOTER, (n10,s10):209NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r7:00000{60000-70000} [(n1,s1):211, (n15,s15):261, (n5,s5):257NON_VOTER, (n7,s7):258NON_VOTER, (n9,s9):259NON_VOTER, (n12,s12):260NON_VOTER, (n19,s19):262NON_VOTER, (n21,s21):263NON_VOTER, (n27,s27):264NON_VOTER, (n24,s24):265NON_VOTER, (n20,s20):266NON_VOTER, (n22,s22):267NON_VOTER, (n3,s3):268NON_VOTER, (n11,s11):269NON_VOTER, (n10,s10):270NON_VOTER, (n25,s25):271NON_VOTER, (n14,s14):272NON_VOTER, (n8,s8):273NON_VOTER, (n4,s4):274NON_VOTER, (n6,s6):275NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r8:00000{70000-80000} [(n5,s5):194, (n7,s7):198, (n16,s16):231NON_VOTER, (n6,s6):232NON_VOTER, (n9,s9):233NON_VOTER, (n11,s11):234NON_VOTER, (n18,s18):235NON_VOTER, (n25,s25):236NON_VOTER, (n22,s22):237NON_VOTER, (n26,s26):238NON_VOTER, (n12,s12):239NON_VOTER, (n20,s20):240NON_VOTER, (n19,s19):241NON_VOTER, (n8,s8):242NON_VOTER, (n21,s21):243NON_VOTER, (n4,s4):244NON_VOTER, (n24,s24):245NON_VOTER, (n2,s2):246NON_VOTER, (n28,s28):247NON_VOTER, (n27,s27):248NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r9:00000{80000-90000} [(n3,s3):184, (n11,s11):169, (n4,s4):198NON_VOTER, (n14,s14):199NON_VOTER, (n5,s5):200NON_VOTER, (n15,s15):201NON_VOTER, (n26,s26):202NON_VOTER, (n17,s17):203NON_VOTER, (n20,s20):204NON_VOTER, (n24,s24):205NON_VOTER, (n18,s18):206NON_VOTER, (n27,s27):207NON_VOTER, (n23,s23):208NON_VOTER, (n1,s1):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n9,s9):212NON_VOTER, (n25,s25):213NON_VOTER, (n7,s7):214NON_VOTER, (n16,s16):215NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r10:0000{090000-100000} [(n11,s11):241, (n10,s10):234, (n6,s6):255NON_VOTER, (n1,s1):256NON_VOTER, (n13,s13):257NON_VOTER, (n8,s8):259NON_VOTER, (n24,s24):260NON_VOTER, (n26,s26):261NON_VOTER, (n18,s18):262NON_VOTER, (n17,s17):263NON_VOTER, (n28,s28):264NON_VOTER, (n25,s25):265NON_VOTER, (n7,s7):266NON_VOTER, (n5,s5):267NON_VOTER, (n14,s14):268NON_VOTER, (n2,s2):269NON_VOTER, (n3,s3):270NON_VOTER, (n15,s15):271NON_VOTER, (n21,s21):272NON_VOTER, (n12,s12):273NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r11:00001{00000-10000} [(n9,s9):156, (n8,s8):198, (n1,s1):194NON_VOTER, (n14,s14):195NON_VOTER, (n3,s3):196NON_VOTER, (n10,s10):197NON_VOTER, (n23,s23):199NON_VOTER, (n19,s19):200NON_VOTER, (n26,s26):201NON_VOTER, (n27,s27):202NON_VOTER, (n25,s25):203NON_VOTER, (n24,s24):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n11,s11):207NON_VOTER, (n18,s18):208NON_VOTER, (n21,s21):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n13,s13):212NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r12:00001{10000-20000} [(n10,s10):160, (n15,s15):202, (n4,s4):198NON_VOTER, (n3,s3):199NON_VOTER, (n9,s9):200NON_VOTER, (n5,s5):203NON_VOTER, (n22,s22):204NON_VOTER, (n18,s18):205NON_VOTER, (n28,s28):206NON_VOTER, (n21,s21):207NON_VOTER, (n17,s17):208NON_VOTER, (n2,s2):209NON_VOTER, (n20,s20):210NON_VOTER, (n26,s26):211NON_VOTER, (n19,s19):212NON_VOTER, (n27,s27):213NON_VOTER, (n24,s24):214NON_VOTER, (n13,s13):215NON_VOTER, (n7,s7):216NON_VOTER, (n12,s12):217NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r13:00001{20000-30000} [(n11,s11):234, (n14,s14):235, (n7,s7):229NON_VOTER, (n16,s16):230NON_VOTER, (n2,s2):231NON_VOTER, (n13,s13):232NON_VOTER, (n23,s23):236NON_VOTER, (n18,s18):237NON_VOTER, (n21,s21):238NON_VOTER, (n26,s26):239NON_VOTER, (n12,s12):240NON_VOTER, (n1,s1):241NON_VOTER, (n19,s19):242NON_VOTER, (n10,s10):243NON_VOTER, (n15,s15):244NON_VOTER, (n22,s22):245NON_VOTER, (n28,s28):246NON_VOTER, (n9,s9):247NON_VOTER, (n8,s8):248NON_VOTER, (n17,s17):249NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r14:00001{30000-40000} [(n1,s1):149, (n10,s10):191, (n6,s6):194NON_VOTER, (n14,s14):195NON_VOTER, (n4,s4):196NON_VOTER, (n9,s9):197NON_VOTER, (n17,s17):198NON_VOTER, (n28,s28):199NON_VOTER, (n19,s19):200NON_VOTER, (n21,s21):201NON_VOTER, (n18,s18):202NON_VOTER, (n27,s27):203NON_VOTER, (n2,s2):204NON_VOTER, (n16,s16):205NON_VOTER, (n23,s23):206NON_VOTER, (n26,s26):207NON_VOTER, (n3,s3):208NON_VOTER, (n25,s25):209NON_VOTER, (n20,s20):210NON_VOTER, (n13,s13):211NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r15:00001{40000-50000} [(n2,s2):254, (n11,s11):256, (n7,s7):250NON_VOTER, (n16,s16):251NON_VOTER, (n1,s1):253NON_VOTER, (n14,s14):257NON_VOTER, (n23,s23):258NON_VOTER, (n27,s27):259NON_VOTER, (n28,s28):260NON_VOTER, (n21,s21):261NON_VOTER, (n12,s12):262NON_VOTER, (n4,s4):263NON_VOTER, (n25,s25):264NON_VOTER, (n13,s13):265NON_VOTER, (n3,s3):266NON_VOTER, (n17,s17):267NON_VOTER, (n18,s18):268NON_VOTER, (n22,s22):269NON_VOTER, (n6,s6):270NON_VOTER, (n20,s20):271NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r16:00001{50000-60000} [(n8,s8):196, (n7,s7):177, (n12,s12):195NON_VOTER, (n5,s5):193NON_VOTER, (n4,s4):194NON_VOTER, (n10,s10):198NON_VOTER, (n21,s21):199NON_VOTER, (n25,s25):200NON_VOTER, (n27,s27):201NON_VOTER, (n24,s24):202NON_VOTER, (n18,s18):203NON_VOTER, (n22,s22):204NON_VOTER, (n28,s28):205NON_VOTER, (n16,s16):206NON_VOTER, (n3,s3):207NON_VOTER, (n13,s13):208NON_VOTER, (n1,s1):209NON_VOTER, (n11,s11):210NON_VOTER, (n9,s9):211NON_VOTER, (n2,s2):212NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r17:00001{60000-70000} [(n13,s13):168, (n15,s15):167, (n6,s6):182NON_VOTER, (n2,s2):183NON_VOTER, (n8,s8):184NON_VOTER, (n11,s11):185NON_VOTER, (n19,s19):186NON_VOTER, (n25,s25):187NON_VOTER, (n23,s23):188NON_VOTER, (n24,s24):189NON_VOTER, (n18,s18):190NON_VOTER, (n22,s22):191NON_VOTER, (n3,s3):192NON_VOTER, (n16,s16):193NON_VOTER, (n28,s28):194NON_VOTER, (n4,s4):195NON_VOTER, (n20,s20):196NON_VOTER, (n7,s7):197NON_VOTER, (n14,s14):198NON_VOTER, (n26,s26):199NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r18:00001{70000-80000} [(n3,s3):191, (n14,s14):159, (n16,s16):186NON_VOTER, (n6,s6):187NON_VOTER, (n7,s7):188NON_VOTER, (n4,s4):189NON_VOTER, (n24,s24):192NON_VOTER, (n27,s27):193NON_VOTER, (n22,s22):194NON_VOTER, (n23,s23):195NON_VOTER, (n20,s20):196NON_VOTER, (n15,s15):197NON_VOTER, (n28,s28):198NON_VOTER, (n9,s9):199NON_VOTER, (n17,s17):200NON_VOTER, (n5,s5):201NON_VOTER, (n10,s10):202NON_VOTER, (n2,s2):203NON_VOTER, (n8,s8):204NON_VOTER, (n21,s21):205NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r19:00001{80000-90000} [(n8,s8):182, (n15,s15):201, (n3,s3):197NON_VOTER, (n2,s2):198NON_VOTER, (n13,s13):199NON_VOTER, (n4,s4):200NON_VOTER, (n17,s17):202NON_VOTER, (n22,s22):203NON_VOTER, (n23,s23):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n10,s10):207NON_VOTER, (n16,s16):208NON_VOTER, (n6,s6):209NON_VOTER, (n1,s1):210NON_VOTER, (n26,s26):211NON_VOTER, (n18,s18):212NON_VOTER, (n25,s25):213NON_VOTER, (n5,s5):214NON_VOTER, (n21,s21):215NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r20:{0000190000-2147483647} [(n13,s13):232, (n9,s9):194, (n6,s6):235NON_VOTER, (n2,s2):236NON_VOTER, (n10,s10):237NON_VOTER, (n11,s11):238NON_VOTER, (n25,s25):239NON_VOTER, (n26,s26):240NON_VOTER, (n20,s20):241NON_VOTER, (n19,s19):242NON_VOTER, (n23,s23):243NON_VOTER, (n17,s17):244NON_VOTER, (n27,s27):245NON_VOTER, (n21,s21):246NON_VOTER, (n1,s1):247NON_VOTER, (n5,s5):248NON_VOTER, (n12,s12):249NON_VOTER, (n7,s7):250NON_VOTER, (n4,s4):251NON_VOTER, (n14,s14):252NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+over replicated:
+  r1:00000{00000-10000} [(n8,s8):233, (n12,s12):231, (n14,s14):257NON_VOTER, (n5,s5):258NON_VOTER, (n16,s16):261NON_VOTER, (n11,s11):260NON_VOTER, (n28,s28):262NON_VOTER, (n18,s18):263NON_VOTER, (n25,s25):264NON_VOTER, (n23,s23):265NON_VOTER, (n22,s22):266NON_VOTER, (n17,s17):267NON_VOTER, (n21,s21):268NON_VOTER, (n15,s15):269NON_VOTER, (n9,s9):270NON_VOTER, (n27,s27):271NON_VOTER, (n26,s26):272NON_VOTER, (n19,s19):273NON_VOTER, (n10,s10):274NON_VOTER, (n24,s24):275NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r2:00000{10000-20000} [(n10,s10):204, (n9,s9):170, (n13,s13):200NON_VOTER, (n3,s3):201NON_VOTER, (n8,s8):202NON_VOTER, (n2,s2):205NON_VOTER, (n26,s26):206NON_VOTER, (n24,s24):207NON_VOTER, (n19,s19):208NON_VOTER, (n27,s27):209NON_VOTER, (n22,s22):210NON_VOTER, (n17,s17):211NON_VOTER, (n6,s6):212NON_VOTER, (n15,s15):213NON_VOTER, (n4,s4):214NON_VOTER, (n25,s25):215NON_VOTER, (n11,s11):216NON_VOTER, (n20,s20):217NON_VOTER, (n7,s7):218NON_VOTER, (n23,s23):219NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r3:00000{20000-30000} [(n12,s12):194, (n4,s4):152, (n5,s5):190NON_VOTER, (n1,s1):191NON_VOTER, (n13,s13):192NON_VOTER, (n6,s6):195NON_VOTER, (n24,s24):196NON_VOTER, (n21,s21):197NON_VOTER, (n17,s17):198NON_VOTER, (n20,s20):199NON_VOTER, (n19,s19):200NON_VOTER, (n28,s28):201NON_VOTER, (n26,s26):202NON_VOTER, (n25,s25):203NON_VOTER, (n8,s8):204NON_VOTER, (n27,s27):205NON_VOTER, (n7,s7):206NON_VOTER, (n16,s16):207NON_VOTER, (n2,s2):208NON_VOTER, (n23,s23):209NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r4:00000{30000-40000} [(n9,s9):208, (n14,s14):210, (n6,s6):204NON_VOTER, (n16,s16):205NON_VOTER, (n15,s15):206NON_VOTER, (n3,s3):207NON_VOTER, (n28,s28):211NON_VOTER, (n20,s20):212NON_VOTER, (n17,s17):213NON_VOTER, (n12,s12):214NON_VOTER, (n7,s7):215NON_VOTER, (n23,s23):216NON_VOTER, (n19,s19):217NON_VOTER, (n4,s4):218NON_VOTER, (n24,s24):219NON_VOTER, (n1,s1):220NON_VOTER, (n11,s11):221NON_VOTER, (n27,s27):222NON_VOTER, (n5,s5):223NON_VOTER, (n13,s13):224NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r5:00000{40000-50000} [(n15,s15):200, (n12,s12):201, (n9,s9):245NON_VOTER, (n14,s14):242NON_VOTER, (n10,s10):246NON_VOTER, (n8,s8):244NON_VOTER, (n22,s22):247NON_VOTER, (n27,s27):248NON_VOTER, (n28,s28):249NON_VOTER, (n24,s24):250NON_VOTER, (n18,s18):251NON_VOTER, (n13,s13):252NON_VOTER, (n2,s2):253NON_VOTER, (n6,s6):254NON_VOTER, (n11,s11):255NON_VOTER, (n1,s1):256NON_VOTER, (n5,s5):257NON_VOTER, (n16,s16):258NON_VOTER, (n25,s25):259NON_VOTER, (n4,s4):260NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r6:00000{50000-60000} [(n16,s16):164, (n14,s14):195, (n1,s1):189NON_VOTER, (n7,s7):190NON_VOTER, (n2,s2):191NON_VOTER, (n15,s15):192NON_VOTER, (n21,s21):196NON_VOTER, (n19,s19):197NON_VOTER, (n20,s20):198NON_VOTER, (n26,s26):199NON_VOTER, (n12,s12):200NON_VOTER, (n17,s17):201NON_VOTER, (n8,s8):202NON_VOTER, (n5,s5):203NON_VOTER, (n13,s13):204NON_VOTER, (n18,s18):205NON_VOTER, (n3,s3):206NON_VOTER, (n22,s22):207NON_VOTER, (n4,s4):208NON_VOTER, (n10,s10):209NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r7:00000{60000-70000} [(n1,s1):211, (n15,s15):261, (n5,s5):257NON_VOTER, (n7,s7):258NON_VOTER, (n9,s9):259NON_VOTER, (n12,s12):260NON_VOTER, (n19,s19):262NON_VOTER, (n21,s21):263NON_VOTER, (n27,s27):264NON_VOTER, (n24,s24):265NON_VOTER, (n20,s20):266NON_VOTER, (n22,s22):267NON_VOTER, (n3,s3):268NON_VOTER, (n11,s11):269NON_VOTER, (n10,s10):270NON_VOTER, (n25,s25):271NON_VOTER, (n14,s14):272NON_VOTER, (n8,s8):273NON_VOTER, (n4,s4):274NON_VOTER, (n6,s6):275NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r8:00000{70000-80000} [(n5,s5):194, (n7,s7):198, (n16,s16):231NON_VOTER, (n6,s6):232NON_VOTER, (n9,s9):233NON_VOTER, (n11,s11):234NON_VOTER, (n18,s18):235NON_VOTER, (n25,s25):236NON_VOTER, (n22,s22):237NON_VOTER, (n26,s26):238NON_VOTER, (n12,s12):239NON_VOTER, (n20,s20):240NON_VOTER, (n19,s19):241NON_VOTER, (n8,s8):242NON_VOTER, (n21,s21):243NON_VOTER, (n4,s4):244NON_VOTER, (n24,s24):245NON_VOTER, (n2,s2):246NON_VOTER, (n28,s28):247NON_VOTER, (n27,s27):248NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r9:00000{80000-90000} [(n3,s3):184, (n11,s11):169, (n4,s4):198NON_VOTER, (n14,s14):199NON_VOTER, (n5,s5):200NON_VOTER, (n15,s15):201NON_VOTER, (n26,s26):202NON_VOTER, (n17,s17):203NON_VOTER, (n20,s20):204NON_VOTER, (n24,s24):205NON_VOTER, (n18,s18):206NON_VOTER, (n27,s27):207NON_VOTER, (n23,s23):208NON_VOTER, (n1,s1):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n9,s9):212NON_VOTER, (n25,s25):213NON_VOTER, (n7,s7):214NON_VOTER, (n16,s16):215NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r10:0000{090000-100000} [(n11,s11):241, (n10,s10):234, (n6,s6):255NON_VOTER, (n1,s1):256NON_VOTER, (n13,s13):257NON_VOTER, (n8,s8):259NON_VOTER, (n24,s24):260NON_VOTER, (n26,s26):261NON_VOTER, (n18,s18):262NON_VOTER, (n17,s17):263NON_VOTER, (n28,s28):264NON_VOTER, (n25,s25):265NON_VOTER, (n7,s7):266NON_VOTER, (n5,s5):267NON_VOTER, (n14,s14):268NON_VOTER, (n2,s2):269NON_VOTER, (n3,s3):270NON_VOTER, (n15,s15):271NON_VOTER, (n21,s21):272NON_VOTER, (n12,s12):273NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r11:00001{00000-10000} [(n9,s9):156, (n8,s8):198, (n1,s1):194NON_VOTER, (n14,s14):195NON_VOTER, (n3,s3):196NON_VOTER, (n10,s10):197NON_VOTER, (n23,s23):199NON_VOTER, (n19,s19):200NON_VOTER, (n26,s26):201NON_VOTER, (n27,s27):202NON_VOTER, (n25,s25):203NON_VOTER, (n24,s24):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n11,s11):207NON_VOTER, (n18,s18):208NON_VOTER, (n21,s21):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n13,s13):212NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r12:00001{10000-20000} [(n10,s10):160, (n15,s15):202, (n4,s4):198NON_VOTER, (n3,s3):199NON_VOTER, (n9,s9):200NON_VOTER, (n5,s5):203NON_VOTER, (n22,s22):204NON_VOTER, (n18,s18):205NON_VOTER, (n28,s28):206NON_VOTER, (n21,s21):207NON_VOTER, (n17,s17):208NON_VOTER, (n2,s2):209NON_VOTER, (n20,s20):210NON_VOTER, (n26,s26):211NON_VOTER, (n19,s19):212NON_VOTER, (n27,s27):213NON_VOTER, (n24,s24):214NON_VOTER, (n13,s13):215NON_VOTER, (n7,s7):216NON_VOTER, (n12,s12):217NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r13:00001{20000-30000} [(n11,s11):234, (n14,s14):235, (n7,s7):229NON_VOTER, (n16,s16):230NON_VOTER, (n2,s2):231NON_VOTER, (n13,s13):232NON_VOTER, (n23,s23):236NON_VOTER, (n18,s18):237NON_VOTER, (n21,s21):238NON_VOTER, (n26,s26):239NON_VOTER, (n12,s12):240NON_VOTER, (n1,s1):241NON_VOTER, (n19,s19):242NON_VOTER, (n10,s10):243NON_VOTER, (n15,s15):244NON_VOTER, (n22,s22):245NON_VOTER, (n28,s28):246NON_VOTER, (n9,s9):247NON_VOTER, (n8,s8):248NON_VOTER, (n17,s17):249NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r14:00001{30000-40000} [(n1,s1):149, (n10,s10):191, (n6,s6):194NON_VOTER, (n14,s14):195NON_VOTER, (n4,s4):196NON_VOTER, (n9,s9):197NON_VOTER, (n17,s17):198NON_VOTER, (n28,s28):199NON_VOTER, (n19,s19):200NON_VOTER, (n21,s21):201NON_VOTER, (n18,s18):202NON_VOTER, (n27,s27):203NON_VOTER, (n2,s2):204NON_VOTER, (n16,s16):205NON_VOTER, (n23,s23):206NON_VOTER, (n26,s26):207NON_VOTER, (n3,s3):208NON_VOTER, (n25,s25):209NON_VOTER, (n20,s20):210NON_VOTER, (n13,s13):211NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r15:00001{40000-50000} [(n2,s2):254, (n11,s11):256, (n7,s7):250NON_VOTER, (n16,s16):251NON_VOTER, (n1,s1):253NON_VOTER, (n14,s14):257NON_VOTER, (n23,s23):258NON_VOTER, (n27,s27):259NON_VOTER, (n28,s28):260NON_VOTER, (n21,s21):261NON_VOTER, (n12,s12):262NON_VOTER, (n4,s4):263NON_VOTER, (n25,s25):264NON_VOTER, (n13,s13):265NON_VOTER, (n3,s3):266NON_VOTER, (n17,s17):267NON_VOTER, (n18,s18):268NON_VOTER, (n22,s22):269NON_VOTER, (n6,s6):270NON_VOTER, (n20,s20):271NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r16:00001{50000-60000} [(n8,s8):196, (n7,s7):177, (n12,s12):195NON_VOTER, (n5,s5):193NON_VOTER, (n4,s4):194NON_VOTER, (n10,s10):198NON_VOTER, (n21,s21):199NON_VOTER, (n25,s25):200NON_VOTER, (n27,s27):201NON_VOTER, (n24,s24):202NON_VOTER, (n18,s18):203NON_VOTER, (n22,s22):204NON_VOTER, (n28,s28):205NON_VOTER, (n16,s16):206NON_VOTER, (n3,s3):207NON_VOTER, (n13,s13):208NON_VOTER, (n1,s1):209NON_VOTER, (n11,s11):210NON_VOTER, (n9,s9):211NON_VOTER, (n2,s2):212NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r17:00001{60000-70000} [(n13,s13):168, (n15,s15):167, (n6,s6):182NON_VOTER, (n2,s2):183NON_VOTER, (n8,s8):184NON_VOTER, (n11,s11):185NON_VOTER, (n19,s19):186NON_VOTER, (n25,s25):187NON_VOTER, (n23,s23):188NON_VOTER, (n24,s24):189NON_VOTER, (n18,s18):190NON_VOTER, (n22,s22):191NON_VOTER, (n3,s3):192NON_VOTER, (n16,s16):193NON_VOTER, (n28,s28):194NON_VOTER, (n4,s4):195NON_VOTER, (n20,s20):196NON_VOTER, (n7,s7):197NON_VOTER, (n14,s14):198NON_VOTER, (n26,s26):199NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r18:00001{70000-80000} [(n3,s3):191, (n14,s14):159, (n16,s16):186NON_VOTER, (n6,s6):187NON_VOTER, (n7,s7):188NON_VOTER, (n4,s4):189NON_VOTER, (n24,s24):192NON_VOTER, (n27,s27):193NON_VOTER, (n22,s22):194NON_VOTER, (n23,s23):195NON_VOTER, (n20,s20):196NON_VOTER, (n15,s15):197NON_VOTER, (n28,s28):198NON_VOTER, (n9,s9):199NON_VOTER, (n17,s17):200NON_VOTER, (n5,s5):201NON_VOTER, (n10,s10):202NON_VOTER, (n2,s2):203NON_VOTER, (n8,s8):204NON_VOTER, (n21,s21):205NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r19:00001{80000-90000} [(n8,s8):182, (n15,s15):201, (n3,s3):197NON_VOTER, (n2,s2):198NON_VOTER, (n13,s13):199NON_VOTER, (n4,s4):200NON_VOTER, (n17,s17):202NON_VOTER, (n22,s22):203NON_VOTER, (n23,s23):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n10,s10):207NON_VOTER, (n16,s16):208NON_VOTER, (n6,s6):209NON_VOTER, (n1,s1):210NON_VOTER, (n26,s26):211NON_VOTER, (n18,s18):212NON_VOTER, (n25,s25):213NON_VOTER, (n5,s5):214NON_VOTER, (n21,s21):215NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+  r20:{0000190000-2147483647} [(n13,s13):232, (n9,s9):194, (n6,s6):235NON_VOTER, (n2,s2):236NON_VOTER, (n10,s10):237NON_VOTER, (n11,s11):238NON_VOTER, (n25,s25):239NON_VOTER, (n26,s26):240NON_VOTER, (n20,s20):241NON_VOTER, (n19,s19):242NON_VOTER, (n23,s23):243NON_VOTER, (n17,s17):244NON_VOTER, (n27,s27):245NON_VOTER, (n21,s21):246NON_VOTER, (n1,s1):247NON_VOTER, (n5,s5):248NON_VOTER, (n12,s12):249NON_VOTER, (n7,s7):250NON_VOTER, (n4,s4):251NON_VOTER, (n14,s14):252NON_VOTER] applying num_replicas=5 num_voters=3 constraints=[+region=a] voter_constraints=[+region=b]
+violating constraints:
+  r1: [(a:2 voters 7 non_voters) (a3: 1 non_voter) (a4:2 voters 6 non_voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 9 non_voters) (c1: 2 non_voters) (c2: 3 non_voters) (c3: 4 non_voters)]
+  r2: [(a:2 voters 9 non_voters) (a2: 2 non_voters) (a3: 2 non_voters) (a4:2 voters 5 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 8 non_voters) (c1: 2 non_voters) (c2: 3 non_voters) (c3: 3 non_voters)]
+  r3: [(a:2 voters 8 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3:1 voter 2 non_voters) (a4:1 voter 4 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 9 non_voters) (c1: 3 non_voters) (c2: 2 non_voters) (c3: 4 non_voters)]
+  r4: [(a:2 voters 11 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3: 3 non_voters) (a4:2 voters 6 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 6 non_voters) (c1: 2 non_voters) (c2: 2 non_voters) (c3: 2 non_voters)]
+  r5: [(a:2 voters 12 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3: 3 non_voters) (a4:2 voters 7 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 5 non_voters) (c2: 2 non_voters) (c3: 3 non_voters)]
+  r6: [(a:2 voters 11 non_voters) (a1: 1 non_voter) (a2: 2 non_voters) (a3: 2 non_voters) (a4:2 voters 6 non_voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 5 non_voters) (c1: 3 non_voters) (c2: 1 non_voter) (c3: 1 non_voter)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+	3.cluster: 
+failed to satisfy constraints for region b
+constraint:
+replicas=5
+voters=3
+constraints=[+region=a]
+voter_constraints=[+region=b]
+	executed at: 2022-03-21 14:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 constraints:<constraints:<key:"az" value:"a" > > 
+	executed at: 2022-03-21 15:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=20, over=20 violating=20 lease-violating=0 lease-less-preferred=0
+under replicated:
+  r1:00000{00000-10000} [(n8,s8):233, (n12,s12):231, (n14,s14):257NON_VOTER, (n5,s5):258NON_VOTER, (n16,s16):261NON_VOTER, (n11,s11):260NON_VOTER, (n28,s28):262NON_VOTER, (n18,s18):263NON_VOTER, (n25,s25):264NON_VOTER, (n23,s23):265NON_VOTER, (n22,s22):266NON_VOTER, (n17,s17):267NON_VOTER, (n21,s21):268NON_VOTER, (n15,s15):269NON_VOTER, (n9,s9):270NON_VOTER, (n27,s27):271NON_VOTER, (n26,s26):272NON_VOTER, (n19,s19):273NON_VOTER, (n10,s10):274NON_VOTER, (n24,s24):275NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r2:00000{10000-20000} [(n10,s10):204, (n9,s9):170, (n13,s13):200NON_VOTER, (n3,s3):201NON_VOTER, (n8,s8):202NON_VOTER, (n2,s2):205NON_VOTER, (n26,s26):206NON_VOTER, (n24,s24):207NON_VOTER, (n19,s19):208NON_VOTER, (n27,s27):209NON_VOTER, (n22,s22):210NON_VOTER, (n17,s17):211NON_VOTER, (n6,s6):212NON_VOTER, (n15,s15):213NON_VOTER, (n4,s4):214NON_VOTER, (n25,s25):215NON_VOTER, (n11,s11):216NON_VOTER, (n20,s20):217NON_VOTER, (n7,s7):218NON_VOTER, (n23,s23):219NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r3:00000{20000-30000} [(n12,s12):194, (n4,s4):152, (n5,s5):190NON_VOTER, (n1,s1):191NON_VOTER, (n13,s13):192NON_VOTER, (n6,s6):195NON_VOTER, (n24,s24):196NON_VOTER, (n21,s21):197NON_VOTER, (n17,s17):198NON_VOTER, (n20,s20):199NON_VOTER, (n19,s19):200NON_VOTER, (n28,s28):201NON_VOTER, (n26,s26):202NON_VOTER, (n25,s25):203NON_VOTER, (n8,s8):204NON_VOTER, (n27,s27):205NON_VOTER, (n7,s7):206NON_VOTER, (n16,s16):207NON_VOTER, (n2,s2):208NON_VOTER, (n23,s23):209NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r4:00000{30000-40000} [(n9,s9):208, (n14,s14):210, (n6,s6):204NON_VOTER, (n16,s16):205NON_VOTER, (n15,s15):206NON_VOTER, (n3,s3):207NON_VOTER, (n28,s28):211NON_VOTER, (n20,s20):212NON_VOTER, (n17,s17):213NON_VOTER, (n12,s12):214NON_VOTER, (n7,s7):215NON_VOTER, (n23,s23):216NON_VOTER, (n19,s19):217NON_VOTER, (n4,s4):218NON_VOTER, (n24,s24):219NON_VOTER, (n1,s1):220NON_VOTER, (n11,s11):221NON_VOTER, (n27,s27):222NON_VOTER, (n5,s5):223NON_VOTER, (n13,s13):224NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r5:00000{40000-50000} [(n15,s15):200, (n12,s12):201, (n9,s9):245NON_VOTER, (n14,s14):242NON_VOTER, (n10,s10):246NON_VOTER, (n8,s8):244NON_VOTER, (n22,s22):247NON_VOTER, (n27,s27):248NON_VOTER, (n28,s28):249NON_VOTER, (n24,s24):250NON_VOTER, (n18,s18):251NON_VOTER, (n13,s13):252NON_VOTER, (n2,s2):253NON_VOTER, (n6,s6):254NON_VOTER, (n11,s11):255NON_VOTER, (n1,s1):256NON_VOTER, (n5,s5):257NON_VOTER, (n16,s16):258NON_VOTER, (n25,s25):259NON_VOTER, (n4,s4):260NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r6:00000{50000-60000} [(n16,s16):164, (n14,s14):195, (n1,s1):189NON_VOTER, (n7,s7):190NON_VOTER, (n2,s2):191NON_VOTER, (n15,s15):192NON_VOTER, (n21,s21):196NON_VOTER, (n19,s19):197NON_VOTER, (n20,s20):198NON_VOTER, (n26,s26):199NON_VOTER, (n12,s12):200NON_VOTER, (n17,s17):201NON_VOTER, (n8,s8):202NON_VOTER, (n5,s5):203NON_VOTER, (n13,s13):204NON_VOTER, (n18,s18):205NON_VOTER, (n3,s3):206NON_VOTER, (n22,s22):207NON_VOTER, (n4,s4):208NON_VOTER, (n10,s10):209NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r7:00000{60000-70000} [(n1,s1):211, (n15,s15):261, (n5,s5):257NON_VOTER, (n7,s7):258NON_VOTER, (n9,s9):259NON_VOTER, (n12,s12):260NON_VOTER, (n19,s19):262NON_VOTER, (n21,s21):263NON_VOTER, (n27,s27):264NON_VOTER, (n24,s24):265NON_VOTER, (n20,s20):266NON_VOTER, (n22,s22):267NON_VOTER, (n3,s3):268NON_VOTER, (n11,s11):269NON_VOTER, (n10,s10):270NON_VOTER, (n25,s25):271NON_VOTER, (n14,s14):272NON_VOTER, (n8,s8):273NON_VOTER, (n4,s4):274NON_VOTER, (n6,s6):275NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r8:00000{70000-80000} [(n5,s5):194, (n7,s7):198, (n16,s16):231NON_VOTER, (n6,s6):232NON_VOTER, (n9,s9):233NON_VOTER, (n11,s11):234NON_VOTER, (n18,s18):235NON_VOTER, (n25,s25):236NON_VOTER, (n22,s22):237NON_VOTER, (n26,s26):238NON_VOTER, (n12,s12):239NON_VOTER, (n20,s20):240NON_VOTER, (n19,s19):241NON_VOTER, (n8,s8):242NON_VOTER, (n21,s21):243NON_VOTER, (n4,s4):244NON_VOTER, (n24,s24):245NON_VOTER, (n2,s2):246NON_VOTER, (n28,s28):247NON_VOTER, (n27,s27):248NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r9:00000{80000-90000} [(n3,s3):184, (n11,s11):169, (n4,s4):198NON_VOTER, (n14,s14):199NON_VOTER, (n5,s5):200NON_VOTER, (n15,s15):201NON_VOTER, (n26,s26):202NON_VOTER, (n17,s17):203NON_VOTER, (n20,s20):204NON_VOTER, (n24,s24):205NON_VOTER, (n18,s18):206NON_VOTER, (n27,s27):207NON_VOTER, (n23,s23):208NON_VOTER, (n1,s1):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n9,s9):212NON_VOTER, (n25,s25):213NON_VOTER, (n7,s7):214NON_VOTER, (n16,s16):215NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r10:0000{090000-100000} [(n11,s11):241, (n10,s10):234, (n6,s6):255NON_VOTER, (n1,s1):256NON_VOTER, (n13,s13):257NON_VOTER, (n8,s8):259NON_VOTER, (n24,s24):260NON_VOTER, (n26,s26):261NON_VOTER, (n18,s18):262NON_VOTER, (n17,s17):263NON_VOTER, (n28,s28):264NON_VOTER, (n25,s25):265NON_VOTER, (n7,s7):266NON_VOTER, (n5,s5):267NON_VOTER, (n14,s14):268NON_VOTER, (n2,s2):269NON_VOTER, (n3,s3):270NON_VOTER, (n15,s15):271NON_VOTER, (n21,s21):272NON_VOTER, (n12,s12):273NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r11:00001{00000-10000} [(n9,s9):156, (n8,s8):198, (n1,s1):194NON_VOTER, (n14,s14):195NON_VOTER, (n3,s3):196NON_VOTER, (n10,s10):197NON_VOTER, (n23,s23):199NON_VOTER, (n19,s19):200NON_VOTER, (n26,s26):201NON_VOTER, (n27,s27):202NON_VOTER, (n25,s25):203NON_VOTER, (n24,s24):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n11,s11):207NON_VOTER, (n18,s18):208NON_VOTER, (n21,s21):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n13,s13):212NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r12:00001{10000-20000} [(n10,s10):160, (n15,s15):202, (n4,s4):198NON_VOTER, (n3,s3):199NON_VOTER, (n9,s9):200NON_VOTER, (n5,s5):203NON_VOTER, (n22,s22):204NON_VOTER, (n18,s18):205NON_VOTER, (n28,s28):206NON_VOTER, (n21,s21):207NON_VOTER, (n17,s17):208NON_VOTER, (n2,s2):209NON_VOTER, (n20,s20):210NON_VOTER, (n26,s26):211NON_VOTER, (n19,s19):212NON_VOTER, (n27,s27):213NON_VOTER, (n24,s24):214NON_VOTER, (n13,s13):215NON_VOTER, (n7,s7):216NON_VOTER, (n12,s12):217NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r13:00001{20000-30000} [(n11,s11):234, (n14,s14):235, (n7,s7):229NON_VOTER, (n16,s16):230NON_VOTER, (n2,s2):231NON_VOTER, (n13,s13):232NON_VOTER, (n23,s23):236NON_VOTER, (n18,s18):237NON_VOTER, (n21,s21):238NON_VOTER, (n26,s26):239NON_VOTER, (n12,s12):240NON_VOTER, (n1,s1):241NON_VOTER, (n19,s19):242NON_VOTER, (n10,s10):243NON_VOTER, (n15,s15):244NON_VOTER, (n22,s22):245NON_VOTER, (n28,s28):246NON_VOTER, (n9,s9):247NON_VOTER, (n8,s8):248NON_VOTER, (n17,s17):249NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r14:00001{30000-40000} [(n1,s1):149, (n10,s10):191, (n6,s6):194NON_VOTER, (n14,s14):195NON_VOTER, (n4,s4):196NON_VOTER, (n9,s9):197NON_VOTER, (n17,s17):198NON_VOTER, (n28,s28):199NON_VOTER, (n19,s19):200NON_VOTER, (n21,s21):201NON_VOTER, (n18,s18):202NON_VOTER, (n27,s27):203NON_VOTER, (n2,s2):204NON_VOTER, (n16,s16):205NON_VOTER, (n23,s23):206NON_VOTER, (n26,s26):207NON_VOTER, (n3,s3):208NON_VOTER, (n25,s25):209NON_VOTER, (n20,s20):210NON_VOTER, (n13,s13):211NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r15:00001{40000-50000} [(n2,s2):254, (n11,s11):256, (n7,s7):250NON_VOTER, (n16,s16):251NON_VOTER, (n1,s1):253NON_VOTER, (n14,s14):257NON_VOTER, (n23,s23):258NON_VOTER, (n27,s27):259NON_VOTER, (n28,s28):260NON_VOTER, (n21,s21):261NON_VOTER, (n12,s12):262NON_VOTER, (n4,s4):263NON_VOTER, (n25,s25):264NON_VOTER, (n13,s13):265NON_VOTER, (n3,s3):266NON_VOTER, (n17,s17):267NON_VOTER, (n18,s18):268NON_VOTER, (n22,s22):269NON_VOTER, (n6,s6):270NON_VOTER, (n20,s20):271NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r16:00001{50000-60000} [(n8,s8):196, (n7,s7):177, (n12,s12):195NON_VOTER, (n5,s5):193NON_VOTER, (n4,s4):194NON_VOTER, (n10,s10):198NON_VOTER, (n21,s21):199NON_VOTER, (n25,s25):200NON_VOTER, (n27,s27):201NON_VOTER, (n24,s24):202NON_VOTER, (n18,s18):203NON_VOTER, (n22,s22):204NON_VOTER, (n28,s28):205NON_VOTER, (n16,s16):206NON_VOTER, (n3,s3):207NON_VOTER, (n13,s13):208NON_VOTER, (n1,s1):209NON_VOTER, (n11,s11):210NON_VOTER, (n9,s9):211NON_VOTER, (n2,s2):212NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r17:00001{60000-70000} [(n13,s13):168, (n15,s15):167, (n6,s6):182NON_VOTER, (n2,s2):183NON_VOTER, (n8,s8):184NON_VOTER, (n11,s11):185NON_VOTER, (n19,s19):186NON_VOTER, (n25,s25):187NON_VOTER, (n23,s23):188NON_VOTER, (n24,s24):189NON_VOTER, (n18,s18):190NON_VOTER, (n22,s22):191NON_VOTER, (n3,s3):192NON_VOTER, (n16,s16):193NON_VOTER, (n28,s28):194NON_VOTER, (n4,s4):195NON_VOTER, (n20,s20):196NON_VOTER, (n7,s7):197NON_VOTER, (n14,s14):198NON_VOTER, (n26,s26):199NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r18:00001{70000-80000} [(n3,s3):191, (n14,s14):159, (n16,s16):186NON_VOTER, (n6,s6):187NON_VOTER, (n7,s7):188NON_VOTER, (n4,s4):189NON_VOTER, (n24,s24):192NON_VOTER, (n27,s27):193NON_VOTER, (n22,s22):194NON_VOTER, (n23,s23):195NON_VOTER, (n20,s20):196NON_VOTER, (n15,s15):197NON_VOTER, (n28,s28):198NON_VOTER, (n9,s9):199NON_VOTER, (n17,s17):200NON_VOTER, (n5,s5):201NON_VOTER, (n10,s10):202NON_VOTER, (n2,s2):203NON_VOTER, (n8,s8):204NON_VOTER, (n21,s21):205NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r19:00001{80000-90000} [(n8,s8):182, (n15,s15):201, (n3,s3):197NON_VOTER, (n2,s2):198NON_VOTER, (n13,s13):199NON_VOTER, (n4,s4):200NON_VOTER, (n17,s17):202NON_VOTER, (n22,s22):203NON_VOTER, (n23,s23):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n10,s10):207NON_VOTER, (n16,s16):208NON_VOTER, (n6,s6):209NON_VOTER, (n1,s1):210NON_VOTER, (n26,s26):211NON_VOTER, (n18,s18):212NON_VOTER, (n25,s25):213NON_VOTER, (n5,s5):214NON_VOTER, (n21,s21):215NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r20:{0000190000-2147483647} [(n13,s13):232, (n9,s9):194, (n6,s6):235NON_VOTER, (n2,s2):236NON_VOTER, (n10,s10):237NON_VOTER, (n11,s11):238NON_VOTER, (n25,s25):239NON_VOTER, (n26,s26):240NON_VOTER, (n20,s20):241NON_VOTER, (n19,s19):242NON_VOTER, (n23,s23):243NON_VOTER, (n17,s17):244NON_VOTER, (n27,s27):245NON_VOTER, (n21,s21):246NON_VOTER, (n1,s1):247NON_VOTER, (n5,s5):248NON_VOTER, (n12,s12):249NON_VOTER, (n7,s7):250NON_VOTER, (n4,s4):251NON_VOTER, (n14,s14):252NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+over replicated:
+  r1:00000{00000-10000} [(n8,s8):233, (n12,s12):231, (n14,s14):257NON_VOTER, (n5,s5):258NON_VOTER, (n16,s16):261NON_VOTER, (n11,s11):260NON_VOTER, (n28,s28):262NON_VOTER, (n18,s18):263NON_VOTER, (n25,s25):264NON_VOTER, (n23,s23):265NON_VOTER, (n22,s22):266NON_VOTER, (n17,s17):267NON_VOTER, (n21,s21):268NON_VOTER, (n15,s15):269NON_VOTER, (n9,s9):270NON_VOTER, (n27,s27):271NON_VOTER, (n26,s26):272NON_VOTER, (n19,s19):273NON_VOTER, (n10,s10):274NON_VOTER, (n24,s24):275NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r2:00000{10000-20000} [(n10,s10):204, (n9,s9):170, (n13,s13):200NON_VOTER, (n3,s3):201NON_VOTER, (n8,s8):202NON_VOTER, (n2,s2):205NON_VOTER, (n26,s26):206NON_VOTER, (n24,s24):207NON_VOTER, (n19,s19):208NON_VOTER, (n27,s27):209NON_VOTER, (n22,s22):210NON_VOTER, (n17,s17):211NON_VOTER, (n6,s6):212NON_VOTER, (n15,s15):213NON_VOTER, (n4,s4):214NON_VOTER, (n25,s25):215NON_VOTER, (n11,s11):216NON_VOTER, (n20,s20):217NON_VOTER, (n7,s7):218NON_VOTER, (n23,s23):219NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r3:00000{20000-30000} [(n12,s12):194, (n4,s4):152, (n5,s5):190NON_VOTER, (n1,s1):191NON_VOTER, (n13,s13):192NON_VOTER, (n6,s6):195NON_VOTER, (n24,s24):196NON_VOTER, (n21,s21):197NON_VOTER, (n17,s17):198NON_VOTER, (n20,s20):199NON_VOTER, (n19,s19):200NON_VOTER, (n28,s28):201NON_VOTER, (n26,s26):202NON_VOTER, (n25,s25):203NON_VOTER, (n8,s8):204NON_VOTER, (n27,s27):205NON_VOTER, (n7,s7):206NON_VOTER, (n16,s16):207NON_VOTER, (n2,s2):208NON_VOTER, (n23,s23):209NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r4:00000{30000-40000} [(n9,s9):208, (n14,s14):210, (n6,s6):204NON_VOTER, (n16,s16):205NON_VOTER, (n15,s15):206NON_VOTER, (n3,s3):207NON_VOTER, (n28,s28):211NON_VOTER, (n20,s20):212NON_VOTER, (n17,s17):213NON_VOTER, (n12,s12):214NON_VOTER, (n7,s7):215NON_VOTER, (n23,s23):216NON_VOTER, (n19,s19):217NON_VOTER, (n4,s4):218NON_VOTER, (n24,s24):219NON_VOTER, (n1,s1):220NON_VOTER, (n11,s11):221NON_VOTER, (n27,s27):222NON_VOTER, (n5,s5):223NON_VOTER, (n13,s13):224NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r5:00000{40000-50000} [(n15,s15):200, (n12,s12):201, (n9,s9):245NON_VOTER, (n14,s14):242NON_VOTER, (n10,s10):246NON_VOTER, (n8,s8):244NON_VOTER, (n22,s22):247NON_VOTER, (n27,s27):248NON_VOTER, (n28,s28):249NON_VOTER, (n24,s24):250NON_VOTER, (n18,s18):251NON_VOTER, (n13,s13):252NON_VOTER, (n2,s2):253NON_VOTER, (n6,s6):254NON_VOTER, (n11,s11):255NON_VOTER, (n1,s1):256NON_VOTER, (n5,s5):257NON_VOTER, (n16,s16):258NON_VOTER, (n25,s25):259NON_VOTER, (n4,s4):260NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r6:00000{50000-60000} [(n16,s16):164, (n14,s14):195, (n1,s1):189NON_VOTER, (n7,s7):190NON_VOTER, (n2,s2):191NON_VOTER, (n15,s15):192NON_VOTER, (n21,s21):196NON_VOTER, (n19,s19):197NON_VOTER, (n20,s20):198NON_VOTER, (n26,s26):199NON_VOTER, (n12,s12):200NON_VOTER, (n17,s17):201NON_VOTER, (n8,s8):202NON_VOTER, (n5,s5):203NON_VOTER, (n13,s13):204NON_VOTER, (n18,s18):205NON_VOTER, (n3,s3):206NON_VOTER, (n22,s22):207NON_VOTER, (n4,s4):208NON_VOTER, (n10,s10):209NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r7:00000{60000-70000} [(n1,s1):211, (n15,s15):261, (n5,s5):257NON_VOTER, (n7,s7):258NON_VOTER, (n9,s9):259NON_VOTER, (n12,s12):260NON_VOTER, (n19,s19):262NON_VOTER, (n21,s21):263NON_VOTER, (n27,s27):264NON_VOTER, (n24,s24):265NON_VOTER, (n20,s20):266NON_VOTER, (n22,s22):267NON_VOTER, (n3,s3):268NON_VOTER, (n11,s11):269NON_VOTER, (n10,s10):270NON_VOTER, (n25,s25):271NON_VOTER, (n14,s14):272NON_VOTER, (n8,s8):273NON_VOTER, (n4,s4):274NON_VOTER, (n6,s6):275NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r8:00000{70000-80000} [(n5,s5):194, (n7,s7):198, (n16,s16):231NON_VOTER, (n6,s6):232NON_VOTER, (n9,s9):233NON_VOTER, (n11,s11):234NON_VOTER, (n18,s18):235NON_VOTER, (n25,s25):236NON_VOTER, (n22,s22):237NON_VOTER, (n26,s26):238NON_VOTER, (n12,s12):239NON_VOTER, (n20,s20):240NON_VOTER, (n19,s19):241NON_VOTER, (n8,s8):242NON_VOTER, (n21,s21):243NON_VOTER, (n4,s4):244NON_VOTER, (n24,s24):245NON_VOTER, (n2,s2):246NON_VOTER, (n28,s28):247NON_VOTER, (n27,s27):248NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r9:00000{80000-90000} [(n3,s3):184, (n11,s11):169, (n4,s4):198NON_VOTER, (n14,s14):199NON_VOTER, (n5,s5):200NON_VOTER, (n15,s15):201NON_VOTER, (n26,s26):202NON_VOTER, (n17,s17):203NON_VOTER, (n20,s20):204NON_VOTER, (n24,s24):205NON_VOTER, (n18,s18):206NON_VOTER, (n27,s27):207NON_VOTER, (n23,s23):208NON_VOTER, (n1,s1):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n9,s9):212NON_VOTER, (n25,s25):213NON_VOTER, (n7,s7):214NON_VOTER, (n16,s16):215NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r10:0000{090000-100000} [(n11,s11):241, (n10,s10):234, (n6,s6):255NON_VOTER, (n1,s1):256NON_VOTER, (n13,s13):257NON_VOTER, (n8,s8):259NON_VOTER, (n24,s24):260NON_VOTER, (n26,s26):261NON_VOTER, (n18,s18):262NON_VOTER, (n17,s17):263NON_VOTER, (n28,s28):264NON_VOTER, (n25,s25):265NON_VOTER, (n7,s7):266NON_VOTER, (n5,s5):267NON_VOTER, (n14,s14):268NON_VOTER, (n2,s2):269NON_VOTER, (n3,s3):270NON_VOTER, (n15,s15):271NON_VOTER, (n21,s21):272NON_VOTER, (n12,s12):273NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r11:00001{00000-10000} [(n9,s9):156, (n8,s8):198, (n1,s1):194NON_VOTER, (n14,s14):195NON_VOTER, (n3,s3):196NON_VOTER, (n10,s10):197NON_VOTER, (n23,s23):199NON_VOTER, (n19,s19):200NON_VOTER, (n26,s26):201NON_VOTER, (n27,s27):202NON_VOTER, (n25,s25):203NON_VOTER, (n24,s24):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n11,s11):207NON_VOTER, (n18,s18):208NON_VOTER, (n21,s21):209NON_VOTER, (n6,s6):210NON_VOTER, (n22,s22):211NON_VOTER, (n13,s13):212NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r12:00001{10000-20000} [(n10,s10):160, (n15,s15):202, (n4,s4):198NON_VOTER, (n3,s3):199NON_VOTER, (n9,s9):200NON_VOTER, (n5,s5):203NON_VOTER, (n22,s22):204NON_VOTER, (n18,s18):205NON_VOTER, (n28,s28):206NON_VOTER, (n21,s21):207NON_VOTER, (n17,s17):208NON_VOTER, (n2,s2):209NON_VOTER, (n20,s20):210NON_VOTER, (n26,s26):211NON_VOTER, (n19,s19):212NON_VOTER, (n27,s27):213NON_VOTER, (n24,s24):214NON_VOTER, (n13,s13):215NON_VOTER, (n7,s7):216NON_VOTER, (n12,s12):217NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r13:00001{20000-30000} [(n11,s11):234, (n14,s14):235, (n7,s7):229NON_VOTER, (n16,s16):230NON_VOTER, (n2,s2):231NON_VOTER, (n13,s13):232NON_VOTER, (n23,s23):236NON_VOTER, (n18,s18):237NON_VOTER, (n21,s21):238NON_VOTER, (n26,s26):239NON_VOTER, (n12,s12):240NON_VOTER, (n1,s1):241NON_VOTER, (n19,s19):242NON_VOTER, (n10,s10):243NON_VOTER, (n15,s15):244NON_VOTER, (n22,s22):245NON_VOTER, (n28,s28):246NON_VOTER, (n9,s9):247NON_VOTER, (n8,s8):248NON_VOTER, (n17,s17):249NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r14:00001{30000-40000} [(n1,s1):149, (n10,s10):191, (n6,s6):194NON_VOTER, (n14,s14):195NON_VOTER, (n4,s4):196NON_VOTER, (n9,s9):197NON_VOTER, (n17,s17):198NON_VOTER, (n28,s28):199NON_VOTER, (n19,s19):200NON_VOTER, (n21,s21):201NON_VOTER, (n18,s18):202NON_VOTER, (n27,s27):203NON_VOTER, (n2,s2):204NON_VOTER, (n16,s16):205NON_VOTER, (n23,s23):206NON_VOTER, (n26,s26):207NON_VOTER, (n3,s3):208NON_VOTER, (n25,s25):209NON_VOTER, (n20,s20):210NON_VOTER, (n13,s13):211NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r15:00001{40000-50000} [(n2,s2):254, (n11,s11):256, (n7,s7):250NON_VOTER, (n16,s16):251NON_VOTER, (n1,s1):253NON_VOTER, (n14,s14):257NON_VOTER, (n23,s23):258NON_VOTER, (n27,s27):259NON_VOTER, (n28,s28):260NON_VOTER, (n21,s21):261NON_VOTER, (n12,s12):262NON_VOTER, (n4,s4):263NON_VOTER, (n25,s25):264NON_VOTER, (n13,s13):265NON_VOTER, (n3,s3):266NON_VOTER, (n17,s17):267NON_VOTER, (n18,s18):268NON_VOTER, (n22,s22):269NON_VOTER, (n6,s6):270NON_VOTER, (n20,s20):271NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r16:00001{50000-60000} [(n8,s8):196, (n7,s7):177, (n12,s12):195NON_VOTER, (n5,s5):193NON_VOTER, (n4,s4):194NON_VOTER, (n10,s10):198NON_VOTER, (n21,s21):199NON_VOTER, (n25,s25):200NON_VOTER, (n27,s27):201NON_VOTER, (n24,s24):202NON_VOTER, (n18,s18):203NON_VOTER, (n22,s22):204NON_VOTER, (n28,s28):205NON_VOTER, (n16,s16):206NON_VOTER, (n3,s3):207NON_VOTER, (n13,s13):208NON_VOTER, (n1,s1):209NON_VOTER, (n11,s11):210NON_VOTER, (n9,s9):211NON_VOTER, (n2,s2):212NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r17:00001{60000-70000} [(n13,s13):168, (n15,s15):167, (n6,s6):182NON_VOTER, (n2,s2):183NON_VOTER, (n8,s8):184NON_VOTER, (n11,s11):185NON_VOTER, (n19,s19):186NON_VOTER, (n25,s25):187NON_VOTER, (n23,s23):188NON_VOTER, (n24,s24):189NON_VOTER, (n18,s18):190NON_VOTER, (n22,s22):191NON_VOTER, (n3,s3):192NON_VOTER, (n16,s16):193NON_VOTER, (n28,s28):194NON_VOTER, (n4,s4):195NON_VOTER, (n20,s20):196NON_VOTER, (n7,s7):197NON_VOTER, (n14,s14):198NON_VOTER, (n26,s26):199NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r18:00001{70000-80000} [(n3,s3):191, (n14,s14):159, (n16,s16):186NON_VOTER, (n6,s6):187NON_VOTER, (n7,s7):188NON_VOTER, (n4,s4):189NON_VOTER, (n24,s24):192NON_VOTER, (n27,s27):193NON_VOTER, (n22,s22):194NON_VOTER, (n23,s23):195NON_VOTER, (n20,s20):196NON_VOTER, (n15,s15):197NON_VOTER, (n28,s28):198NON_VOTER, (n9,s9):199NON_VOTER, (n17,s17):200NON_VOTER, (n5,s5):201NON_VOTER, (n10,s10):202NON_VOTER, (n2,s2):203NON_VOTER, (n8,s8):204NON_VOTER, (n21,s21):205NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r19:00001{80000-90000} [(n8,s8):182, (n15,s15):201, (n3,s3):197NON_VOTER, (n2,s2):198NON_VOTER, (n13,s13):199NON_VOTER, (n4,s4):200NON_VOTER, (n17,s17):202NON_VOTER, (n22,s22):203NON_VOTER, (n23,s23):204NON_VOTER, (n20,s20):205NON_VOTER, (n12,s12):206NON_VOTER, (n10,s10):207NON_VOTER, (n16,s16):208NON_VOTER, (n6,s6):209NON_VOTER, (n1,s1):210NON_VOTER, (n26,s26):211NON_VOTER, (n18,s18):212NON_VOTER, (n25,s25):213NON_VOTER, (n5,s5):214NON_VOTER, (n21,s21):215NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+  r20:{0000190000-2147483647} [(n13,s13):232, (n9,s9):194, (n6,s6):235NON_VOTER, (n2,s2):236NON_VOTER, (n10,s10):237NON_VOTER, (n11,s11):238NON_VOTER, (n25,s25):239NON_VOTER, (n26,s26):240NON_VOTER, (n20,s20):241NON_VOTER, (n19,s19):242NON_VOTER, (n23,s23):243NON_VOTER, (n17,s17):244NON_VOTER, (n27,s27):245NON_VOTER, (n21,s21):246NON_VOTER, (n1,s1):247NON_VOTER, (n5,s5):248NON_VOTER, (n12,s12):249NON_VOTER, (n7,s7):250NON_VOTER, (n4,s4):251NON_VOTER, (n14,s14):252NON_VOTER] applying num_replicas=5 constraints=[+az=a]
+violating constraints:
+  r1: [(a:2 voters 7 non_voters) (a3: 1 non_voter) (a4:2 voters 6 non_voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 9 non_voters) (c1: 2 non_voters) (c2: 3 non_voters) (c3: 4 non_voters)]
+  r2: [(a:2 voters 9 non_voters) (a2: 2 non_voters) (a3: 2 non_voters) (a4:2 voters 5 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 8 non_voters) (c1: 2 non_voters) (c2: 3 non_voters) (c3: 3 non_voters)]
+  r3: [(a:2 voters 8 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3:1 voter 2 non_voters) (a4:1 voter 4 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 9 non_voters) (c1: 3 non_voters) (c2: 2 non_voters) (c3: 4 non_voters)]
+  r4: [(a:2 voters 11 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3: 3 non_voters) (a4:2 voters 6 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 6 non_voters) (c1: 2 non_voters) (c2: 2 non_voters) (c3: 2 non_voters)]
+  r5: [(a:2 voters 12 non_voters) (a1: 1 non_voter) (a2: 1 non_voter) (a3: 3 non_voters) (a4:2 voters 7 non_voters) (b: 1 non_voter) (b1: 1 non_voter) (c: 5 non_voters) (c2: 2 non_voters) (c3: 3 non_voters)]
+  r6: [(a:2 voters 11 non_voters) (a1: 1 non_voter) (a2: 2 non_voters) (a3: 2 non_voters) (a4:2 voters 6 non_voters) (b: 2 non_voters) (b1: 2 non_voters) (c: 5 non_voters) (c1: 3 non_voters) (c2: 1 non_voter) (c3: 1 non_voter)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+	3.cluster: 
+only zone and region constraint keys are supported
+constraint:
+replicas=5
+voters=0
+constraints=[+az=a]
+voter_constraints=[]
+	executed at: 2022-03-21 15:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 num_voters:1 voter_constraints:<num_replicas:1 constraints:<key:"region" value:"e" > > 
+	executed at: 2022-03-21 15:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:1 voter 1 non_voter) (a4:1 voter 1 non_voter) (b: 2 non_voters) (b1: 2 non_voters) (c: 1 non_voter) (c1: 1 non_voter)]
+  r2: [(a:1 voter 2 non_voters) (a3: 1 non_voter) (a4:1 voter 1 non_voter) (b: 1 non_voter) (b1: 1 non_voter) (c: 1 non_voter) (c1: 1 non_voter)]
+  r3: [(a:1 voter 1 non_voter) (a3: 1 non_voter) (a4:1 voter) (c: 3 non_voters) (c1: 1 non_voter) (c2: 1 non_voter) (c3: 1 non_voter)]
+  r4: [(a:1 voter 1 non_voter) (a4:1 voter 1 non_voter) (c: 3 non_voters) (c1: 1 non_voter) (c3: 2 non_voters)]
+  r5: [(a:1 voter 2 non_voters) (a3: 1 non_voter) (a4:1 voter 1 non_voter) (c: 2 non_voters) (c2: 1 non_voter) (c3: 1 non_voter)]
+  r6: [(a:1 voter 3 non_voters) (a2: 1 non_voter) (a3: 1 non_voter) (a4:1 voter 1 non_voter) (c: 1 non_voter) (c3: 1 non_voter)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+	3.cluster: 
+region constraint value e is not found in the cluster set up
+constraint:
+replicas=5
+voters=1
+constraints=[]
+voter_constraints=[+region=e:1]
+	executed at: 2022-03-21 15:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 constraints:<num_replicas:1 constraints:<key:"zone" value:"CA" > > 
+	executed at: 2022-03-21 15:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [(a:2 voters) (a4:2 voters) (b:2 voters) (b1:2 voters) (c:1 voter) (c1:1 voter)]
+  r2: [(a:3 voters) (a3:1 voter) (a4:2 voters) (b:1 voter) (b1:1 voter) (c:1 voter) (c1:1 voter)]
+  r3: [(a:2 voters) (a3:1 voter) (a4:1 voter) (c:3 voters) (c1:1 voter) (c2:1 voter) (c3:1 voter)]
+  r4: [(a:2 voters) (a4:2 voters) (c:3 voters) (c1:1 voter) (c3:2 voters)]
+  r5: [(a:3 voters) (a3:1 voter) (a4:2 voters) (c:2 voters) (c2:1 voter) (c3:1 voter)]
+  r6: [(a:4 voters) (a2:1 voter) (a3:1 voter) (a4:2 voters) (c:1 voter) (c3:1 voter)]
+... and 14 more
+unsatisfiable:
+expected configuration:
+	1.zone:
+	2.region:
+	3.cluster: 
+zone constraint value CA is not found in the cluster set up
+constraint:
+replicas=5
+voters=0
+constraints=[+zone=CA:1]
+voter_constraints=[]
+	executed at: 2022-03-21 15:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 constraints:<num_replicas:1 constraints:<type:PROHIBITED key:"region" value:"b" > > 
+	executed at: 2022-03-21 15:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0 
+			passed
+sample1: pass
+----------------------------------
+----
+----
+
+
+	executed at: 2022-03-21 11:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:15 num_voters:6 constraints:<num_replicas:11 constraints:<key:"region" value:"a" > > constraints:<num_replicas:3 constraints:<key:"region" value:"c" > > constraints:<num_replicas:10 constraints:<key:"zone" value:"a4" > > voter_constraints:<num_replicas:3 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > >
+	executed at: 2022-03-21 12:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=0 violating=28 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [a: 3 voters, a2: 1 voter, a3: 1 voter, a4: 1 voter]
+  r1: [a: 3 voters, a2: 1 voter, a3: 1 voter, a4: 1 voter]
+  r2: [a: 3 voters, a4: 3 voters]
+... and 25 more
+ 	satisfiable:
+validation result:
+	1.zone:
+		a3: 1 voter
+		a4: 10 non_voters
+		b1: 1 voter
+	2.region:
+		a: 3 voters, 8 non_voters
+		b: 1 voter
+		c: 3 non_voters
+	3.cluster: 6 voters, 9 non_voters
+constraint:
+replicas=15
+voters=6
+constraints=[+region=a:11 +region=c:3 +zone=a4:10]
+voter_constraints=[+region=a:3 +zone=a3:1 +zone=b1:1]
+
+
+	executed at: 2022-03-21 12:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:2 constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > >
+	executed at: 2022-03-21 12:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 12:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:28 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > >
+	executed at: 2022-03-21 12:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 12:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:28 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > constraints:<num_replicas:3 constraints:<key:"zone" value:"a3" > > constraints:<num_replicas:10 constraints:<key:"zone" value:"a4" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > constraints:<num_replicas:3 constraints:<key:"zone" value:"c1" > > constraints:<num_replicas:3 constraints:<key:"zone" value:"c2" > > constraints:<num_replicas:4 constraints:<key:"zone" value:"c3" > > voter_constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > voter_constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:10 constraints:<key:"zone" value:"a4" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"c1" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"c2" > > voter_constraints:<num_replicas:4 constraints:<key:"zone" value:"c3" > >
+	executed at: 2022-03-21 12:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 12:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:25 constraints:<num_replicas:2 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"a" > >
+	executed at: 2022-03-21 12:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 12:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:27 num_voters:16 voter_constraints:<num_replicas:16 constraints:<key:"region" value:"a" > >
+	executed at: 2022-03-21 12:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 12:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:16 num_voters:3 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:3 constraints:<key:"zone" value:"a4" > >
+	executed at: 2022-03-21 13:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 13:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:3 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"c" > >
+	executed at: 2022-03-21 13:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 13:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:5 constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > constraints:<num_replicas:2 constraints:<key:"zone" value:"a3" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"c1" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"a3" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > voter_constraints:<num_replicas:1 constraints:<key:"zone" value:"c1" > >
+	executed at: 2022-03-21 13:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 13:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:5 constraints:<num_replicas:1 constraints:<key:"zone" value:"a2" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a3" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"b1" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"c1" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"b1" > >
+	executed at: 2022-03-21 13:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 13:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:4 num_voters:3 constraints:<num_replicas:1 constraints:<key:"region" value:"a" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a1" > > constraints:<num_replicas:1 constraints:<key:"zone" value:"a2" > > voter_constraints:<num_replicas:2 constraints:<key:"zone" value:"a2" > >
+	executed at: 2022-03-21 13:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 13:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > constraints:<constraints:<key:"zone" value:"a1" > >
+	executed at: 2022-03-21 13:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=20 violating=0 lease-violating=0 lease-less-preferred=0
+over replicated:
+  r1: [a: 1 voter 1 non-voter, a1: 1 voter, a4: 1 non-voter]
+  r2: [a: 1 voter, a1: 1 voter, c: 1 non-voter, c2: 1 non-voter]
+  r3: [a: 1 voter 1 non-voter, a1: 1 voter, a4: 1 non-voter]
+... and 17 more
+ 	satisfiable:
+validation result:
+	1.zone:
+	2.region:
+	3.cluster:
+constraint:
+replicas=0
+voters=0
+constraints=[+zone=a1]
+voter_constraints=[]
+
+
+	executed at: 2022-03-21 13:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:28 num_voters:28 constraints:<num_replicas:17 constraints:<key:"region" value:"a" > > constraints:<num_replicas:2 constraints:<key:"region" value:"b" > > constraints:<num_replicas:10 constraints:<key:"region" value:"c" > >
+	executed at: 2022-03-21 14:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [a: 2 voters, a1: 1 voter, a4: 1 voter, c: 1 voter, c1: 1 voter]
+  r2: [a: 2 voters, a1: 1 voter, a4: 1 voter, c: 1 voter, c2: 1 voter]
+  r3: [a: 3 voters, a1: 1 voter, a4: 2 voters]
+... and 17 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+	3.cluster:
+failed to satisfy constraints for region a
+constraint:
+replicas=28
+voters=28
+constraints=[+region=a:17 +region=b:2 +region=c:10]
+voter_constraints=[]
+
+
+	executed at: 2022-03-21 14:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:16 num_voters:3 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > > voter_constraints:<num_replicas:2 constraints:<key:"region" value:"c" > >
+	executed at: 2022-03-21 14:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=1, over=0 violating=22 lease-violating=0 lease-less-preferred=0
+under replicated:
+  r12: [a: 2 voters, a1: 1 voter, a4: 1 voter, c: 1 voter, c2: 1 voter]violating constraints:
+  r1: [a: 3 voters, a4: 3 voters]
+  r2: [a: 3 voters, a2: 1 voter, a4: 2 voters]
+  r3: [a: 3 voters, a3: 2 voters, a4: 1 voter]
+... and 19 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+		a: 16 non_voters
+		c: 2 voters
+	3.cluster: 3 voters, 15 non_voters
+failed to satisfy constraints for cluster
+constraint:
+replicas=16
+voters=3
+constraints=[+region=a:16]
+voter_constraints=[+region=c:2]
+
+
+	executed at: 2022-03-21 14:10:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:1 num_voters:2
+	executed at: 2022-03-21 14:20:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+	executed at: 2022-03-21 14:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:6 num_voters:2 constraints:<num_replicas:16 constraints:<key:"region" value:"a" > >
+	executed at: 2022-03-21 14:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+		a: 16 non_voters
+	3.cluster: 2 voters, 14 non_voters
+failed to satisfy constraints for cluster
+constraint:
+replicas=6
+voters=2
+constraints=[+region=a:16]
+voter_constraints=[]
+
+
+	executed at: 2022-03-21 14:30:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:20 num_voters:2 voter_constraints:<num_replicas:16 constraints:<key:"region" value:"a" > >
+	executed at: 2022-03-21 14:40:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+		a: 16 voters
+	3.cluster: 16 voters, 4 non_voters
+failed to satisfy constraints for cluster
+constraint:
+replicas=20
+voters=2
+constraints=[]
+voter_constraints=[+region=a:16]
+
+
+	executed at: 2022-03-21 14:40:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 num_voters:3 constraints:<constraints:<key:"region" value:"a" > > voter_constraints:<constraints:<key:"region" value:"b" > >
+	executed at: 2022-03-21 14:50:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=20, over=20 violating=20 lease-violating=0 lease-less-preferred=0
+under replicated:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 moreover replicated:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 moreviolating constraints:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+		a: 5 non_voters
+	3.cluster: 5 non_voters
+failed to satisfy constraints for region b
+constraint:
+replicas=5
+voters=3
+constraints=[+region=a]
+voter_constraints=[+region=b]
+
+
+	executed at: 2022-03-21 14:50:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 constraints:<constraints:<key:"az" value:"a" > >
+	executed at: 2022-03-21 15:00:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=20, over=20 violating=20 lease-violating=0 lease-less-preferred=0
+under replicated:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 moreover replicated:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 moreviolating constraints:
+  r1: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r2: [a: 2 voters 1 non-voter, a4: 2 voters 1 non-voter]
+  r3: [a: 2 voters 1 non-voter, a3: 1 voter 1 non-voter, a4: 1 voter]
+... and 17 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+	3.cluster:
+only zone and region constraint keys are supported
+constraint:
+replicas=5
+voters=0
+constraints=[+az=a]
+voter_constraints=[]
+
+
+	executed at: 2022-03-21 15:00:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 num_voters:1 voter_constraints:<num_replicas:1 constraints:<key:"region" value:"e" > >
+	executed at: 2022-03-21 15:10:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			failed:   conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=0 violating=20 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1: [a: 1 voter 1 non-voter, a4: 1 voter 1 non-voter, b: 1 non-voter, b1: 1 non-voter]
+  r2: [a: 1 voter 1 non-voter, a4: 1 voter 1 non-voter, b: 1 non-voter, b1: 1 non-voter]
+  r3: [a: 1 voter 1 non-voter, a3: 1 non-voter, a4: 1 voter, c: 1 non-voter, c2: 1 non-voter]
+... and 17 more
+ 	unsatisfiable:
+validation result:
+	1.zone:
+	2.region:
+	3.cluster:
+region constraint value e is not found in the cluster set up
+constraint:
+replicas=5
+voters=1
+constraints=[]
+voter_constraints=[+region=e:1]
+
+
+	executed at: 2022-03-21 15:10:00
+
+voter_constraints=[]
+
+
+	executed at: 2022-03-21 15:20:00
+		event: set span config event with span={0000000000-9999999999}, config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<ttl_seconds:14400 > num_replicas:5 constraints:<num_replicas:1 constraints:<type:PROHIBITED key:"region" value:"b" > >
+	executed at: 2022-03-21 15:30:00
+		event: assertion checking event
+			1. assertion=conformance unavailable=0 under=0 over=0 violating=0 lease-violating=0 lease-less-preferred=0
+			passed
+sample1: pass
+----------------------------------
+----
+unknown command: executed

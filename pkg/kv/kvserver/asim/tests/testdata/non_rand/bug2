@@ -15,15 +15,15 @@ eval duration=60m
 ----
 failed assertion sample 1
   conformance unavailable=0 under=0 over=0 violating=0 
-  actual unavailable=0 under=0, over=0 violating=24 lease-violating=0 lease-less-preferred=0
+  actual unavailable=0 under=0, over=0 violating=22 lease-violating=0 lease-less-preferred=0
 violating constraints:
-  r1: [(a:6 voters 6 non_voters) (a2:1 voter) (a3:1 voter) (a4:4 voters 6 non_voters) (c: 3 non_voters) (c1: 1 non_voter) (c3: 2 non_voters)]
-  r2: [(a:6 voters 5 non_voters) (a2:1 voter) (a3:1 voter) (a4:4 voters 5 non_voters) (c: 4 non_voters) (c1: 1 non_voter) (c2: 1 non_voter) (c3: 2 non_voters)]
-  r2: [(a:6 voters 5 non_voters) (a2:1 voter) (a3:1 voter) (a4:4 voters 5 non_voters) (c: 4 non_voters) (c1: 1 non_voter) (c2: 1 non_voter) (c3: 2 non_voters)]
-  r3: [(a:4 voters 8 non_voters) (a1: 1 non_voter) (a3:1 voter) (a4:3 voters 7 non_voters) (c:2 voters 1 non_voter) (c2:1 voter) (c3:1 voter 1 non_voter)]
-  r4: [(a:3 voters 9 non_voters) (a2:1 voter) (a3:1 voter) (a4:1 voter 9 non_voters) (c:3 voters) (c1:1 voter) (c2:2 voters)]
-  r5: [(a:5 voters 7 non_voters) (a2: 1 non_voter) (a3:1 voter) (a4:4 voters 6 non_voters) (c:1 voter 2 non_voters) (c1:1 voter 1 non_voter) (c2: 1 non_voter)]
-... and 18 more
+  r1: [(a:5 voters 7 non_voters) (a3:1 voter 1 non_voter) (a4:4 voters 6 non_voters) (c:1 voter 2 non_voters) (c2:1 voter) (c3: 2 non_voters)]
+  r2: [(a:5 voters 7 non_voters) (a2: 1 non_voter) (a3:1 voter) (a4:4 voters 6 non_voters) (c:1 voter 2 non_voters) (c1:1 voter 1 non_voter) (c3: 1 non_voter)]
+  r3: [(a:3 voters 9 non_voters) (a1: 1 non_voter) (a2:1 voter 1 non_voter) (a3:1 voter 2 non_voters) (a4:1 voter 5 non_voters) (c:3 voters) (c1:1 voter) (c2:1 voter) (c3:1 voter)]
+  r3: [(a:3 voters 9 non_voters) (a1: 1 non_voter) (a2:1 voter 1 non_voter) (a3:1 voter 2 non_voters) (a4:1 voter 5 non_voters) (c:3 voters) (c1:1 voter) (c2:1 voter) (c3:1 voter)]
+  r4: [(a:4 voters 8 non_voters) (a2:1 voter) (a3:1 voter) (a4:2 voters 8 non_voters) (c:2 voters 1 non_voter) (c1:1 voter) (c2:1 voter) (c3: 1 non_voter)]
+  r5: [(a:5 voters 7 non_voters) (a2: 1 non_voter) (a3:1 voter) (a4:4 voters 6 non_voters) (c:1 voter 2 non_voters) (c1: 1 non_voter) (c2:1 voter) (c3: 1 non_voter)]
+... and 16 more
 satisfiable:
 expected configuration:
 	1.zone:
