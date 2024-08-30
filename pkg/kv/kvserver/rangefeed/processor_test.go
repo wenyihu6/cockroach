@@ -424,6 +424,9 @@ func TestProcessorOmitRemote(t *testing.T) {
 	})
 }
 
+// TestProcessorSlowConsumer tests that buffered registration will drop events
+// and properly disconnect the stream when the buffer capacity exceeds. This
+// doesn't apply to unbuffered registrations.
 func TestProcessorSlowConsumer(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	testutils.RunValues(t, "feed type", testTypes, func(t *testing.T, rt rangefeedTestType) {
@@ -1521,7 +1524,6 @@ func TestProcessorContextCancellation(t *testing.T) {
 
 	// Try stopping both via the stopper and via Processor.Stop().
 	testutils.RunTrueAndFalse(t, "stopper", func(t *testing.T, useStopper bool) {
-
 		// Set up a transaction to push.
 		txnTS := hlc.Timestamp{WallTime: 10} // after resolved timestamp
 		txnMeta := enginepb.TxnMeta{
