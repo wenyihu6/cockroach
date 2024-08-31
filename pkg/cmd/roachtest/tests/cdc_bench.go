@@ -144,6 +144,7 @@ func registerCDCBench(r registry.Registry) {
 					Timeout:          2 * time.Hour,
 					Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 						runCDCBenchWorkload(ctx, t, c, ranges, readPercent, server, format, nullSink)
+						t.Fatalf("test passed but I want to see output")
 					},
 				})
 
