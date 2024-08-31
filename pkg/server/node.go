@@ -218,6 +218,12 @@ This metric is thus not an indicator of KV health.`,
 		Measurement: "Errors",
 		Unit:        metric.Unit_COUNT,
 	}
+	metaRangefeedCleanUp = metric.Metadata{
+		Name:        "rangefeed.level.cleanup",
+		Help:        "Number of errors at the node level",
+		Measurement: "Counts",
+		Unit:        metric.Unit_COUNT,
+	}
 )
 
 // Cluster settings.
@@ -277,6 +283,7 @@ type nodeMetrics struct {
 	ActiveMuxRangeFeed            *metric.Gauge
 	QueueSize                     *metric.Gauge
 	NodeLevelErrors               *metric.Counter
+	RangefeedCleanUp              *metric.Gauge
 }
 
 var _ rangefeed.RangefeedMetricsRecorder = &nodeMetrics{}
@@ -302,6 +309,7 @@ func makeNodeMetrics(reg *metric.Registry, histogramWindow time.Duration) *nodeM
 		NumMuxRangeFeed:               metric.NewCounter(metaTotalMuxRangeFeed),
 		QueueSize:                     metric.NewGauge(metaQueueSize),
 		NodeLevelErrors:               metric.NewCounter(metaNodeLevelErrors),
+		RangefeedCleanUp:              metric.NewGauge(metaRangefeedCleanUp),
 	}
 
 	for i := range nm.MethodCounts {
@@ -383,6 +391,14 @@ func (nm *nodeMetrics) IncQueueSize() {
 
 func (nm *nodeMetrics) DecQueueSize() {
 	nm.QueueSize.Dec(1)
+}
+
+func (nm *nodeMetrics) IncRangefeedCleanUp() {
+	nm.RangefeedCleanUp.Inc(1)
+}
+
+func (nm *nodeMetrics) DecRangefeedCleanUp() {
+	nm.RangefeedCleanUp.Dec(1)
 }
 
 // A Node manages a map of stores (by store ID) for which it serves
