@@ -142,8 +142,9 @@ func (bs *BufferedSender) SendBuffered(
 	//	bs.queueMu.overflow = true
 	//	return newRetryErrBufferCapacityExceeded()
 	//}
-
+	alloc.Use(context.Background())
 	bs.queueMu.buffer.Enqueue(&sharedMuxEvent{ev, alloc})
+	//bs.metrics.IncBufferedQueueEventSize()
 	return nil
 }
 
