@@ -17,7 +17,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/cockroach/pkg/util/queue"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
@@ -101,7 +100,7 @@ type BufferedSender struct {
 		syncutil.Mutex
 		stopped bool
 		//capacity int64
-		buffer   *queue.QueueWithFixedChunkSize[*sharedMuxEvent]
+		buffer   *eventQueue
 		overflow bool
 	}
 }
@@ -113,7 +112,7 @@ func NewBufferedSender(
 		sender:  sender,
 		metrics: metrics,
 	}
-	bs.queueMu.buffer = queue.NewQueueWithFixedChunkSize[*sharedMuxEvent]()
+	bs.queueMu.buffer = newEventQueue()
 	//bs.queueMu.capacity = bufferedSenderCapacity
 	return bs
 }
@@ -149,7 +148,7 @@ func (bs *BufferedSender) SendBuffered(
 	//	bs.queueMu.overflow = true
 	//	return newRetryErrBufferCapacityExceeded()
 	//}
-	bs.queueMu.buffer.Enqueue(&sharedMuxEvent{ev, alloc})
+	bs.queueMu.buffer.pushBack(sharedMuxEvent{ev, alloc})
 	return nil
 }
 
@@ -172,7 +171,7 @@ func (bs *BufferedSender) waitForEmptyBuffer(ctx context.Context) error {
 	}
 	for re := retry.StartWithCtx(ctx, opts); re.Next(); {
 		bs.queueMu.Lock()
-		caughtUp := bs.queueMu.buffer.Empty() // nolint:deferunlockcheck
+		caughtUp := bs.queueMu.buffer.Len() == 0 // nolint:deferunlockcheck
 		bs.queueMu.Unlock()
 		if caughtUp {
 			return nil
@@ -289,14 +288,14 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 }
 
 func (bs *BufferedSender) popFront() (
-	e *sharedMuxEvent,
+	e sharedMuxEvent,
 	success bool,
 	overflowed bool,
 	remains int64,
 ) {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
-	event, ok := bs.queueMu.buffer.Dequeue()
+	event, ok := bs.queueMu.buffer.popFront()
 	return event, ok, bs.queueMu.overflow, bs.queueMu.buffer.Len()
 }
 
@@ -339,10 +338,11 @@ func (bs *BufferedSender) Stop() {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
 	bs.queueMu.stopped = true
-	bs.queueMu.buffer.RemoveAll(func(e *sharedMuxEvent) {
-		e.alloc.Release(context.Background())
-		bs.metrics.DecQueueSize()
-	})
+	bs.queueMu.buffer.removeAll()
+	//func(e *sharedMuxEvent) {
+	//	e.alloc.Release(context.Background())
+	//	bs.metrics.DecQueueSize()
+	//})
 }
 
 func (bs *BufferedSender) Error() chan error {
