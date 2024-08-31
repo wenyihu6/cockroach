@@ -144,7 +144,7 @@ func (bs *BufferedSender) SendBuffered(
 	//	return newRetryErrBufferCapacityExceeded()
 	//}
 	bs.queueMu.buffer.pushBack(sharedMuxEvent{ev, alloc})
-	bs.metrics.IncBufferedQueueEventSize()
+	//bs.metrics.IncBufferedQueueEventSize()
 	return nil
 }
 
