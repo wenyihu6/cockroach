@@ -341,6 +341,7 @@ func (bs *BufferedSender) Stop() {
 	bs.queueMu.stopped = true
 	bs.queueMu.buffer.RemoveAll(func(e *sharedMuxEvent) {
 		e.alloc.Release(context.Background())
+		bs.metrics.DecQueueSize()
 	})
 }
 
