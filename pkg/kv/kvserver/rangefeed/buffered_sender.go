@@ -260,6 +260,7 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 			e, success, overflowed, remains := bs.popFront()
 			if success {
 				bs.metrics.UpdateQueueSize(remains)
+				bs.metrics.IncEventsSentCount()
 				err := bs.sender.Send(e.event)
 				e.alloc.Release(ctx)
 				if e.event.Error != nil {
