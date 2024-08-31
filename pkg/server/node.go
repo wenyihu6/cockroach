@@ -1996,8 +1996,12 @@ type streamManager interface {
 }
 
 // MuxRangeFeed implements the roachpb.InternalServer interface.
-func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) error {
-	defer n.metrics.NodeLevelErrors.Inc(1)
+func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) (err error) {
+	defer func() {
+		n.metrics.NodeLevelErrors.Inc(1)
+		log.Errorf(context.Background(),
+			"node mux rangefeed exited due to error: %v", err)
+	}()
 	lockedMuxStream := &lockedMuxStream{wrapped: muxStream}
 
 	// All context created below should derive from this context, which is
