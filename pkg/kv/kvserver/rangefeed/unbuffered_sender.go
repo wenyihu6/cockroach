@@ -26,6 +26,7 @@ type RangefeedMetricsRecorder interface {
 	UpdateMetricsOnRangefeedDisconnect()
 	IncQueueSize()
 	DecQueueSize()
+	UpdateQueueSize(int64)
 	IncRangefeedCleanUp()
 	DecRangefeedCleanUp()
 }

@@ -393,6 +393,10 @@ func (nm *nodeMetrics) DecQueueSize() {
 	nm.QueueSize.Dec(1)
 }
 
+func (nm *nodeMetrics) UpdateQueueSize(s int64) {
+	nm.QueueSize.Update(s)
+}
+
 func (nm *nodeMetrics) IncRangefeedCleanUp() {
 	nm.RangefeedCleanUp.Inc(1)
 }

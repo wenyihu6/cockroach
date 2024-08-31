@@ -129,12 +129,7 @@ func (bs *BufferedSender) SendBuffered(
 	ev *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
 ) (err error) {
 	bs.queueMu.Lock()
-	defer func() {
-		bs.queueMu.Unlock()
-		if err != nil {
-			bs.metrics.IncQueueSize()
-		}
-	}()
+	defer bs.queueMu.Unlock()
 	if bs.queueMu.stopped {
 		log.Errorf(context.Background(), "stream sender is stopped")
 		return errors.New("stream sender is stopped")
@@ -264,7 +259,7 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 		default:
 			e, success, overflowed, remains := bs.popFront()
 			if success {
-				bs.metrics.DecQueueSize()
+				bs.metrics.UpdateQueueSize(remains)
 				err := bs.sender.Send(e.event)
 				e.alloc.Release(ctx)
 				if e.event.Error != nil {
