@@ -128,13 +128,20 @@ func NewBufferedSender(
 // and release it if the return error is non-nil.
 func (bs *BufferedSender) SendBuffered(
 	ev *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
-) error {
+) (err error) {
 	bs.queueMu.Lock()
-	defer bs.queueMu.Unlock()
+	defer func() {
+		bs.queueMu.Unlock()
+		if err != nil {
+			bs.metrics.IncQueueSize()
+		}
+	}()
 	if bs.queueMu.stopped {
+		log.Errorf(context.Background(), "stream sender is stopped")
 		return errors.New("stream sender is stopped")
 	}
 	if bs.queueMu.overflow {
+		log.Error(context.Background(), "buffer capacity exceeded")
 		return newRetryErrBufferCapacityExceeded()
 	}
 
@@ -142,8 +149,6 @@ func (bs *BufferedSender) SendBuffered(
 	//	bs.queueMu.overflow = true
 	//	return newRetryErrBufferCapacityExceeded()
 	//}
-
-	bs.metrics.IncQueueSize()
 	bs.queueMu.buffer.Enqueue(&sharedMuxEvent{ev, alloc})
 	return nil
 }
