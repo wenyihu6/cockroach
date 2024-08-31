@@ -133,9 +133,8 @@ func registerCDCBench(r registry.Registry) {
 				r.Add(registry.TestSpec{
 					Name: fmt.Sprintf(
 						// cdc/workload/kv100/nodes=5/cpu=16/ranges=100k/protocol=mux/format=json/sink=null
-
 						"cdc/workload/kv%d/nodes=%d/cpu=%d/ranges=%s/protocol=mux/sink=null/format=%s/server=%s",
-						readPercent, nodes, cpus, formatSI(ranges), server, format),
+						readPercent, nodes, cpus, formatSI(ranges), format, server),
 					Owner:            registry.OwnerCDC,
 					Benchmark:        true,
 					Cluster:          r.MakeClusterSpec(nodes+2, spec.CPU(cpus)),
