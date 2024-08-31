@@ -174,11 +174,13 @@ func (ubr *unbufferedRegistration) publish(
 	ubr.assertEvent(ctx, event)
 	strippedEvent := ubr.maybeStripEvent(ctx, event)
 	if shouldSendToStream := ubr.maybePutInCatchUpBuffer(ctx, strippedEvent, alloc); shouldSendToStream {
+		//alloc.Use(context.Background())
 		// We are caught up and can send to underlying stream directly.
 		if err := ubr.stream.SendBuffered(strippedEvent, alloc); err != nil {
 			// BufferedSender is full or has been stopped. A node level shutdown is
 			// happening, so BufferedSender should disconnect all streams soon. There
 			// is not anything else we can do here. Disconnect again just in case.
+			alloc.Release(ctx)
 			ubr.disconnect(kvpb.NewError(err))
 		}
 	}
@@ -289,7 +291,7 @@ func (ubr *unbufferedRegistration) maybePutInCatchUpBuffer(
 	}
 
 	e := getPooledSharedEvent(sharedEvent{event: event, alloc: alloc})
-	alloc.Use(ctx)
+	alloc.Use(context.Background())
 	select {
 	case ubr.mu.catchUpBuf <- e:
 		ubr.mu.caughtUp = false
@@ -298,8 +300,8 @@ func (ubr *unbufferedRegistration) maybePutInCatchUpBuffer(
 		// catchUpBuf exceeded and we are dropping this event. Registration will
 		// need a catch-up scan after being disconnected.
 		ubr.mu.catchUpOverflowed = true
-		putPooledSharedEvent(e)
 		e.alloc.Release(ctx)
+		putPooledSharedEvent(e)
 	}
 	return false
 }
@@ -398,11 +400,12 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 		for {
 			select {
 			case e := <-ubr.mu.catchUpBuf:
-				if err := ubr.stream.SendBuffered(e.event, e.alloc); err != nil {
-					return err
-				}
+				err := ubr.stream.SendBuffered(e.event, e.alloc)
 				e.alloc.Release(ctx)
 				putPooledSharedEvent(e)
+				if err != nil {
+					return err
+				}
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-ubr.stream.Context().Done():
