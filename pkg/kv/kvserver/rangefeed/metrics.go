@@ -19,6 +19,12 @@ import (
 )
 
 var (
+	metaRangefeedGoroutineNanos = metric.Metadata{
+		Name:        "kv.rangefeed.output_loop.nanos",
+		Help:        "Time spent in RangeFeed catchup scan",
+		Measurement: "Nanoseconds",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
 	metaRangefeedCatachUpBufDiscardingNanos = metric.Metadata{
 		Name:        "kv.rangefeed.discarding_scan_nanos",
 		Help:        "Time spent in RangeFeed catchup scan",
@@ -83,6 +89,7 @@ var (
 
 // Metrics are for production monitoring of RangeFeeds.
 type Metrics struct {
+	RangefeedGoroutineNanos             *metric.Counter
 	RangefeedCatachUpBufDrainingNanos   *metric.Counter
 	RangefeedCatachUpBufDiscardingNanos *metric.Counter
 	RangeFeedCatchUpScanNanos           *metric.Counter
@@ -108,6 +115,7 @@ func (*Metrics) MetricStruct() {}
 // NewMetrics makes the metrics for RangeFeeds monitoring.
 func NewMetrics() *Metrics {
 	return &Metrics{
+		RangefeedGoroutineNanos:              metric.NewCounter(metaRangefeedGoroutineNanos),
 		RangefeedCatachUpBufDrainingNanos:    metric.NewCounter(metaRangefeedCatachUpBufDrainingNanos),
 		RangefeedCatachUpBufDiscardingNanos:  metric.NewCounter(metaRangefeedCatachUpBufDiscardingNanos),
 		RangeFeedCatchUpScanNanos:            metric.NewCounter(metaRangeFeedCatchUpScanNanos),
