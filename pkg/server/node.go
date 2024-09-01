@@ -2153,7 +2153,7 @@ func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) (err err
 			} else {
 				if bs, ok := sm.(*rangefeed.BufferedSender); ok {
 					if callback == nil {
-						log.Fatalf(streamCtx, "unexpected nil callback")
+						panic("unexpected nil callback")
 					}
 					bs.RegisterRangefeedCleanUp(req.StreamID, callback)
 				}

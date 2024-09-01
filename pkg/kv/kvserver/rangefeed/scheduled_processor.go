@@ -320,16 +320,17 @@ func (p *ScheduledProcessor) Register(
 
 	var r registration
 	var callback func()
-	bufferedStream, isBufferedStream := stream.(BufferedStream)
-	if isBufferedStream {
-		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
-			p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
-	} else {
-		r = newBufferedRegistration(
-			span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
-			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
-		)
-	}
+	//bufferedStream, isBufferedStream := stream.(BufferedStream)
+	//if isBufferedStream {
+	//	r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+	//		p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
+	//} else {
+	//
+	//}
+	r = newBufferedRegistration(
+		span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+		p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
+	)
 
 	filter := runRequest(p, func(ctx context.Context, p *ScheduledProcessor) *Filter {
 		if p.stopping {
@@ -382,6 +383,12 @@ func (p *ScheduledProcessor) Register(
 			r.runOutputLoop(ctx, p.RangeID)
 			if ubr, ok := r.(*unbufferedRegistration); ok {
 				ubr.metrics.RangefeedGoroutineNanos.Inc(timeutil.Since(start).Nanoseconds())
+				ubr.mu.Lock()
+				defer ubr.mu.Unlock()
+				if ubr.mu.catchUpBuf != nil {
+					log.Fatalf(ctx,
+						"unbuffered registration %s has non-nil catch-up buffer after runoutputloop", r)
+				}
 			}
 			if _, ok := r.(*bufferedRegistration); ok {
 				// If runOutputLoop ends, it means that the registration is disconnected
