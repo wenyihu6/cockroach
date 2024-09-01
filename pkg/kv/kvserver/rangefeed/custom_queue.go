@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-const eventQueueChunkSize = 8000
+const eventQueueChunkSize = 4000
 
 // idQueueChunk is a queue chunk of a fixed size which idQueue uses to extend
 // its storage. Chunks are kept in the pool to reduce allocations.
@@ -25,8 +25,7 @@ func getPooledQueueChunk() *queueChunk {
 }
 
 func putPooledQueueChunk(e *queueChunk) {
-	// Don't need to cleanup chunk as it is an array of values.
-	e.nextChunk = nil
+	*e = queueChunk{}
 	sharedQueueChunkSyncPool.Put(e)
 }
 
