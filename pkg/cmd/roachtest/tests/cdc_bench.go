@@ -62,9 +62,9 @@ const (
 	cdcBenchColdCatchupScan cdcBenchScanType = "catchup-cold"
 
 	cdcBenchNoServer                          cdcBenchServer = ""
-	cdcBenchProcessorServer                   cdcBenchServer = "processor"                      // legacy processor
-	cdcBenchSchedulerServer                   cdcBenchServer = "scheduler"                      // new scheduler
-	cdcBenchSchedulerServerWithBufferedSender cdcBenchServer = "scheduler_with_buffered_sender" // new scheduler
+	cdcBenchProcessorServer                   cdcBenchServer = "processor"                        // legacy processor
+	cdcBenchSchedulerServer                   cdcBenchServer = "scheduler_with_unbuffered_sender" // new scheduler
+	cdcBenchSchedulerServerWithBufferedSender cdcBenchServer = "scheduler_with_buffered_sender"   // new scheduler
 )
 
 var (
