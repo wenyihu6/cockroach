@@ -248,6 +248,12 @@ This metric is thus not an indicator of KV health.`,
 		Measurement: "Counts",
 		Unit:        metric.Unit_COUNT,
 	}
+	metaCleanUpQueue = metric.Metadata{
+		Name:        "node.level.cleanup.queue.size",
+		Help:        "Number of events buffered at the node level",
+		Measurement: "Counts",
+		Unit:        metric.Unit_COUNT,
+	}
 )
 
 // Cluster settings.
@@ -312,6 +318,7 @@ type nodeMetrics struct {
 	BufferedQueueEvent            *metric.Counter
 	ErrorEvents                   *metric.Counter
 	NodeLevelEvents               *metric.Counter
+	CleanUpQueue                  *metric.Gauge
 }
 
 var _ rangefeed.RangefeedMetricsRecorder = &nodeMetrics{}
@@ -342,6 +349,7 @@ func makeNodeMetrics(reg *metric.Registry, histogramWindow time.Duration) *nodeM
 		BufferedQueueEvent:            metric.NewCounter(metaBufferedQueueEvent),
 		ErrorEvents:                   metric.NewCounter(metaErrorEvents),
 		NodeLevelEvents:               metric.NewCounter(metaNodeLevelEvents),
+		CleanUpQueue:                  metric.NewGauge(metaCleanUpQueue),
 	}
 
 	for i := range nm.MethodCounts {
@@ -451,6 +459,10 @@ func (nm *nodeMetrics) IncBufferedQueueEventSize() {
 
 func (nm *nodeMetrics) IncNodeLevelEvents() {
 	nm.NodeLevelEvents.Inc(1)
+}
+
+func (nm *nodeMetrics) UpdateCleanUpQueue(s int64) {
+	nm.CleanUpQueue.Update(s)
 }
 
 // A Node manages a map of stores (by store ID) for which it serves

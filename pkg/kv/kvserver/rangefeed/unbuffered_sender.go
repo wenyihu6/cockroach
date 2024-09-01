@@ -33,6 +33,7 @@ type RangefeedMetricsRecorder interface {
 	IncErrorEvents()
 	//IncBufferedQueueEventSize()
 	IncNodeLevelEvents()
+	UpdateCleanUpQueue(int64)
 }
 
 // ServerStreamSender forwards MuxRangefeedEvents from UnbufferedSender to the

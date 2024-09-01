@@ -192,6 +192,7 @@ func (bs *BufferedSender) appendCleanUp(streamID int64) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	bs.mu.cleanupIDs = append(bs.mu.cleanupIDs, streamID)
+	bs.metrics.UpdateCleanUpQueue(int64(len(bs.mu.cleanupIDs)))
 	// Note that notifyCleanUp is non-blocking.
 	select {
 	case bs.notifyRangefeedCleanUp <- struct{}{}:
