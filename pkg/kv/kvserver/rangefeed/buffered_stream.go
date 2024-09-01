@@ -30,7 +30,7 @@ type BufferedStream interface {
 	// be invoked after Disconnect is called. It is up to the implementation on
 	// when or whether the callback is invoked. The caller should coordinate with
 	// the implementation.
-	RegisterRangefeedCleanUp(func())
+	//RegisterRangefeedCleanUp(func())
 }
 
 // BufferedPerRangeEventSink is an implementation of BufferedStream which is
@@ -120,6 +120,6 @@ func (s *BufferedPerRangeEventSink) Disconnect(err *kvpb.Error) {
 // the BufferedSender.run has stopped. Caller needs to ensure that this is not
 // called after BufferedSender has stopped. For p.Register, it is currently done
 // by waiting for runRequest to complete for each stores.RangeFeed call.
-func (s *BufferedPerRangeEventSink) RegisterRangefeedCleanUp(f func()) {
-	s.wrapped.RegisterRangefeedCleanUp(s.streamID, f)
-}
+//func (s *BufferedPerRangeEventSink) RegisterRangefeedCleanUp(f func()) {
+//	s.wrapped.RegisterRangefeedCleanUp(s.streamID, f)
+//}

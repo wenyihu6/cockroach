@@ -310,7 +310,7 @@ func (p *ScheduledProcessor) Register(
 	withOmitRemote bool,
 	stream Stream,
 	disconnectFn func(),
-) (bool, *Filter) {
+) (bool, func(), *Filter) {
 	// Synchronize the event channel so that this registration doesn't see any
 	// events that were consumed before this registration was called. Instead,
 	// it should see these events during its catch up scan.
@@ -319,6 +319,7 @@ func (p *ScheduledProcessor) Register(
 	blockWhenFull := p.Config.EventChanTimeout == 0 // for testing
 
 	var r registration
+	var callback func()
 	bufferedStream, isBufferedStream := stream.(BufferedStream)
 	if isBufferedStream {
 		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
@@ -352,7 +353,7 @@ func (p *ScheduledProcessor) Register(
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
 		if ubr, ok := r.(*unbufferedRegistration); ok {
-			bufferedStream.RegisterRangefeedCleanUp(func() {
+			callback = func() {
 				// BufferedRegistration has a dedicated goroutine watching for context
 				// cancellation and handles rangefeed cleanup. UnbufferedRegistration
 				// relies on this callback for rangefeed cleanup. In case that
@@ -370,7 +371,7 @@ func (p *ScheduledProcessor) Register(
 						f()
 					}
 				}
-			})
+			}
 		}
 
 		// Run an output loop for the registry. For BufferedRegistration, this is
@@ -413,9 +414,9 @@ func (p *ScheduledProcessor) Register(
 		return f
 	})
 	if filter != nil {
-		return true, filter
+		return true, callback, filter
 	}
-	return false, nil
+	return false, nil, nil
 }
 
 func (p *ScheduledProcessor) unregisterClient(r registration) bool {
