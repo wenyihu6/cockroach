@@ -43,9 +43,9 @@ func (tb *testBufferedStream) SendBuffered(
 	return tb.SendUnbuffered(e)
 }
 
-func (tb *testBufferedStream) RegisterRangefeedCleanUp(f func()) {
-	tb.cleanup = f
-}
+//func (tb *testBufferedStream) RegisterRangefeedCleanUp(f func()) {
+//	tb.cleanup = f
+//}
 
 func (tb *testBufferedStream) Disconnect(err *kvpb.Error) {
 	tb.Stream.Disconnect(err)

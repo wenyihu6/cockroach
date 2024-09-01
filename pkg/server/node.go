@@ -2050,9 +2050,16 @@ func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) error {
 			// nil without blocking on rangefeed completion. Events are then sent to
 			// the provided streamSink. If the rangefeed disconnects after being
 			// successfully registered, it calls streamSink.Disconnect with the error.
-			if err := n.stores.RangeFeed(req, streamSink); err != nil {
+			if callback, err := n.stores.RangeFeed(req, streamSink); err != nil {
 				sm.SendBufferedError(
 					makeMuxRangefeedErrorEvent(req.StreamID, req.RangeID, kvpb.NewError(err)))
+			} else {
+				if bs, ok := sm.(*rangefeed.BufferedSender); ok {
+					if callback == nil {
+						log.Fatalf(streamCtx, "unexpected nil callback")
+					}
+					bs.RegisterRangefeedCleanUp(req.StreamID, callback)
+				}
 			}
 		}
 	}

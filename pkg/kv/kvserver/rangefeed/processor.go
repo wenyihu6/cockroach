@@ -211,7 +211,7 @@ type Processor interface {
 		withOmitRemote bool,
 		stream Stream,
 		disconnectFn func(),
-	) (bool, *Filter)
+	) (bool, func(), *Filter)
 	// DisconnectSpanWithErr disconnects all rangefeed registrations that overlap
 	// the given span with the given error.
 	DisconnectSpanWithErr(span roachpb.Span, pErr *kvpb.Error)
@@ -595,7 +595,7 @@ func (p *LegacyProcessor) Register(
 	withOmitRemote bool,
 	stream Stream,
 	disconnectFn func(),
-) (bool, *Filter) {
+) (bool, func(), *Filter) {
 	if bs, ok := stream.(BufferedStream); ok {
 		log.Fatalf(p.AnnotateCtx(context.Background()), "BufferedStream is not supported by LegacyProcessor: %s", bs)
 	}
@@ -612,9 +612,9 @@ func (p *LegacyProcessor) Register(
 	select {
 	case p.regC <- r:
 		// Wait for response.
-		return true, <-p.filterResC
+		return true, nil, <-p.filterResC
 	case <-p.stoppedC:
-		return false, nil
+		return false, nil, nil
 	}
 }
 
