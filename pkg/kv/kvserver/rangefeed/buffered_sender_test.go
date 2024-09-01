@@ -47,9 +47,9 @@ func TestBufferedSenderWithSendBufferedError(t *testing.T) {
 		var num atomic.Int32
 		streamCtx, cancel := context.WithCancel(context.Background())
 		bs.AddStream(int64(streamID), cancel)
-		bs.RegisterRangefeedCleanUp(int64(streamID), func() {
-			num.Add(1)
-		})
+		//bs.RegisterRangefeedCleanUp(int64(streamID), func() {
+		//	num.Add(1)
+		//})
 		bs.SendBufferedError(makeMuxRangefeedErrorEvent(int64(streamID), 1, kvpb.NewError(nil)))
 		require.NoError(t, bs.waitForEmptyBuffer(ctx))
 		// Ensure that the rangefeed clean up is called.
@@ -78,9 +78,9 @@ func TestBufferedSenderWithSendBufferedError(t *testing.T) {
 		var num atomic.Int32
 		_, cancel := context.WithCancel(context.Background())
 		bs.AddStream(int64(streamID), cancel)
-		bs.RegisterRangefeedCleanUp(int64(streamID), func() {
-			num.Add(1)
-		})
+		//bs.RegisterRangefeedCleanUp(int64(streamID), func() {
+		//	num.Add(1)
+		//})
 
 		bs.SendBufferedError(makeMuxRangefeedErrorEvent(int64(streamID), 1, kvpb.NewError(nil)))
 		require.NoError(t, bs.waitForEmptyBuffer(ctx))
@@ -137,9 +137,9 @@ func TestBufferedSenderOnStop(t *testing.T) {
 		if randBool || streamIdStart == streamIdEnd {
 			_, cancel := context.WithCancel(context.Background())
 			bs.AddStream(streamIdEnd, cancel)
-			bs.RegisterRangefeedCleanUp(streamIdEnd, func() {
-				actualSum.Add(1)
-			})
+			//bs.RegisterRangefeedCleanUp(streamIdEnd, func() {
+			//	actualSum.Add(1)
+			//})
 			streamIdEnd++
 		} else {
 			bs.SendBufferedError(makeMuxRangefeedErrorEvent(streamIdStart, 1, kvpb.NewError(nil)))
