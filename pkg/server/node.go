@@ -236,6 +236,12 @@ This metric is thus not an indicator of KV health.`,
 		Measurement: "Counts",
 		Unit:        metric.Unit_COUNT,
 	}
+	metaErrorEvents = metric.Metadata{
+		Name:        "node.error.events.sent.count",
+		Help:        "Number of events buffered at the node level",
+		Measurement: "Counts",
+		Unit:        metric.Unit_COUNT,
+	}
 )
 
 // Cluster settings.
@@ -298,6 +304,7 @@ type nodeMetrics struct {
 	RangefeedCleanUp              *metric.Gauge
 	EventsSentCount               *metric.Counter
 	BufferedQueueEvent            *metric.Counter
+	ErrorEvents                   *metric.Counter
 }
 
 var _ rangefeed.RangefeedMetricsRecorder = &nodeMetrics{}
@@ -326,6 +333,7 @@ func makeNodeMetrics(reg *metric.Registry, histogramWindow time.Duration) *nodeM
 		RangefeedCleanUp:              metric.NewGauge(metaRangefeedCleanUp),
 		EventsSentCount:               metric.NewCounter(metaEventsSentCount),
 		BufferedQueueEvent:            metric.NewCounter(metaBufferedQueueEvent),
+		ErrorEvents:                   metric.NewCounter(metaErrorEvents),
 	}
 
 	for i := range nm.MethodCounts {
@@ -423,6 +431,10 @@ func (nm *nodeMetrics) DecRangefeedCleanUp() {
 
 func (nm *nodeMetrics) IncEventsSentCount() {
 	nm.EventsSentCount.Inc(1)
+}
+
+func (nm *nodeMetrics) IncErrorEvents() {
+	nm.ErrorEvents.Inc(1)
 }
 
 func (nm *nodeMetrics) IncBufferedQueueEventSize() {

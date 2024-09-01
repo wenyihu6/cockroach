@@ -26,6 +26,8 @@ type testRangefeedCounter struct {
 	count atomic.Int32
 }
 
+func (c *testRangefeedCounter) IncErrorEvents() {}
+
 func (c *testRangefeedCounter) IncBufferedQueueEventSize() {}
 
 func (c *testRangefeedCounter) IncEventsSentCount() {}

@@ -265,6 +265,7 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 				err := bs.sender.Send(e.event)
 				e.alloc.Release(ctx)
 				if e.event.Error != nil {
+					bs.metrics.IncErrorEvents()
 					// Add metrics here
 					if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(e.event.StreamID); ok {
 						bs.metrics.DecRangefeedCleanUp()

@@ -30,6 +30,7 @@ type RangefeedMetricsRecorder interface {
 	IncRangefeedCleanUp()
 	DecRangefeedCleanUp()
 	IncEventsSentCount()
+	IncErrorEvents()
 	//IncBufferedQueueEventSize()
 }
 
