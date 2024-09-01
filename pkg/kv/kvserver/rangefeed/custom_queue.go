@@ -25,8 +25,7 @@ func getPooledQueueChunk() *queueChunk {
 }
 
 func putPooledQueueChunk(e *queueChunk) {
-	// Don't need to cleanup chunk as it is an array of values.
-	e.nextChunk = nil
+	*e = queueChunk{}
 	sharedQueueChunkSyncPool.Put(e)
 }
 
