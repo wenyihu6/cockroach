@@ -2078,11 +2078,11 @@ func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) (err err
 	defer cancel()
 
 	var sm streamManager
-	if kvserver.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV) {
+	if rangefeed.RangefeedUseBufferedSender.Get(&n.storeCfg.Settings.SV) {
 		sm = rangefeed.NewBufferedSender(lockedMuxStream, n.metrics)
-		log.Infof(ctx, "using buffered sender for rangefeed")
 	} else {
-		sm = rangefeed.NewUnbufferedSender(lockedMuxStream, n.metrics)
+		// sm = rangefeed.NewUnbufferedSender(lockedMuxStream, n.metrics)
+		sm = rangefeed.NewBufferedSender(lockedMuxStream, n.metrics)
 	}
 
 	if err := sm.Start(ctx, n.stopper); err != nil {
@@ -2152,10 +2152,9 @@ func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) (err err
 					makeMuxRangefeedErrorEvent(req.StreamID, req.RangeID, kvpb.NewError(err)))
 			} else {
 				if bs, ok := sm.(*rangefeed.BufferedSender); ok {
-					if callback == nil {
-						panic("unexpected nil callback")
+					if callback != nil {
+						bs.RegisterRangefeedCleanUp(req.StreamID, callback)
 					}
-					bs.RegisterRangefeedCleanUp(req.StreamID, callback)
 				}
 			}
 		}

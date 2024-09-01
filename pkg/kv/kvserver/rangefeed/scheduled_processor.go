@@ -23,6 +23,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/errors"
+	"github.com/cockroachdb/cockroach/pkg/settings"
 )
 
 // request is any action on processor which is not a data path. e.g. request
@@ -285,6 +286,18 @@ func (p *ScheduledProcessor) sendStop(pErr *kvpb.Error) {
 	})
 }
 
+// RangefeedUseBufferedSender controls whether rangefeed uses a node level
+// buffered sender to buffer events instead of buffering events separately in a
+// channel at a per client per registration level. It is currently left
+// unimplemented and disabled everywhere (#126560). Panics if enabled.
+var RangefeedUseBufferedSender = settings.RegisterBoolSetting(
+	settings.SystemOnly,
+	"kv.rangefeed.buffered_stream_sender.enabled",
+	"use buffered sender for all range feeds instead of buffering events "+
+		"separately per client per range",
+	false,
+)
+
 // Register registers the stream over the specified span of keys.
 //
 // The registration will not observe any events that were consumed before this
@@ -322,15 +335,17 @@ func (p *ScheduledProcessor) Register(
 	var callback func()
 	//bufferedStream, isBufferedStream := stream.(BufferedStream)
 	//if isBufferedStream {
-	//	r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
-	//		p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
-	//} else {
-	//
-	//}
-	r = newBufferedRegistration(
-		span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
-		p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
-	)
+	if RangefeedUseBufferedSender.Get(&p.Settings.SV) {
+		log.Error(context.Background(), "using unbuffered registration")
+		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+			p.Config.EventChanCap, p.Metrics, stream.(BufferedStream), disconnectFn)
+	} else {
+		r = newBufferedRegistration(
+			span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
+			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
+		)
+	}
+
 
 	filter := runRequest(p, func(ctx context.Context, p *ScheduledProcessor) *Filter {
 		if p.stopping {
