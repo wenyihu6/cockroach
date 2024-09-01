@@ -155,6 +155,7 @@ func (bs *BufferedSender) SendUnbuffered(event *kvpb.MuxRangeFeedEvent) error {
 	if event.Error != nil {
 		log.Fatalf(context.Background(), "unexpected: SendUnbuffered called with error event")
 	}
+	bs.metrics.IncNodeLevelEvents()
 	return bs.sender.Send(event)
 }
 
@@ -262,6 +263,7 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 			if success {
 				bs.metrics.UpdateQueueSize(remains)
 				bs.metrics.IncEventsSentCount()
+				bs.metrics.IncNodeLevelEvents()
 				err := bs.sender.Send(e.event)
 				e.alloc.Release(ctx)
 				if e.event.Error != nil {
