@@ -224,10 +224,6 @@ func (ubr *unbufferedRegistration) disconnect(pErr *kvpb.Error) {
 // runOutputLoop to not start at all and no one is draining catch-up buffer
 // during reviews
 func (ubr *unbufferedRegistration) runOutputLoop(ctx context.Context, forStacks roachpb.RangeID) {
-	start := timeutil.Now()
-	defer func() {
-		ubr.metrics.RangefeedGoroutineNanos.Inc(timeutil.Since(start).Nanoseconds())
-	}()
 	ubr.mu.Lock()
 	if ubr.mu.disconnected {
 		// already disconnected
