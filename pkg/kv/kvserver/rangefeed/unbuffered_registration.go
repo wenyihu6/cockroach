@@ -173,7 +173,6 @@ func (ubr *unbufferedRegistration) publish(
 ) {
 	ubr.assertEvent(ctx, event)
 	strippedEvent := ubr.maybeStripEvent(ctx, event)
-	alloc.Use(ctx)
 	if shouldSendToStream := ubr.maybePutInCatchUpBuffer(ctx, strippedEvent, alloc); shouldSendToStream {
 		//alloc.Use(context.Background())
 		// We are caught up and can send to underlying stream directly.
@@ -283,7 +282,6 @@ func (ubr *unbufferedRegistration) maybePutInCatchUpBuffer(
 		// unregisters from processor when callback registered via
 		// RegisterRangefeedCleanUp is called (which can happen late). Thus, we
 		// check for disconnected to sync here.
-		alloc.Release(ctx)
 		return false
 	}
 	// Disconnected or catchUpOverflowed is not set and catchUpBuf is nil -> Safe
@@ -293,7 +291,7 @@ func (ubr *unbufferedRegistration) maybePutInCatchUpBuffer(
 	}
 
 	e := getPooledSharedEvent(sharedEvent{event: event, alloc: alloc})
-	//alloc.Use(context.Background())
+	alloc.Use(context.Background())
 	select {
 	case ubr.mu.catchUpBuf <- e:
 		ubr.mu.caughtUp = false
@@ -404,9 +402,10 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 		for {
 			select {
 			case e := <-ubr.mu.catchUpBuf:
+				err := ubr.stream.SendBuffered(e.event, e.alloc)
 				putPooledSharedEvent(e)
-				if err := ubr.stream.SendBuffered(e.event, e.alloc); err != nil {
-					e.alloc.Release(ctx)
+				e.alloc.Release(ctx)
+				if err != nil {
 					return err
 				}
 			case <-ctx.Done():
