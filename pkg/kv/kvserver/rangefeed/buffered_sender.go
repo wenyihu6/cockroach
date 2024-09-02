@@ -103,7 +103,7 @@ type BufferedSender struct {
 		buffer   *eventQueue
 		overflow bool
 	}
-
+	notifyDataC            chan struct{}
 	notifyRangefeedCleanUp chan struct{}
 	mu                     struct {
 		syncutil.Mutex
@@ -121,6 +121,7 @@ func NewBufferedSender(
 	bs.queueMu.buffer = newEventQueue()
 	//bs.queueMu.capacity = bufferedSenderCapacity
 	bs.notifyRangefeedCleanUp = make(chan struct{}, 1)
+	bs.notifyDataC = make(chan struct{}, 1)
 	return bs
 }
 
@@ -152,6 +153,10 @@ func (bs *BufferedSender) SendBuffered(
 	//}
 	alloc.Use(context.Background())
 	bs.queueMu.buffer.pushBack(sharedMuxEvent{ev, alloc})
+	select {
+	case bs.notifyDataC <- struct{}{}:
+	default:
+	}
 	//bs.metrics.IncBufferedQueueEventSize()
 	return nil
 }
@@ -300,30 +305,34 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 					(*cleanUp)()
 				}
 			}
-		default:
-			e, success, overflowed, remains := bs.popFront()
-			if success {
-				bs.metrics.UpdateQueueSize(remains)
-				bs.metrics.IncEventsSentCount()
-				bs.metrics.IncNodeLevelEvents()
-				err := bs.sender.Send(e.event)
-				e.alloc.Release(ctx)
-				//if e.event.Error != nil {
-				//	bs.metrics.IncErrorEvents()
-				//	// Add metrics here
-				//	if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(e.event.StreamID); ok {
-				//		bs.metrics.DecRangefeedCleanUp()
-				//		// TODO(wenyihu6): add more observability metrics into how long the
-				//		// clean up call is taking
-				//		(*cleanUp)()
-				//	}
-				//}
-				if err != nil {
-					return err
+		case <-bs.notifyDataC:
+			for {
+				e, success, overflowed, remains := bs.popFront()
+				if success {
+					bs.metrics.UpdateQueueSize(remains)
+					bs.metrics.IncEventsSentCount()
+					bs.metrics.IncNodeLevelEvents()
+					err := bs.sender.Send(e.event)
+					e.alloc.Release(ctx)
+					//if e.event.Error != nil {
+					//	bs.metrics.IncErrorEvents()
+					//	// Add metrics here
+					//	if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(e.event.StreamID); ok {
+					//		bs.metrics.DecRangefeedCleanUp()
+					//		// TODO(wenyihu6): add more observability metrics into how long the
+					//		// clean up call is taking
+					//		(*cleanUp)()
+					//	}
+					//}
+					if err != nil {
+						return err
+					}
+					if overflowed && remains == int64(0) {
+						return newRetryErrBufferCapacityExceeded()
+					}
+				} else {
+					break
 				}
-			}
-			if overflowed && remains == int64(0) {
-				return newRetryErrBufferCapacityExceeded()
 			}
 		}
 	}
