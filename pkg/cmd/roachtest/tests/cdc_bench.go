@@ -62,9 +62,9 @@ const (
 	cdcBenchColdCatchupScan cdcBenchScanType = "catchup-cold"
 
 	cdcBenchNoServer                          cdcBenchServer = ""
-	cdcBenchProcessorServer                   cdcBenchServer = "processor"                      // legacy processor
-	cdcBenchSchedulerServer                   cdcBenchServer = "scheduler"                      // new scheduler
-	cdcBenchSchedulerServerWithBufferedSender cdcBenchServer = "scheduler_with_buffered_sender" // new scheduler
+	cdcBenchProcessorServer                   cdcBenchServer = "processor"                        // legacy processor
+	cdcBenchSchedulerServer                   cdcBenchServer = "scheduler_with_unbuffered_sender" // new scheduler
+	cdcBenchSchedulerServerWithBufferedSender cdcBenchServer = "scheduler_with_buffered_sender"   // new scheduler
 )
 
 var (
@@ -122,7 +122,7 @@ func registerCDCBench(r registry.Registry) {
 				CompatibleClouds: registry.AllExceptAWS,
 				Suites:           registry.Suites(registry.Nightly),
 				RequiresLicense:  true,
-				Timeout:          time.Hour,
+				Timeout:          2 * time.Hour,
 				Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 					runCDCBenchWorkload(ctx, t, c, ranges, readPercent, "", "", nullSink)
 				},
@@ -132,15 +132,16 @@ func registerCDCBench(r registry.Registry) {
 			for _, server := range cdcBenchServers {
 				r.Add(registry.TestSpec{
 					Name: fmt.Sprintf(
-						"cdc/workload/kv%d/nodes=%d/cpu=%d/ranges=%s/server=%s/protocol=mux/format=%s/sink=null",
-						readPercent, nodes, cpus, formatSI(ranges), server, format),
+						// cdc/workload/kv100/nodes=5/cpu=16/ranges=100k/protocol=mux/format=json/sink=null
+						"cdc/workload/kv%d/nodes=%d/cpu=%d/ranges=%s/protocol=mux/sink=null/format=%s/server=%s",
+						readPercent, nodes, cpus, formatSI(ranges), format, server),
 					Owner:            registry.OwnerCDC,
 					Benchmark:        true,
 					Cluster:          r.MakeClusterSpec(nodes+2, spec.CPU(cpus)),
 					CompatibleClouds: registry.AllExceptAWS,
 					Suites:           registry.Suites(registry.Nightly),
 					RequiresLicense:  true,
-					Timeout:          time.Hour,
+					Timeout:          2 * time.Hour,
 					Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 						runCDCBenchWorkload(ctx, t, c, ranges, readPercent, server, format, nullSink)
 					},
