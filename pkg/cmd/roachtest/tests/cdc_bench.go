@@ -429,7 +429,6 @@ func runCDCBenchWorkload(
 		settings.ClusterSettings["kv.rangefeed.scheduler.enabled"] = "true"
 	case cdcBenchSchedulerServerWithBufferedSender:
 		settings.ClusterSettings["kv.rangefeed.scheduler.enabled"] = "true"
-		settings.ClusterSettings["kv.rangefeed.buffered_stream_sender.enabled"] = "true"
 	case cdcBenchNoServer:
 	default:
 		t.Fatalf("unknown server type %q", server)
