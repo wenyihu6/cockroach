@@ -101,7 +101,7 @@ type BufferedSender struct {
 		syncutil.Mutex
 		stopped bool
 		//capacity int64
-		buffer   *queue.QueueWithFixedChunkSize[*sharedMuxEvent]
+		buffer   *queue.QueueWithFixedChunkSize[sharedMuxEvent]
 		overflow bool
 	}
 	notifyDataC            chan struct{}
@@ -119,7 +119,7 @@ func NewBufferedSender(
 		sender:  sender,
 		metrics: metrics,
 	}
-	bs.queueMu.buffer = queue.NewQueueWithFixedChunkSize[*sharedMuxEvent]()
+	bs.queueMu.buffer = queue.NewQueueWithFixedChunkSize[sharedMuxEvent]()
 	//bs.queueMu.capacity = bufferedSenderCapacity
 	bs.notifyRangefeedCleanUp = make(chan struct{}, 1)
 	bs.notifyDataC = make(chan struct{}, 1)
@@ -151,7 +151,7 @@ func (bs *BufferedSender) SendBuffered(
 	//	return newRetryErrBufferCapacityExceeded()
 	//}
 	alloc.Use(context.Background())
-	bs.queueMu.buffer.Enqueue(&sharedMuxEvent{ev, alloc})
+	bs.queueMu.buffer.Enqueue(sharedMuxEvent{ev, alloc})
 	select {
 	case bs.notifyDataC <- struct{}{}:
 	default:
@@ -321,7 +321,7 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 }
 
 func (bs *BufferedSender) popFront() (
-	e *sharedMuxEvent,
+	e sharedMuxEvent,
 	success bool,
 	overflowed bool,
 	remains int64,
@@ -371,7 +371,7 @@ func (bs *BufferedSender) Stop() {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
 	bs.queueMu.stopped = true
-	bs.queueMu.buffer.RemoveAll(func(e *sharedMuxEvent) {
+	bs.queueMu.buffer.RemoveAll(func(e sharedMuxEvent) {
 		e.alloc.Release(context.Background())
 	})
 }
