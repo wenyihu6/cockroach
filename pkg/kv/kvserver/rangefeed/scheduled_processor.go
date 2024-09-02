@@ -325,6 +325,7 @@ func (p *ScheduledProcessor) Register(
 		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
 			p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
 	} else {
+		p.Metrics.RangefeedBufferedRegistration.Inc(1)
 		r = newBufferedRegistration(
 			span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
 			p.Config.EventChanCap, blockWhenFull, p.Metrics, stream, disconnectFn,
