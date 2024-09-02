@@ -103,9 +103,9 @@ type BufferedSender struct {
 		buffer   *eventQueue
 		overflow bool
 	}
-	notifyDataC            chan struct{}
-	notifyRangefeedCleanUp chan struct{}
-	mu                     struct {
+	notifyDataC chan struct{}
+	//notifyRangefeedCleanUp chan struct{}
+	mu struct {
 		syncutil.Mutex
 		cleanupIDs []int64
 	}
@@ -120,7 +120,7 @@ func NewBufferedSender(
 	}
 	bs.queueMu.buffer = newEventQueue()
 	//bs.queueMu.capacity = bufferedSenderCapacity
-	bs.notifyRangefeedCleanUp = make(chan struct{}, 1)
+	//bs.notifyRangefeedCleanUp = make(chan struct{}, 1)
 	bs.notifyDataC = make(chan struct{}, 1)
 	return bs
 }
@@ -193,17 +193,17 @@ func (bs *BufferedSender) waitForEmptyBuffer(ctx context.Context) error {
 	return errors.New("buffered sender failed to send in time")
 }
 
-func (bs *BufferedSender) appendCleanUp(streamID int64) {
-	bs.mu.Lock()
-	defer bs.mu.Unlock()
-	bs.mu.cleanupIDs = append(bs.mu.cleanupIDs, streamID)
-	bs.metrics.UpdateCleanUpQueue(int64(len(bs.mu.cleanupIDs)))
-	// Note that notifyCleanUp is non-blocking.
-	select {
-	case bs.notifyRangefeedCleanUp <- struct{}{}:
-	default:
-	}
-}
+//func (bs *BufferedSender) appendCleanUp(streamID int64) {
+//	bs.mu.Lock()
+//	defer bs.mu.Unlock()
+//	bs.mu.cleanupIDs = append(bs.mu.cleanupIDs, streamID)
+//	bs.metrics.UpdateCleanUpQueue(int64(len(bs.mu.cleanupIDs)))
+//	// Note that notifyCleanUp is non-blocking.
+//	select {
+//	case bs.notifyRangefeedCleanUp <- struct{}{}:
+//	default:
+//	}
+//}
 
 func (bs *BufferedSender) detachCleanUpIds() []int64 {
 	bs.mu.Lock()
@@ -232,9 +232,9 @@ func (bs *BufferedSender) SendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
 		}
 	}
 
-	if _, ok := bs.rangefeedCleanup.Load(ev.StreamID); ok {
-		bs.appendCleanUp(ev.StreamID)
-	}
+	//if _, ok := bs.rangefeedCleanup.Load(ev.StreamID); ok {
+	//	bs.appendCleanUp(ev.StreamID)
+	//}
 }
 
 // RegisterRangefeedCleanUp registers a cleanup callback for unbuffered
@@ -295,16 +295,16 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 			// Top level goroutine will receive the stopper quiesce signal and handle
 			// error.
 			return nil
-		case <-bs.notifyRangefeedCleanUp:
-			toCleanUp := bs.detachCleanUpIds()
-			for _, streamID := range toCleanUp {
-				if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(streamID); ok {
-					bs.metrics.IncErrorEvents()
-					// TODO(wenyihu6): add more observability metrics into how long the
-					// clean up call is taking
-					(*cleanUp)()
-				}
-			}
+		//case <-bs.notifyRangefeedCleanUp:
+		//	toCleanUp := bs.detachCleanUpIds()
+		//	for _, streamID := range toCleanUp {
+		//		if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(streamID); ok {
+		//			bs.metrics.IncErrorEvents()
+		//			// TODO(wenyihu6): add more observability metrics into how long the
+		//			// clean up call is taking
+		//			(*cleanUp)()
+		//		}
+		//	}
 		case <-bs.notifyDataC:
 			for {
 				e, success, overflowed, remains := bs.popFront()
@@ -314,16 +314,16 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 					bs.metrics.IncNodeLevelEvents()
 					err := bs.sender.Send(e.event)
 					e.alloc.Release(ctx)
-					//if e.event.Error != nil {
-					//	bs.metrics.IncErrorEvents()
-					//	// Add metrics here
-					//	if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(e.event.StreamID); ok {
-					//		bs.metrics.DecRangefeedCleanUp()
-					//		// TODO(wenyihu6): add more observability metrics into how long the
-					//		// clean up call is taking
-					//		(*cleanUp)()
-					//	}
-					//}
+					if e.event.Error != nil {
+						bs.metrics.IncErrorEvents()
+						// Add metrics here
+						if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(e.event.StreamID); ok {
+							bs.metrics.DecRangefeedCleanUp()
+							// TODO(wenyihu6): add more observability metrics into how long the
+							// clean up call is taking
+							(*cleanUp)()
+						}
+					}
 					if err != nil {
 						return err
 					}
