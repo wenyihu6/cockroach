@@ -427,6 +427,7 @@ func runCDCBenchWorkload(
 		settings.ClusterSettings["kv.rangefeed.scheduler.enabled"] = "false"
 	case cdcBenchSchedulerServer:
 		settings.ClusterSettings["kv.rangefeed.scheduler.enabled"] = "true"
+		settings.ClusterSettings["kv.rangefeed.buffered_stream_sender.enabled"] = "false"
 	case cdcBenchSchedulerServerWithBufferedSender:
 		settings.ClusterSettings["kv.rangefeed.scheduler.enabled"] = "true"
 		settings.ClusterSettings["kv.rangefeed.buffered_stream_sender.enabled"] = "true"
