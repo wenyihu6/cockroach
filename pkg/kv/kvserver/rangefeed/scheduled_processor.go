@@ -322,6 +322,7 @@ func (p *ScheduledProcessor) Register(
 	var callback func()
 	bufferedStream, isBufferedStream := stream.(BufferedStream)
 	if isBufferedStream {
+		p.Metrics.RangefeedUnbufferedRegistration.Inc(1)
 		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
 			p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
 	} else {

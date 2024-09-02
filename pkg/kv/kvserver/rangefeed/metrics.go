@@ -19,6 +19,12 @@ import (
 )
 
 var (
+	metaRangefeedUnbufferedRegistration = metric.Metadata{
+		Name:        "kv.unbuffered_registration.count",
+		Help:        "Number of buffered registration should be zero",
+		Measurement: "Count",
+		Unit:        metric.Unit_COUNT,
+	}
 	metaRangefeedBufferedRegistration = metric.Metadata{
 		Name:        "kv.buffered_registration.count",
 		Help:        "Number of buffered registration should be zero",
@@ -95,6 +101,7 @@ var (
 
 // Metrics are for production monitoring of RangeFeeds.
 type Metrics struct {
+	RangefeedUnbufferedRegistration     *metric.Counter
 	RangefeedBufferedRegistration       *metric.Counter
 	RangefeedGoroutineNanos             *metric.Counter
 	RangefeedCatachUpBufDrainingNanos   *metric.Counter
@@ -122,6 +129,7 @@ func (*Metrics) MetricStruct() {}
 // NewMetrics makes the metrics for RangeFeeds monitoring.
 func NewMetrics() *Metrics {
 	return &Metrics{
+		RangefeedUnbufferedRegistration:      metric.NewCounter(metaRangefeedUnbufferedRegistration),
 		RangefeedBufferedRegistration:        metric.NewCounter(metaRangefeedBufferedRegistration),
 		RangefeedGoroutineNanos:              metric.NewCounter(metaRangefeedGoroutineNanos),
 		RangefeedCatachUpBufDrainingNanos:    metric.NewCounter(metaRangefeedCatachUpBufDrainingNanos),
