@@ -19,6 +19,24 @@ import (
 )
 
 var (
+	metaRangefeedGoroutineNanos = metric.Metadata{
+		Name:        "kv.rangefeed.output_loop.nanos",
+		Help:        "Time spent in RangeFeed catchup scan",
+		Measurement: "Nanoseconds",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
+	metaRangefeedCatachUpBufDiscardingNanos = metric.Metadata{
+		Name:        "kv.rangefeed.discarding_scan_nanos",
+		Help:        "Time spent in RangeFeed catchup scan",
+		Measurement: "Nanoseconds",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
+	metaRangefeedCatachUpBufDrainingNanos = metric.Metadata{
+		Name:        "kv.rangefeed.draining_scan_nanos",
+		Help:        "Time spent in RangeFeed catchup scan",
+		Measurement: "Nanoseconds",
+		Unit:        metric.Unit_NANOSECONDS,
+	}
 	metaRangeFeedCatchUpScanNanos = metric.Metadata{
 		Name:        "kv.rangefeed.catchup_scan_nanos",
 		Help:        "Time spent in RangeFeed catchup scan",
@@ -71,11 +89,14 @@ var (
 
 // Metrics are for production monitoring of RangeFeeds.
 type Metrics struct {
-	RangeFeedCatchUpScanNanos        *metric.Counter
-	RangeFeedBudgetExhausted         *metric.Counter
-	RangeFeedBudgetBlocked           *metric.Counter
-	RangeFeedRegistrations           *metric.Gauge
-	RangeFeedSlowClosedTimestampLogN log.EveryN
+	RangefeedGoroutineNanos             *metric.Counter
+	RangefeedCatachUpBufDrainingNanos   *metric.Counter
+	RangefeedCatachUpBufDiscardingNanos *metric.Counter
+	RangeFeedCatchUpScanNanos           *metric.Counter
+	RangeFeedBudgetExhausted            *metric.Counter
+	RangeFeedBudgetBlocked              *metric.Counter
+	RangeFeedRegistrations              *metric.Gauge
+	RangeFeedSlowClosedTimestampLogN    log.EveryN
 	// RangeFeedSlowClosedTimestampNudgeSem bounds the amount of work that can be
 	// spun up on behalf of the RangeFeed nudger. We don't expect to hit this
 	// limit, but it's here to limit the effect on stability in case something
@@ -94,6 +115,9 @@ func (*Metrics) MetricStruct() {}
 // NewMetrics makes the metrics for RangeFeeds monitoring.
 func NewMetrics() *Metrics {
 	return &Metrics{
+		RangefeedGoroutineNanos:              metric.NewCounter(metaRangefeedGoroutineNanos),
+		RangefeedCatachUpBufDrainingNanos:    metric.NewCounter(metaRangefeedCatachUpBufDrainingNanos),
+		RangefeedCatachUpBufDiscardingNanos:  metric.NewCounter(metaRangefeedCatachUpBufDiscardingNanos),
 		RangeFeedCatchUpScanNanos:            metric.NewCounter(metaRangeFeedCatchUpScanNanos),
 		RangeFeedBudgetExhausted:             metric.NewCounter(metaRangeFeedExhausted),
 		RangeFeedBudgetBlocked:               metric.NewCounter(metaRangeFeedBudgetBlocked),

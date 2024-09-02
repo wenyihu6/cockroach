@@ -17,7 +17,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/cockroach/pkg/util/queue"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
@@ -101,7 +100,7 @@ type BufferedSender struct {
 		syncutil.Mutex
 		stopped bool
 		//capacity int64
-		buffer   *queue.QueueWithFixedChunkSize[*sharedMuxEvent]
+		buffer   *eventQueue
 		overflow bool
 	}
 	notifyDataC            chan struct{}
@@ -119,7 +118,7 @@ func NewBufferedSender(
 		sender:  sender,
 		metrics: metrics,
 	}
-	bs.queueMu.buffer = queue.NewQueueWithFixedChunkSize[*sharedMuxEvent]()
+	bs.queueMu.buffer = newEventQueue()
 	//bs.queueMu.capacity = bufferedSenderCapacity
 	bs.notifyRangefeedCleanUp = make(chan struct{}, 1)
 	bs.notifyDataC = make(chan struct{}, 1)
@@ -136,13 +135,15 @@ func NewBufferedSender(
 // and release it if the return error is non-nil.
 func (bs *BufferedSender) SendBuffered(
 	ev *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
-) error {
+) (err error) {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
 	if bs.queueMu.stopped {
+		log.Errorf(context.Background(), "stream sender is stopped")
 		return errors.New("stream sender is stopped")
 	}
 	if bs.queueMu.overflow {
+		log.Error(context.Background(), "buffer capacity exceeded")
 		return newRetryErrBufferCapacityExceeded()
 	}
 
@@ -150,8 +151,8 @@ func (bs *BufferedSender) SendBuffered(
 	//	bs.queueMu.overflow = true
 	//	return newRetryErrBufferCapacityExceeded()
 	//}
-    alloc.Use(context.Background())
-	bs.queueMu.buffer.Enqueue(&sharedMuxEvent{ev, alloc})
+	alloc.Use(context.Background())
+	bs.queueMu.buffer.pushBack(sharedMuxEvent{ev, alloc})
 	select {
 	case bs.notifyDataC <- struct{}{}:
 	default:
@@ -167,6 +168,7 @@ func (bs *BufferedSender) SendUnbuffered(event *kvpb.MuxRangeFeedEvent) error {
 	if event.Error != nil {
 		log.Fatalf(context.Background(), "unexpected: SendUnbuffered called with error event")
 	}
+	bs.metrics.IncNodeLevelEvents()
 	return bs.sender.Send(event)
 }
 
@@ -179,7 +181,7 @@ func (bs *BufferedSender) waitForEmptyBuffer(ctx context.Context) error {
 	}
 	for re := retry.StartWithCtx(ctx, opts); re.Next(); {
 		bs.queueMu.Lock()
-		caughtUp := bs.queueMu.buffer.Empty() // nolint:deferunlockcheck
+		caughtUp := bs.queueMu.buffer.Len() == 0 // nolint:deferunlockcheck
 		bs.queueMu.Unlock()
 		if caughtUp {
 			return nil
@@ -195,6 +197,7 @@ func (bs *BufferedSender) appendCleanUp(streamID int64) {
 	bs.mu.Lock()
 	defer bs.mu.Unlock()
 	bs.mu.cleanupIDs = append(bs.mu.cleanupIDs, streamID)
+	bs.metrics.UpdateCleanUpQueue(int64(len(bs.mu.cleanupIDs)))
 	// Note that notifyCleanUp is non-blocking.
 	select {
 	case bs.notifyRangefeedCleanUp <- struct{}{}:
@@ -246,6 +249,7 @@ func (bs *BufferedSender) SendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
 // Shouldn't be possible since RegisterRangefeedCleanUp is blocking until
 // stores.Rangefeed returns.
 func (bs *BufferedSender) RegisterRangefeedCleanUp(streamID int64, cleanUp func()) {
+	bs.metrics.IncRangefeedCleanUp()
 	bs.rangefeedCleanup.Store(streamID, &cleanUp)
 }
 
@@ -262,6 +266,7 @@ func (bs *BufferedSender) disconnectAll() {
 
 	bs.rangefeedCleanup.Range(func(streamID int64, cleanUp *func()) bool {
 		(*cleanUp)()
+		bs.metrics.DecRangefeedCleanUp()
 		bs.rangefeedCleanup.Delete(streamID)
 		return true
 	})
@@ -304,8 +309,21 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 			for {
 				e, success, overflowed, remains := bs.popFront()
 				if success {
+					bs.metrics.UpdateQueueSize(remains)
+					bs.metrics.IncEventsSentCount()
+					bs.metrics.IncNodeLevelEvents()
 					err := bs.sender.Send(e.event)
 					e.alloc.Release(ctx)
+					//if e.event.Error != nil {
+					//	bs.metrics.IncErrorEvents()
+					//	// Add metrics here
+					//	if cleanUp, ok := bs.rangefeedCleanup.LoadAndDelete(e.event.StreamID); ok {
+					//		bs.metrics.DecRangefeedCleanUp()
+					//		// TODO(wenyihu6): add more observability metrics into how long the
+					//		// clean up call is taking
+					//		(*cleanUp)()
+					//	}
+					//}
 					if err != nil {
 						return err
 					}
@@ -321,14 +339,14 @@ func (bs *BufferedSender) run(ctx context.Context, stopper *stop.Stopper) error 
 }
 
 func (bs *BufferedSender) popFront() (
-	e *sharedMuxEvent,
+	e sharedMuxEvent,
 	success bool,
 	overflowed bool,
 	remains int64,
 ) {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
-	event, ok := bs.queueMu.buffer.Dequeue()
+	event, ok := bs.queueMu.buffer.popFront()
 	return event, ok, bs.queueMu.overflow, bs.queueMu.buffer.Len()
 }
 
@@ -371,9 +389,11 @@ func (bs *BufferedSender) Stop() {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
 	bs.queueMu.stopped = true
-	bs.queueMu.buffer.RemoveAll(func(e *sharedMuxEvent) {
-		e.alloc.Release(context.Background())
-	})
+	bs.queueMu.buffer.removeAll()
+	//func(e *sharedMuxEvent) {
+	//	e.alloc.Release(context.Background())
+	//	bs.metrics.DecQueueSize()
+	//})
 }
 
 func (bs *BufferedSender) Error() chan error {

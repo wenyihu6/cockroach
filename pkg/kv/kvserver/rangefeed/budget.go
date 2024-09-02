@@ -67,7 +67,7 @@ var RangefeedBudgetsEnabled = settings.RegisterBoolSetting(
 	settings.SystemOnly,
 	"kv.rangefeed.memory_budgets.enabled",
 	"if set, rangefeed memory budgets are enabled",
-	true,
+	false,
 )
 
 var budgetAllocationSyncPool = sync.Pool{

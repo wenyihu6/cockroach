@@ -42,6 +42,12 @@ func TestBufferedSenderWithSendBufferedError(t *testing.T) {
 	require.NoError(t, bs.Start(ctx, stopper))
 	defer bs.Stop()
 
+	getLen := func() int64 {
+		bs.queueMu.Lock()
+		defer bs.queueMu.Unlock()
+		return bs.queueMu.buffer.Len()
+	}
+
 	t.Run("basic operation", func(t *testing.T) {
 		const streamID = 0
 		var num atomic.Int32
@@ -50,6 +56,7 @@ func TestBufferedSenderWithSendBufferedError(t *testing.T) {
 		//bs.RegisterRangefeedCleanUp(int64(streamID), func() {
 		//	num.Add(1)
 		//})
+		require.Equal(t, int64(0), getLen())
 		bs.SendBufferedError(makeMuxRangefeedErrorEvent(int64(streamID), 1, kvpb.NewError(nil)))
 		require.NoError(t, bs.waitForEmptyBuffer(ctx))
 		// Ensure that the rangefeed clean up is called.
