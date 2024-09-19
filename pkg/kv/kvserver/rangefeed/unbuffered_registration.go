@@ -207,6 +207,9 @@ func (ubr *unbufferedRegistration) disconnect(pErr *kvpb.Error) {
 	defer ubr.mu.Unlock()
 	if alreadyDisconnected := ubr.setDisconnectedIfNotWithLock(); !alreadyDisconnected {
 		ubr.stream.Disconnect(pErr)
+		if f := ubr.getUnreg(); f != nil {
+			f()
+		}
 	}
 }
 

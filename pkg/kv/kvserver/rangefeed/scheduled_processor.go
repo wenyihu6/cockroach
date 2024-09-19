@@ -323,7 +323,12 @@ func (p *ScheduledProcessor) Register(
 	if isBufferedStream {
 		p.Metrics.RangefeedUnbufferedRegistration.Inc(1)
 		r = newUnbufferedRegistration(span.AsRawSpanWithNoLocals(), startTS, catchUpIter, withDiff, withFiltering, withOmitRemote,
-			p.Config.EventChanCap, p.Metrics, bufferedStream, disconnectFn)
+			p.Config.EventChanCap, p.Metrics, bufferedStream, func() {
+				p.enqueueRequest(func(ctx context.Context) {
+					p.reg.Unregister(ctx, r)
+					disconnectFn()
+				})
+			})
 	} else {
 		p.Metrics.RangefeedBufferedRegistration.Inc(1)
 		r = newBufferedRegistration(
@@ -353,27 +358,27 @@ func (p *ScheduledProcessor) Register(
 		// once they observe the first checkpoint event.
 		r.publish(ctx, p.newCheckpointEvent(), nil)
 
-		if ubr, ok := r.(*unbufferedRegistration); ok {
-			bufferedStream.RegisterRangefeedCleanUp(func() {
-				// BufferedRegistration has a dedicated goroutine watching for context
-				// cancellation and handles rangefeed cleanup. UnbufferedRegistration
-				// relies on this callback for rangefeed cleanup. In case that
-				// disconnect happens from rangefeed side, setDisconnectedIfNot is
-				// no-op. If StreamMuxer initiated the disconnect, it will be properly
-				// disconnected.
-				ubr.setDisconnectedIfNot()
-				// Unregister the registration from the processor. No more raft updates
-				// will be published to registration after this.
-				// TODO(wenyihu6): understand what happens if p is stopped here already
-				if p.unregisterClient(r) {
-					// unreg callback is set by replica to tear down processors that have
-					// zero registrations left and to update event filters.
-					if f := r.getUnreg(); f != nil {
-						f()
-					}
-				}
-			})
-		}
+		//if ubr, ok := r.(*unbufferedRegistration); ok {
+		//bufferedStream.RegisterRangefeedCleanUp(func() {
+		//	// BufferedRegistration has a dedicated goroutine watching for context
+		//	// cancellation and handles rangefeed cleanup. UnbufferedRegistration
+		//	// relies on this callback for rangefeed cleanup. In case that
+		//	// disconnect happens from rangefeed side, setDisconnectedIfNot is
+		//	// no-op. If StreamMuxer initiated the disconnect, it will be properly
+		//	// disconnected.
+		//	ubr.setDisconnectedIfNot()
+		//	// Unregister the registration from the processor. No more raft updates
+		//	// will be published to registration after this.
+		//	// TODO(wenyihu6): understand what happens if p is stopped here already
+		//	if p.unregisterClient(r) {
+		//		// unreg callback is set by replica to tear down processors that have
+		//		// zero registrations left and to update event filters.
+		//		if f := r.getUnreg(); f != nil {
+		//			f()
+		//		}
+		//	}
+		//})
+		//}
 
 		// Run an output loop for the registry. For BufferedRegistration, this is
 		// long-running. For UnbufferedRegistration, this is short-lived (just for
