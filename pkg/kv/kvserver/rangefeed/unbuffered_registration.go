@@ -207,9 +207,9 @@ func (ubr *unbufferedRegistration) disconnect(pErr *kvpb.Error) {
 	defer ubr.mu.Unlock()
 	if alreadyDisconnected := ubr.setDisconnectedIfNotWithLock(); !alreadyDisconnected {
 		ubr.stream.Disconnect(pErr)
-		if f := ubr.getUnreg(); f != nil {
-			f()
-		}
+		//if f := ubr.getUnreg(); f != nil {
+		//	f()
+		//}
 	}
 }
 
@@ -329,6 +329,11 @@ func (ubr *unbufferedRegistration) waitForCaughtUp(ctx context.Context) error {
 		return err
 	}
 	return errors.Errorf("unbufferedRegistration %v failed to empty in time", ubr.Range())
+}
+
+func (ubr *unbufferedRegistration) close(ctx context.Context) {
+	ubr.setDisconnectedIfNot()
+	ubr.discardCatchUpBuffer(ctx)
 }
 
 func (ubr *unbufferedRegistration) setDisconnectedIfNot() {

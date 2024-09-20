@@ -37,7 +37,7 @@ type registration interface {
 	runOutputLoop(ctx context.Context, forStacks roachpb.RangeID)
 	// drainAllocations drains all pending allocations when being unregistered
 	// from processor if any.
-	drainAllocations(ctx context.Context)
+	//drainAllocations(ctx context.Context)
 	// waitForCaughtUp waits for the registration to forward all buffered events
 	// if any.
 	waitForCaughtUp(ctx context.Context) error
@@ -62,6 +62,7 @@ type registration interface {
 	// getUnreg returns the unregisterFn call back of the registration. It should
 	// be called when being unregistered from processor.
 	getUnreg() func()
+	close(context.Context)
 }
 
 // baseRegistration is a common base for all registration types. It is intended
@@ -340,7 +341,9 @@ func (reg *registry) Unregister(ctx context.Context, r registration) {
 	if err := reg.tree.Delete(r, false /* fast */); err != nil {
 		log.Fatalf(ctx, "%v", err)
 	}
-	r.drainAllocations(ctx)
+	r.close(ctx)
+	r.getUnreg()
+	//r.drainAllocations(ctx)
 }
 
 // DisconnectAllOnShutdown disconnectes all registrations on processor shutdown.

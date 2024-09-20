@@ -236,6 +236,10 @@ func (br *bufferedRegistration) runOutputLoop(ctx context.Context, _forStacks ro
 	br.disconnect(kvpb.NewError(err))
 }
 
+func (br *bufferedRegistration) close(ctx context.Context) {
+	br.drainAllocations(ctx)
+}
+
 // drainAllocations should be done after registration is disconnected from
 // processor to release all memory budget that its pending events hold.
 func (br *bufferedRegistration) drainAllocations(ctx context.Context) {

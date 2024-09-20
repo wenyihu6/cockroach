@@ -2152,6 +2152,7 @@ func (n *Node) MuxRangeFeed(muxStream kvpb.Internal_MuxRangeFeedServer) (err err
 			} else {
 				log.Fatalf(streamCtx, "unknown sender type %T", sm)
 			}
+			// stream id
 			sm.AddStream(req.StreamID, cancel)
 
 			// Rangefeed attempts to register rangefeed a request over the specified
