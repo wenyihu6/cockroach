@@ -218,17 +218,35 @@ func TestGetCheckpointSpans(t *testing.T) {
 	catchup := cpTS.GoTime().Sub(hwm.GoTime())
 	sort.Sort(rspans(cpSpans))
 	sort.Sort(spans)
-	var catchupFromCheckpoint, catchupFromHWM time.Duration
+
+	newCpSpans := getNewCheckpointSpans(forEachSpan, maxBytes)
+	require.Equal(t, len(newCpSpans), numSpans)
+
+	var catchupFromCheckpoint, catchupFromHWM, catchUpFromNewCheckpoint time.Duration
 	j := 0
-	for _, s := range spans {
+	newCheckpointCount := 0
+	for i, s := range spans {
 		catchupFromHWM += s.ts.GoTime().Sub(hwm.GoTime())
 		if j < len(cpSpans) && cpSpans[j].Equal(s.span) {
 			catchupFromCheckpoint += s.ts.GoTime().Sub(cpTS.GoTime())
 			j++
 		}
+		require.Equal(t, s.span, newCpSpans[i].span)
+		if newCpSpans[i].included {
+			require.Equal(t, s.ts.GoTime(), newCpSpans[i].ts.GoTime())
+			catchUpFromNewCheckpoint += s.ts.GoTime().Sub(newCpSpans[i].ts.GoTime())
+			newCheckpointCount++
+		} else {
+			catchUpFromNewCheckpoint += s.ts.GoTime().Sub(hwm.GoTime())
+		}
 	}
+
 	t.Logf("Checkpoint time improved by %v for %d/%d spans\ntotal catchup from checkpoint: %v\ntotal catchup from high watermark: %v\nPercent improvement %f",
 		catchup, len(cpSpans), numSpans, catchupFromCheckpoint, catchupFromHWM,
 		100*(1-float64(catchupFromCheckpoint.Nanoseconds())/float64(catchupFromHWM.Nanoseconds())))
+
+	t.Logf("New checkpointing system: checkpoint time improved for %d spans\ntotal catchup from checkpoint: %v\ntotal catchup from high watermark: %v\nPercent improvement %f",
+		newCheckpointCount, catchUpFromNewCheckpoint, catchupFromHWM,
+		100*(1-float64(catchUpFromNewCheckpoint.Nanoseconds())/float64(catchupFromHWM.Nanoseconds())))
 	require.Less(t, catchupFromCheckpoint, catchupFromHWM)
 }

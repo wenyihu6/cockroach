@@ -1957,6 +1957,35 @@ func (f *schemaChangeFrontier) ForwardLatestKV(ts time.Time) {
 	}
 }
 
+type frontierEntry struct {
+	span     roachpb.Span
+	ts       hlc.Timestamp
+	included bool
+}
+
+func getNewCheckpointSpans(
+	forEachSpan spanIter, maxBytes int64,
+) (checkpointEntries []frontierEntry) {
+	// Collect leading spans into a SpanGroup to merge adjacent spans and store
+	// the lowest timestamp found
+	var entries []frontierEntry
+	forEachSpan(func(s roachpb.Span, ts hlc.Timestamp) span.OpResult {
+		entries = append(entries, frontierEntry{s, ts, false})
+		return span.ContinueMatch
+	})
+
+	// Ensure we only return up to maxBytes spans
+	var used int64
+	for i, entry := range entries {
+		used += int64(len(entry.span.Key)) + int64(len(entry.span.EndKey))
+		if used > maxBytes {
+			break
+		}
+		entries[i].included = true
+	}
+	return entries
+}
+
 type spanIter func(forEachSpan span.Operation)
 
 // getCheckpointSpans returns as many spans that should be checkpointed (are
@@ -1983,6 +2012,7 @@ func getCheckpointSpans(
 	// Ensure we only return up to maxBytes spans
 	var checkpointSpans []roachpb.Span
 	var used int64
+	// todo: favour saving spans with higher checkpointed timestamps
 	for _, span := range checkpointSpanGroup.Slice() {
 		used += int64(len(span.Key)) + int64(len(span.EndKey))
 		if used > maxBytes {
