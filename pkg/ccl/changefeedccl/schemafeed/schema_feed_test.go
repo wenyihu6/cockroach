@@ -397,6 +397,84 @@ func (td *testTableDescriptor) IsSchemaLocked() bool {
 	return td.schemaLocked
 }
 
+func BenchmarkPauseOrResumePolling(b *testing.B) {
+	helper := func(b *testing.B) {
+		ctx := context.Background()
+
+		const tableID = 123
+		const (
+			v1 = 1
+			v2 = 2
+			v3 = 3
+		)
+		const (
+			schemaLocked    = true
+			notSchemaLocked = false
+		)
+		tableDescs := []*testLeasedDescriptor{
+			newTestLeasedDescriptor(tableID, v1, notSchemaLocked, hlc.Timestamp{WallTime: 20}),
+			newTestLeasedDescriptor(tableID, v2, schemaLocked, hlc.Timestamp{WallTime: 40}),
+			newTestLeasedDescriptor(tableID, v3, notSchemaLocked, hlc.Timestamp{WallTime: 60}),
+		}
+
+		sf := schemaFeed{
+			leaseMgr: &testLeaseAcquirer{
+				id:    tableID,
+				descs: tableDescs,
+			},
+			targets: CreateChangefeedTargets(tableID),
+		}
+
+		setFrontier := func(ts hlc.Timestamp) error {
+			sf.mu.Lock()
+			defer sf.mu.Unlock()
+			return sf.mu.ts.advanceFrontier(ts)
+		}
+
+		// Set the initial frontier to 10.
+		_ = setFrontier(hlc.Timestamp{WallTime: 10})
+
+		// Initially, polling should not be paused.
+		sf.pollingPaused()
+
+		// We expect a non-terminal error to be swallowed for time 10.
+		_ = sf.pauseOrResumePolling(ctx, hlc.Timestamp{WallTime: 10})
+		sf.pollingPaused()
+
+		// We bump the highwater up to reflect a descriptor being read at time 20.
+		_ = setFrontier(hlc.Timestamp{WallTime: 20})
+		sf.pollingPaused()
+
+		// We expect polling not to be paused for time 30.
+		_ = sf.pauseOrResumePolling(ctx, hlc.Timestamp{WallTime: 30})
+		sf.pollingPaused()
+
+		// We expect polling not to be paused for time 40 since the highwater
+		// has not caught up to the schema-locked version.
+		_ = sf.pauseOrResumePolling(ctx, hlc.Timestamp{WallTime: 40})
+		sf.pollingPaused()
+
+		// We bump the highwater up to reflect a descriptor being read at time 40.
+		_ = setFrontier(hlc.Timestamp{WallTime: 40})
+		sf.pollingPaused()
+
+		// We expect polling to be paused for time 40 now that the highwater has
+		// caught up to the schema-locked version.
+		_ = sf.pauseOrResumePolling(ctx, hlc.Timestamp{WallTime: 40})
+		sf.pollingPaused()
+
+		// We expect polling continue to be paused for time 50 and to see the
+		// highwater bumped up.
+		_ = sf.pauseOrResumePolling(ctx, hlc.Timestamp{WallTime: 50})
+		sf.pollingPaused()
+	}
+
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		helper(b)
+	}
+}
+
 func TestPauseOrResumePolling(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
