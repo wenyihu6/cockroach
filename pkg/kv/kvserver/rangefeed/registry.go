@@ -70,8 +70,8 @@ type registration interface {
 // baseRegistration is a common base for all registration types. It is intended
 // to be embedded in an actual registration struct.
 type baseRegistration struct {
-	ctx              context.Context
-	cancelFunc       context.CancelFunc
+	//ctx              context.Context
+	//cancelFunc       context.CancelFunc
 	span             roachpb.Span
 	withDiff         bool
 	withFiltering    bool
@@ -104,9 +104,9 @@ func (r *baseRegistration) setSpanAsKeys() {
 	r.keys = r.span.AsRange()
 }
 
-func (r *baseRegistration) cancel() {
-	r.cancelFunc()
-}
+//func (r *baseRegistration) cancel() {
+//	r.cancelFunc()
+//}
 
 func (r *baseRegistration) getSpan() roachpb.Span {
 	return r.span
@@ -350,7 +350,7 @@ func (reg *registry) Unregister(ctx context.Context, r registration) {
 		log.Fatalf(ctx, "%v", err)
 	}
 	r.close(ctx)
-	r.getUnreg()
+	r.getUnreg()()
 	//r.drainAllocations(ctx)
 }
 

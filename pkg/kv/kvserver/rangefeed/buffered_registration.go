@@ -88,11 +88,11 @@ func newBufferedRegistration(
 	stream Stream,
 	unregisterFn func(),
 ) *bufferedRegistration {
-	rCtx, cancel := context.WithCancel(ctx)
+	//rCtx, cancel := context.WithCancel(ctx)
 	br := &bufferedRegistration{
 		baseRegistration: baseRegistration{
-			ctx:              rCtx,
-			cancelFunc:       cancel,
+			//ctx: rCtx,
+			//cancelFunc:       cancel,
 			span:             span,
 			catchUpTimestamp: startTS,
 			withDiff:         withDiff,
@@ -221,8 +221,8 @@ func (br *bufferedRegistration) outputLoop(ctx context.Context) error {
 			}
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-br.ctx.Done():
-			return br.ctx.Err()
+			//case <-br.ctx.Done():
+			//	return br.ctx.Err()
 		}
 	}
 }

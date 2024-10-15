@@ -139,11 +139,11 @@ func newUnbufferedRegistration(
 	stream BufferedStream,
 	unregisterFn func(),
 ) *unbufferedRegistration {
-	brCtx, cancel := context.WithCancel(ctx)
+	//brCtx, cancel := context.WithCancel(ctx)
 	br := &unbufferedRegistration{
 		baseRegistration: baseRegistration{
-			ctx:              brCtx,
-			cancelFunc:       cancel,
+			//ctx:              brCtx,
+			//cancelFunc:       cancel,
 			span:             span,
 			catchUpTimestamp: startTS,
 			withDiff:         withDiff,
