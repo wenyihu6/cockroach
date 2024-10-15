@@ -233,9 +233,9 @@ func (tp *rangefeedTxnPusher) Barrier(ctx context.Context) error {
 // complete. The surrounding store's ConcurrentRequestLimiter is used to limit
 // the number of rangefeeds using catch-up iterators at the same time.
 func (r *Replica) RangeFeed(
-	args *kvpb.RangeFeedRequest, stream rangefeed.Stream, pacer *admission.Pacer,
+	streamCtx context.Context, args *kvpb.RangeFeedRequest, stream rangefeed.Stream, pacer *admission.Pacer,
 ) error {
-	ctx := r.AnnotateCtx(stream.Context())
+	ctx := r.AnnotateCtx(streamCtx)
 
 	rSpan, err := keys.SpanAddr(args.Span)
 	if err != nil {
