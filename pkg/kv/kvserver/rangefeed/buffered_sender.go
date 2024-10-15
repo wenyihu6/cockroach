@@ -195,12 +195,21 @@ func (bs *BufferedSender) waitForEmptyBuffer(ctx context.Context) error {
 	return errors.New("buffered sender failed to send in time")
 }
 
-func (bs *BufferedSender) SendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
+func (bs *BufferedSender) Disconnect(streamID int64, err *kvpb.Error) {
+	if err == nil {
+		log.Fatalf(context.Background(), "unexpected: Disconnect called with non-error event")
+	}
+	if r, ok := bs.registrations.Load(streamID); ok {
+		r.reg.disconnect(err)
+		//bs.sendBufferedError(ev)
+	}
+}
+
+func (bs *BufferedSender) sendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
 	if ev.Error == nil {
 		log.Fatalf(context.Background(), "unexpected: SendWithoutBlocking called with non-error event")
 	}
-	if r, ok := bs.registrations.Load(ev.StreamID); ok {
-		r.reg.disconnect(nil)
+	if _, ok := bs.registrations.Load(ev.StreamID); ok {
 		// Fine to skip nil checking here since that would be a programming error.
 		bs.metrics.UpdateMetricsOnRangefeedDisconnect()
 		if err := bs.SendBuffered(ev, nil); err != nil {
@@ -248,10 +257,10 @@ func (bs *BufferedSender) disconnectAll() {
 		// disconnect is going to send error again but that's fine
 		// Important to do it here since reg.disconnect would trigger send buffered
 		// error again. We deduplicate by deleting here.
+		bs.registrations.Delete(streamID)
 		mr.reg.disconnect(nil)
 		mr.cleanup(mr.reg)
 		bs.metrics.DecRangefeedCleanUp()
-		bs.registrations.Delete(streamID)
 		return true
 	})
 }
