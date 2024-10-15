@@ -193,7 +193,7 @@ func (ubs *UnbufferedSender) SendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
 
 	if r, ok := ubs.registrations.LoadAndDelete(ev.StreamID); ok {
 		// Fine to skip nil checking here since that would be a programming error.
-		r.reg.cancel()
+		r.reg.disconnect(nil)
 		ubs.metrics.UpdateMetricsOnRangefeedDisconnect()
 		ubs.appendMuxError(ev)
 	}

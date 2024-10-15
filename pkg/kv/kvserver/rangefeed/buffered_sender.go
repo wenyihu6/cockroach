@@ -200,8 +200,8 @@ func (bs *BufferedSender) SendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
 		log.Fatalf(context.Background(), "unexpected: SendWithoutBlocking called with non-error event")
 	}
 	if r, ok := bs.registrations.Load(ev.StreamID); ok {
+		r.reg.disconnect(nil)
 		// Fine to skip nil checking here since that would be a programming error.
-		r.reg.cancel()
 		bs.metrics.UpdateMetricsOnRangefeedDisconnect()
 		if err := bs.SendBuffered(ev, nil); err != nil {
 			// Ignore error since the stream is already disconnecting. There is nothing
@@ -245,9 +245,12 @@ func (bs *BufferedSender) disconnectAll() {
 	//})
 
 	bs.registrations.Range(func(streamID int64, mr *managedRegistration) bool {
-		mr.reg.cancel()
-		bs.metrics.DecRangefeedCleanUp()
+		// disconnect is going to send error again but that's fine
+		// Important to do it here since reg.disconnect would trigger send buffered
+		// error again. We deduplicate by deleting here.
+		mr.reg.disconnect(nil)
 		mr.cleanup(mr.reg)
+		bs.metrics.DecRangefeedCleanUp()
 		bs.registrations.Delete(streamID)
 		return true
 	})
