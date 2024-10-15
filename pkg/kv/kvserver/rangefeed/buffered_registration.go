@@ -214,8 +214,6 @@ func (br *bufferedRegistration) outputLoop(ctx context.Context) error {
 			}
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-br.streamCtx.Done():
-			return br.streamCtx.Err()
 		}
 	}
 }
