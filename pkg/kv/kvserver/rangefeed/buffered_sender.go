@@ -12,9 +12,11 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 )
 
-//	┌─────────────────────────────────────────┐                                      MuxRangefeedEvent
-//	│            Node.MuxRangeFeed            │◄──────────────────────────────────────────────────┐
-//	└─────────────────┬───▲───────────────────┘                  ▲                                │
+// ┌─────────────────────────────────────────┐ MuxRangefeedEvent
+// │ Node.MuxRangeFeed
+// │◄──────────────────────────────────────────────────┐
+// └─────────────────┬───▲───────────────────┘ ▲ │
+//
 //	 Sender.AddStream │   │LockedMuxStream.Send                  │                                │
 //			 ┌────────────▼───┴──────────┐                           │                                │
 //			 │ Buffered/Unbuffered Sender├───────────┐               │                                │
@@ -50,55 +52,36 @@ type BufferedSender struct {
 	// Note that lockedMuxStream wraps the underlying grpc server stream, ensuring
 	// thread safety.
 	sender ServerStreamSender
-
-	// metrics is used to record rangefeed metrics for the node.
-	metrics RangefeedMetricsRecorder
 }
 
-func NewBufferedSender(
-	sender ServerStreamSender, metrics RangefeedMetricsRecorder,
-) *BufferedSender {
-	return &BufferedSender{
-		sender:  sender,
-		metrics: metrics,
+func NewBufferedSender(sender ServerStreamSender) *BufferedSender {
+	bs := &BufferedSender{
+		sender: sender,
 	}
+	return bs
 }
 
 // SendBuffered buffers the event before sending them to the underlying
 // ServerStreamSender.
-func (bs *BufferedSender) SendBuffered(
-	event *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
+//
+// alloc.Release is nil-safe. SendBuffered will take the ownership of the alloc
+// and release it if the return error is non-nil. Note that it is safe to send
+// error events without being blocked for too long.
+func (bs *BufferedSender) send(ev *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation) error {
+	panic("unimplemented: buffered sender for rangefeed #126560")
+}
+
+// run forwards buffered events back to the client. run is expected to be called
+// in a goroutine and will block until the context is done or the stopper is
+// quiesced. BufferedSender will stop forwarding events after run completes. It
+// may still buffer more events in the buffer, but they will be cleaned up soon
+// during bs.Stop(), and there should be no new events buffered after that.
+func (bs *BufferedSender) run(
+	ctx context.Context, stopper *stop.Stopper, onError func(streamID int64),
 ) error {
 	panic("unimplemented: buffered sender for rangefeed #126560")
 }
 
-// SendUnbuffered bypasses the buffer and sends the event to the underlying
-// ServerStreamSender directly. Note that this can cause event re-ordering.
-// Caller is responsible for ensuring that events are sent in order.
-func (bs *BufferedSender) SendUnbuffered(
-	event *kvpb.MuxRangeFeedEvent, alloc *SharedBudgetAllocation,
-) error {
-	panic("unimplemented: buffered sender for rangefeed #126560")
-}
-
-func (bs *BufferedSender) SendBufferedError(ev *kvpb.MuxRangeFeedEvent) {
-	// Disconnect stream and cancel context. Then call SendBuffered with the error
-	// event.
-	panic("unimplemented: buffered sender for rangefeed #126560")
-}
-
-func (bs *BufferedSender) AddStream(streamID int64, cancel context.CancelFunc) {
-	panic("unimplemented: buffered sender for rangefeed #126560")
-}
-
-func (bs *BufferedSender) Start(ctx context.Context, stopper *stop.Stopper) error {
-	panic("unimplemented: buffered sender for rangefeed #126560")
-}
-
-func (bs *BufferedSender) Stop() {
-	panic("unimplemented: buffered sender for rangefeed #126560")
-}
-
-func (bs *BufferedSender) Error() chan error {
+func (bs *BufferedSender) cleanup() {
 	panic("unimplemented: buffered sender for rangefeed #126560")
 }

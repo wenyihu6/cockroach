@@ -61,8 +61,7 @@ func TestProcessorBasic(t *testing.T) {
 
 		// Add a registration.
 		r1Stream := newTestStream()
-		r1OK, r1Filter := p.Register(
-			r1Stream.ctx,
+		r1OK, _, r1Filter := p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -196,8 +195,7 @@ func TestProcessorBasic(t *testing.T) {
 
 		// Add another registration with withDiff = true and withFiltering = true.
 		r2Stream := newTestStream()
-		r2OK, r1And2Filter := p.Register(
-			r2Stream.ctx,
+		r2OK, _, r1And2Filter := p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("c"), EndKey: roachpb.RKey("z")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -301,7 +299,7 @@ func TestProcessorBasic(t *testing.T) {
 		// r2Stream should not see the event.
 
 		// Cancel the first registration.
-		r1Stream.Disconnect(kvpb.NewError(fmt.Errorf("disconnection error")))
+		r1Stream.SendError(kvpb.NewError(fmt.Errorf("disconnection error")))
 		require.NotNil(t, r1Stream.WaitForError(t))
 
 		// Stop the processor with an error.
@@ -311,8 +309,7 @@ func TestProcessorBasic(t *testing.T) {
 
 		// Adding another registration should fail.
 		r3Stream := newTestStream()
-		r3OK, _ := p.Register(
-			r3Stream.ctx,
+		r3OK, _, _ := p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("c"), EndKey: roachpb.RKey("z")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -337,8 +334,7 @@ func TestProcessorOmitRemote(t *testing.T) {
 
 		// Add a registration.
 		r1Stream := newTestStream()
-		r1OK, _ := p.Register(
-			r1Stream.ctx,
+		r1OK, _, _ := p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -363,8 +359,7 @@ func TestProcessorOmitRemote(t *testing.T) {
 
 		// Add another registration with withOmitRemote = true.
 		r2Stream := newTestStream()
-		r2OK, _ := p.Register(
-			r2Stream.ctx,
+		r2OK, _, _ := p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -417,8 +412,7 @@ func TestProcessorSlowConsumer(t *testing.T) {
 
 		// Add a registration.
 		r1Stream := newTestStream()
-		_, _ = p.Register(
-			r1Stream.ctx,
+		_, _, _ = p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -430,7 +424,6 @@ func TestProcessorSlowConsumer(t *testing.T) {
 		)
 		r2Stream := newTestStream()
 		p.Register(
-			r2Stream.ctx,
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("z")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -526,8 +519,7 @@ func TestProcessorMemoryBudgetExceeded(t *testing.T) {
 
 		// Add a registration.
 		r1Stream := newTestStream()
-		_, _ = p.Register(
-			r1Stream.ctx,
+		_, _, _ = p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -583,7 +575,6 @@ func TestProcessorMemoryBudgetReleased(t *testing.T) {
 		// Add a registration.
 		r1Stream := newTestStream()
 		p.Register(
-			r1Stream.ctx,
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -665,7 +656,6 @@ func TestProcessorInitializeResolvedTimestamp(t *testing.T) {
 		// Add a registration.
 		r1Stream := newTestStream()
 		p.Register(
-			r1Stream.ctx,
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -979,7 +969,7 @@ func TestProcessorConcurrentStop(t *testing.T) {
 				defer wg.Done()
 				runtime.Gosched()
 				s := newTestStream()
-				p.Register(s.ctx, h.span, hlc.Timestamp{}, nil, /* catchUpIter */
+				p.Register(h.span, hlc.Timestamp{}, nil, /* catchUpIter */
 					false /* withDiff */, false /* withFiltering */, false /* withOmitRemote */, s, func() {})
 			}()
 			go func() {
@@ -1051,7 +1041,7 @@ func TestProcessorRegistrationObservesOnlyNewEvents(t *testing.T) {
 				// operation is should see is firstIdx.
 				s := newTestStream()
 				regs[s] = firstIdx
-				p.Register(s.ctx, h.span, hlc.Timestamp{}, nil, /* catchUpIter */
+				p.Register(h.span, hlc.Timestamp{}, nil, /* catchUpIter */
 					false /* withDiff */, false /* withFiltering */, false /* withOmitRemote */, s, func() {})
 				regDone <- struct{}{}
 			}
@@ -1104,8 +1094,7 @@ func TestBudgetReleaseOnProcessorStop(t *testing.T) {
 		// Add a registration.
 		rStream := newConsumer(50)
 		defer func() { rStream.Resume() }()
-		_, _ = p.Register(
-			rStream.ctx,
+		_, _, _ = p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -1185,8 +1174,7 @@ func TestBudgetReleaseOnLastStreamError(t *testing.T) {
 		// Add a registration.
 		rStream := newConsumer(90)
 		defer func() { rStream.Resume() }()
-		_, _ = p.Register(
-			rStream.ctx,
+		_, _, _ = p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -1256,8 +1244,7 @@ func TestBudgetReleaseOnOneStreamError(t *testing.T) {
 		// Add a registration.
 		r1Stream := newConsumer(50)
 		defer func() { r1Stream.Resume() }()
-		_, _ = p.Register(
-			r1Stream.ctx,
+		_, _, _ = p.Register(
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -1271,7 +1258,6 @@ func TestBudgetReleaseOnOneStreamError(t *testing.T) {
 		// Non-blocking registration that would consume all events.
 		r2Stream := newConsumer(0)
 		p.Register(
-			r2Stream.ctx,
 			roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("m")},
 			hlc.Timestamp{WallTime: 1},
 			nil,   /* catchUpIter */
@@ -1377,9 +1363,8 @@ func (c *consumer) WaitBlock() {
 	<-c.blocked
 }
 
-// Disconnect implements the Stream interface. It mocks the disconnect behavior
-// by sending the error to the done channel.
-func (c *consumer) Disconnect(error *kvpb.Error) {
+// SendError implements the Stream interface.
+func (c *consumer) SendError(error *kvpb.Error) {
 	c.done <- error
 }
 
@@ -1445,7 +1430,7 @@ func TestProcessorBackpressure(t *testing.T) {
 
 	// Add a registration.
 	stream := newTestStream()
-	ok, _ := p.Register(stream.ctx, span, hlc.MinTimestamp, nil, /* catchUpIter */
+	ok, _, _ := p.Register(span, hlc.MinTimestamp, nil, /* catchUpIter */
 		false /* withDiff */, false /* withFiltering */, false /* withOmitRemote */, stream, nil)
 	require.True(t, ok)
 

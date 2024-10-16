@@ -6,7 +6,6 @@
 package rangefeed
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -141,10 +140,8 @@ func expEvents(filtering bool) []*kvpb.RangeFeedEvent {
 }
 
 type testStream struct {
-	ctx     context.Context
-	ctxDone func()
-	done    chan *kvpb.Error
-	mu      struct {
+	done chan *kvpb.Error
+	mu   struct {
 		syncutil.Mutex
 		sendErr error
 		events  []*kvpb.RangeFeedEvent
@@ -152,16 +149,7 @@ type testStream struct {
 }
 
 func newTestStream() *testStream {
-	ctx, done := context.WithCancel(context.Background())
-	return &testStream{ctx: ctx, ctxDone: done, done: make(chan *kvpb.Error, 1)}
-}
-
-func (s *testStream) Context() context.Context {
-	return s.ctx
-}
-
-func (s *testStream) Cancel() {
-	s.ctxDone()
+	return &testStream{done: make(chan *kvpb.Error, 1)}
 }
 
 func (s *testStream) SendUnbufferedIsThreadSafe() {}
@@ -200,7 +188,7 @@ func (s *testStream) BlockSend() func() {
 
 // Disconnect implements the Stream interface. It mocks the disconnect behavior
 // by sending the error to the done channel.
-func (s *testStream) Disconnect(err *kvpb.Error) {
+func (s *testStream) SendError(err *kvpb.Error) {
 	s.done <- err
 }
 
