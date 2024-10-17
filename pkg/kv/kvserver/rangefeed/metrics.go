@@ -52,12 +52,6 @@ var (
 		Measurement: "Ranges",
 		Unit:        metric.Unit_COUNT,
 	}
-	metaRangeFeedProcessorsGO = metric.Metadata{
-		Name:        "kv.rangefeed.processors_goroutine",
-		Help:        "Number of active RangeFeed processors using goroutines",
-		Measurement: "Processors",
-		Unit:        metric.Unit_COUNT,
-	}
 	metaRangeFeedProcessorsScheduler = metric.Metadata{
 		Name:        "kv.rangefeed.processors_scheduler",
 		Help:        "Number of active RangeFeed processors using scheduler",
@@ -95,7 +89,6 @@ type Metrics struct {
 	// Metrics exposing rangefeed processor by type. Those metrics are used to
 	// monitor processor switch over. They could be removed when legacy processor
 	// is removed.
-	RangeFeedProcessorsGO        *metric.Gauge
 	RangeFeedProcessorsScheduler *metric.Gauge
 }
 
@@ -113,7 +106,6 @@ func NewMetrics() *Metrics {
 		RangeFeedSlowClosedTimestampRanges:     metric.NewGauge(metaRangefeedSlowClosedTimestampRanges),
 		RangeFeedSlowClosedTimestampLogN:       log.Every(5 * time.Second),
 		RangeFeedSlowClosedTimestampNudgeSem:   make(chan struct{}, 1024),
-		RangeFeedProcessorsGO:                  metric.NewGauge(metaRangeFeedProcessorsGO),
 		RangeFeedProcessorsScheduler:           metric.NewGauge(metaRangeFeedProcessorsScheduler),
 	}
 }

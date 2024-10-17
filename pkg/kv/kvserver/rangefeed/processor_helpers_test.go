@@ -236,17 +236,17 @@ func (h *processorTestHelper) triggerTxnPushUntilPushed(t *testing.T, pushedC <-
 type procType bool
 
 const (
-	legacyProcessor    procType = false
-	schedulerProcessor          = true
+	schedulerProcessor = true
 )
 
-var testTypes = []procType{legacyProcessor, schedulerProcessor}
+var testTypes = []procType{schedulerProcessor}
 
 func (t procType) String() string {
 	if t {
 		return "scheduler"
 	}
-	return "legacy"
+	log.Fatalf(context.Background(), "unknown procType %t", t)
+	return ""
 }
 
 type testConfig struct {
@@ -422,13 +422,6 @@ func newTestProcessor(
 	s := NewProcessor(cfg.Config)
 	h := processorTestHelper{}
 	switch p := s.(type) {
-	case *LegacyProcessor:
-		h.rts = &p.rts
-		h.span = p.Span
-		h.syncEventC = p.syncEventC
-		h.sendSpanSync = func(span *roachpb.Span) {
-			p.syncEventCWithEvent(&syncEvent{c: make(chan struct{}), testRegCatchupSpan: span})
-		}
 	case *ScheduledProcessor:
 		h.rts = &p.rts
 		h.span = p.Span

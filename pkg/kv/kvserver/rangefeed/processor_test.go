@@ -1429,7 +1429,7 @@ func TestProcessorBackpressure(t *testing.T) {
 	span := roachpb.RSpan{Key: roachpb.RKey("a"), EndKey: roachpb.RKey("z")}
 
 	p, h, stopper := newTestProcessor(t, withSpan(span), withBudget(newTestBudget(math.MaxInt64)),
-		withChanCap(1), withEventTimeout(0), withProcType(legacyProcessor))
+		withChanCap(1), withEventTimeout(0))
 	defer stopper.Stop(ctx)
 	defer p.Stop()
 

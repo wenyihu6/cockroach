@@ -5,11 +5,14 @@
 
 package rangefeed
 
+import "github.com/cockroachdb/cockroach/pkg/util/log"
+
 func NewTestProcessor(id int64) Processor {
 	if id > 0 {
 		return &ScheduledProcessor{
 			scheduler: ClientScheduler{id: id},
 		}
 	}
-	return &LegacyProcessor{}
+	log.Fatalf("invalid processor id: %d", id)
+	return nil
 }
