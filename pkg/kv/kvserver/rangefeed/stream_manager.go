@@ -68,6 +68,7 @@ func NewStreamManager(sender sender, metrics RangefeedMetricsRecorder) *StreamMa
 }
 
 func (sm *StreamManager) NewStream(streamID int64, rangeID roachpb.RangeID) (sink Stream) {
+	sm.metrics.UpdateMetricsOnRangefeedConnect()
 	switch sender := sm.sender.(type) {
 	case *BufferedSender:
 		return &BufferedPerRangeEventSink{
@@ -85,10 +86,8 @@ func (sm *StreamManager) NewStream(streamID int64, rangeID roachpb.RangeID) (sin
 func (sm *StreamManager) OnError(streamID int64) {
 	sm.streams.Lock()
 	defer sm.streams.Unlock()
-	if _, ok := sm.streams.m[streamID]; ok {
-		delete(sm.streams.m, streamID)
-		sm.metrics.UpdateMetricsOnRangefeedDisconnect()
-	}
+	delete(sm.streams.m, streamID)
+	sm.metrics.UpdateMetricsOnRangefeedDisconnect()
 }
 
 func (sm *StreamManager) DisconnectStream(streamID int64, err *kvpb.Error) {
@@ -126,7 +125,6 @@ func (sm *StreamManager) AddStream(streamID int64, d Disconnector) {
 		log.Fatalf(context.Background(), "stream %d already exists", streamID)
 	}
 	sm.streams.m[streamID] = d
-	sm.metrics.UpdateMetricsOnRangefeedConnect()
 }
 
 func (sm *StreamManager) Start(ctx context.Context, stopper *stop.Stopper) error {
