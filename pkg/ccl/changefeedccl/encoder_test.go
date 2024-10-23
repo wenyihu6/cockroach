@@ -556,6 +556,42 @@ func TestCollatedString(t *testing.T) {
 	}
 }
 
+func TestCollatedStringWithDelete(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	for _, tc := range []struct {
+		format   changefeedbase.FormatType
+		expected string
+		deleted  string
+	}{
+		//{
+		//	format:   changefeedbase.OptFormatAvro,
+		//	expected: `foo: {"col":{"string":"désolée"}}->`,
+		//	deleted:  `foo: {"col":{"string":"\u00161\u0016L\u0017\ufffd\u0017q\u0017\u0011\u0016L\u0016L\u0000\u0000\u0000 \u0000 \u00002\u0000 \u0000 \u0000 \u0000 \u00002\u0000 \u0000\u0000\u0002\u0002\u0002\u0002\u0002\u0002\u0002\u0002\u0002"}}->`,
+		//},
+		{
+			format:   changefeedbase.OptFormatJSON,
+			expected: `foo: ["désolée"]->{"after": {"col": "désolée"}, "before": null}`,
+			deleted:  `foo: ["désolée"]->{"after": {"col": "désolée"}, "before": {"col": "désolée"}}`,
+		},
+	} {
+		testFn := func(t *testing.T, s TestServer, f cdctest.TestFeedFactory) {
+			sqlDB := sqlutils.MakeSQLRunner(s.DB)
+			sqlDB.Exec(t, `CREATE TABLE foo (col STRING COLLATE en_US PRIMARY KEY);`)
+			foo := feed(t, f, fmt.Sprintf(`CREATE CHANGEFEED FOR foo `+
+				`WITH format=%s, diff`, tc.format))
+			defer closeFeed(t, foo)
+			sqlDB.Exec(t,
+				`INSERT INTO foo VALUES ('désolée' collate "en_US")`)
+			assertPayloads(t, foo, []string{tc.expected})
+			sqlDB.Exec(t, `DELETE FROM foo LIMIT 1`)
+			assertPayloads(t, foo, []string{tc.deleted})
+		}
+		cdcTest(t, testFn, feedTestForceSink("kafka"))
+	}
+}
+
 func TestAvroEnum(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)

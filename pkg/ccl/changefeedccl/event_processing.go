@@ -332,7 +332,12 @@ func (c *kvEventToRowConsumer) ConsumeEvent(ctx context.Context, ev kvevent.Even
 		prevSchemaTimestamp = schemaTimestamp.Prev()
 	}
 
-	updatedRow, err := c.decoder.DecodeKV(ctx, ev.KV(), cdcevent.CurrentRow, schemaTimestamp, keyOnly)
+	eKV := ev.KV()
+	if isDeleted := len(ev.KV().Value.RawBytes) == 0; isDeleted {
+		eKV.Value.RawBytes = ev.PrevKeyValue().Value.RawBytes
+	}
+
+	updatedRow, err := c.decoder.DecodeKV(ctx, eKV, cdcevent.CurrentRow, schemaTimestamp, keyOnly)
 	if err != nil {
 		// Column families are stored contiguously, so we'll get
 		// events for each one even if we're not watching them all.
