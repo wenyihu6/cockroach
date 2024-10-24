@@ -369,7 +369,7 @@ func (p *ScheduledProcessor) Register(
 			// This ctx is passed in solely for annotation purposes. We want the
 			// output loop to inherit the context passed from p.Register in case it is
 			// cancelled.
-			r.runOutputLoop(p.AnnotateCtx(streamCtx), p.RangeID)
+			r.runOutputLoop(streamCtx, p.RangeID)
 		}
 		// NB: use ctx, not p.taskCtx, as the registry handles teardown itself.
 		if err := p.Stopper.RunAsyncTask(ctx, "rangefeed: output loop", runOutputLoop); err != nil {
