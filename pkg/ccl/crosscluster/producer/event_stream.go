@@ -300,7 +300,7 @@ func (s *eventStream) onValues(ctx context.Context, values []kv.KeyValue) {
 	s.setErr(s.maybeFlushBatch(ctx))
 }
 
-func (s *eventStream) onValue(ctx context.Context, value *kvpb.RangeFeedValue) {
+func (s *eventStream) onValue(ctx context.Context, value *kvpb.RangeFeedValue) error {
 	// During initial-scan we expect concurrent onValue calls from the parallel
 	// scan workers, but once the initial scan ends the mu will be nilled out and
 	// we can avoid the locking overhead here.
@@ -312,10 +312,14 @@ func (s *eventStream) onValue(ctx context.Context, value *kvpb.RangeFeedValue) {
 		KeyValue: roachpb.KeyValue{Key: value.Key, Value: value.Value}, PrevValue: value.PrevValue,
 	})
 	s.setErr(s.maybeFlushBatch(ctx))
+	return nil
 }
 
-func (s *eventStream) onCheckpoint(ctx context.Context, checkpoint *kvpb.RangeFeedCheckpoint) {
+func (s *eventStream) onCheckpoint(
+	ctx context.Context, checkpoint *kvpb.RangeFeedCheckpoint,
+) error {
 	s.debug.RF.Checkpoints.Add(1)
+	return nil
 }
 
 func (s *eventStream) onFrontier(ctx context.Context, timestamp hlc.Timestamp) {

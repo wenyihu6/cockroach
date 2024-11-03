@@ -49,6 +49,7 @@ type config struct {
 	onDeleteRange         OnDeleteRange
 	onMetadata            OnMetadata
 	extraPProfLabels      []string
+	knobs                 TestingKnobs
 }
 
 type scanConfig struct {
@@ -190,7 +191,7 @@ func WithOnValues(fn OnValues) Option {
 }
 
 // OnCheckpoint is called when a rangefeed checkpoint occurs.
-type OnCheckpoint func(ctx context.Context, checkpoint *kvpb.RangeFeedCheckpoint)
+type OnCheckpoint func(ctx context.Context, checkpoint *kvpb.RangeFeedCheckpoint) error
 
 // WithOnCheckpoint sets up a callback that's invoked whenever a check point
 // event is emitted.
@@ -221,7 +222,7 @@ type OnSSTable func(
 	ctx context.Context,
 	sst *kvpb.RangeFeedSSTable,
 	registeredSpan roachpb.Span,
-)
+) error
 
 // WithOnSSTable sets up a callback that's invoked whenever an SSTable is
 // ingested.

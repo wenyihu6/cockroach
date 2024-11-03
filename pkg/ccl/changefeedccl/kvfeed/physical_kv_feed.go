@@ -13,6 +13,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/jobs/jobspb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvclient/kvcoord"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
+	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/errors"
@@ -106,73 +107,96 @@ func (p rangefeedFactory) Run(ctx context.Context, sink kvevent.Writer, cfg rang
 	return g.Wait()
 }
 
-// addEventsToBuffer consumes rangefeed events from `p.eventCh`, transforms
-// them to kvevent.Event's, and pushes them into `p.memBuf`.
-func (p *rangefeed) addEventsToBuffer(ctx context.Context) error {
-	for {
-		select {
-		case e := <-p.eventCh:
-			switch t := e.GetValue().(type) {
-			case *kvpb.RangeFeedValue:
-				if p.cfg.Knobs.OnRangeFeedValue != nil {
-					if err := p.cfg.Knobs.OnRangeFeedValue(); err != nil {
-						return err
-					}
-				}
-				stop := p.st.RangefeedBufferValue.Start()
-				if err := p.memBuf.Add(
-					ctx, kvevent.MakeKVEvent(e.RangeFeedEvent),
-				); err != nil {
-					return err
-				}
-				stop()
-			case *kvpb.RangeFeedCheckpoint:
-				if !t.ResolvedTS.IsEmpty() && t.ResolvedTS.Less(p.cfg.Frontier) {
-					// RangeFeed happily forwards any closed timestamps it receives as
-					// soon as there are no outstanding intents under them.
-					// Changefeeds don't care about these at all, so throw them out.
-					continue
-				}
-				if p.knobs.ShouldSkipCheckpoint != nil && p.knobs.ShouldSkipCheckpoint(t) {
-					continue
-				}
-				stop := p.st.RangefeedBufferCheckpoint.Start()
-				if err := p.memBuf.Add(
-					ctx, kvevent.MakeResolvedEvent(e.RangeFeedEvent, jobspb.ResolvedSpan_NONE),
-				); err != nil {
-					return err
-				}
-				stop()
-			case *kvpb.RangeFeedSSTable:
-				// For now, we just error on SST ingestion, since we currently don't
-				// expect SST ingestion into spans with active changefeeds.
-				return errors.Errorf("unexpected SST ingestion: %v", t)
-
-			case *kvpb.RangeFeedDeleteRange:
-				// For now, we just ignore on MVCC range tombstones. These are currently
-				// only expected to be used by schema GC and IMPORT INTO, and such spans
-				// should not have active changefeeds across them, at least at the times
-				// of interest. A case where one will show up in a changefeed is when
-				// the primary index changes while we're watching it and then the old
-				// primary index is dropped. In this case, we'll get a schema event to
-				// restart into the new primary index, but the DeleteRange may come
-				// through before the schema event.
-				//
-				// TODO(erikgrinaker): Write an end-to-end test which verifies that an
-				// IMPORT INTO which gets rolled back using MVCC range tombstones will
-				// not be visible to a changefeed, neither when it was started before
-				// the import or when resuming from a timestamp before the import. The
-				// table decriptor should be marked as offline during the import, and
-				// catchup scans should detect that this happened and prevent reading
-				// anything in that timespan. See:
-				// https://github.com/cockroachdb/cockroach/issues/70433
-				continue
-
-			default:
-				return errors.Errorf("unexpected RangeFeedEvent variant %v", t)
-			}
-		case <-ctx.Done():
-			return ctx.Err()
+func (p *rangefeed) onValue(ctx context.Context, value *kvpb.RangeFeedValue) error {
+	if p.cfg.Knobs.OnRangeFeedValue != nil {
+		if err := p.cfg.Knobs.OnRangeFeedValue(); err != nil {
+			return err
 		}
 	}
+	stop := p.st.RangefeedBufferValue.Start()
+	ev := &kvpb.RangeFeedEvent{}
+	ev.MustSetValue(value)
+	if err := p.memBuf.Add(
+		ctx, kvevent.MakeKVEvent(ev),
+	); err != nil {
+		return err
+	}
+	stop()
 }
+
+func (p *rangefeed) onCheckpoint(ctx context.Context, checkpoint *kvpb.RangeFeedCheckpoint) error {
+	if !checkpoint.ResolvedTS.IsEmpty() && checkpoint.ResolvedTS.Less(p.cfg.Frontier) {
+		// RangeFeed happily forwards any closed timestamps it receives as
+		// soon as there are no outstanding intents under them.
+		// Changefeeds don't care about these at all, so throw them out.
+		return nil
+	}
+	if p.knobs.ShouldSkipCheckpoint != nil && p.knobs.ShouldSkipCheckpoint(checkpoint) {
+		return nil
+	}
+
+	stop := p.st.RangefeedBufferCheckpoint.Start()
+	ev := &kvpb.RangeFeedEvent{}
+	ev.MustSetValue(checkpoint)
+	if err := p.memBuf.Add(
+		ctx, kvevent.MakeResolvedEvent(ev, jobspb.ResolvedSpan_NONE),
+	); err != nil {
+		return err
+	}
+	stop()
+	return nil
+}
+
+func (p *rangefeed) onSSTable(
+	ctx context.Context, sst *kvpb.RangeFeedSSTable, registeredSpan roachpb.Span,
+) error {
+	return errors.Errorf("unexpected SST ingestion: %v", sst)
+}
+
+func (p *rangefeed) onDeleteRange(ctx context.Context, delRange *kvpb.RangeFeedDeleteRange) {
+	return
+}
+
+//// addEventsToBuffer consumes rangefeed events from `p.eventCh`, transforms
+//// them to kvevent.Event's, and pushes them into `p.memBuf`.
+//func (p *rangefeed) addEventsToBuffer(ctx context.Context) error {
+//	for {
+//		select {
+//		case e := <-p.eventCh:
+//			switch t := e.GetValue().(type) {
+//			case *kvpb.RangeFeedValue:
+//
+//			case *kvpb.RangeFeedCheckpoint:
+//
+//			case *kvpb.RangeFeedSSTable:
+//				// For now, we just error on SST ingestion, since we currently don't
+//				// expect SST ingestion into spans with active changefeeds.
+//
+//			case *kvpb.RangeFeedDeleteRange:
+//				// For now, we just ignore on MVCC range tombstones. These are currently
+//				// only expected to be used by schema GC and IMPORT INTO, and such spans
+//				// should not have active changefeeds across them, at least at the times
+//				// of interest. A case where one will show up in a changefeed is when
+//				// the primary index changes while we're watching it and then the old
+//				// primary index is dropped. In this case, we'll get a schema event to
+//				// restart into the new primary index, but the DeleteRange may come
+//				// through before the schema event.
+//				//
+//				// TODO(erikgrinaker): Write an end-to-end test which verifies that an
+//				// IMPORT INTO which gets rolled back using MVCC range tombstones will
+//				// not be visible to a changefeed, neither when it was started before
+//				// the import or when resuming from a timestamp before the import. The
+//				// table decriptor should be marked as offline during the import, and
+//				// catchup scans should detect that this happened and prevent reading
+//				// anything in that timespan. See:
+//				// https://github.com/cockroachdb/cockroach/issues/70433
+//				continue
+//
+//			default:
+//				return errors.Errorf("unexpected RangeFeedEvent variant %v", t)
+//			}
+//		case <-ctx.Done():
+//			return ctx.Err()
+//		}
+//	}
+//}

@@ -95,6 +95,27 @@ type TestingKnobs struct {
 	// StoreTestingKnobs.GlobalMVCCRangeTombstone, to prevent the global tombstone
 	// causing rangefeed errors for consumers who don't expect it.
 	IgnoreOnDeleteRangeError bool
+
+	// BeforeScanRequest is a callback invoked before issuing Scan request.
+	BeforeScanRequest func(b *kv.Batch) error
+
+	// OnRangeFeedValue invoked when rangefeed receives a value.
+	OnRangeFeedValue func() error
+
+	// ShouldSkipCheckpoint invoked when rangefed receives a checkpoint.
+	// Returns true if checkpoint should be skipped.
+	ShouldSkipCheckpoint func(*kvpb.RangeFeedCheckpoint) bool
+
+	// OnRangeFeedStart invoked when rangefeed starts.  It is given
+	// the list of SpanTimePairs.
+	OnRangeFeedStart func(spans []kvcoord.SpanTimePair)
+
+	// EndTimeReached is a callback that may return true to indicate the
+	// feed should exit because its end time has been reached.
+	EndTimeReached func() bool
+
+	// RangefeedOptions lets the kvfeed override rangefeed settings.
+	RangefeedOptions []kvcoord.RangeFeedOption
 }
 
 // ModuleTestingKnobs is part of the base.ModuleTestingKnobs interface.
@@ -168,7 +189,7 @@ func (f *Factory) New(
 }
 
 // OnValue is called for each rangefeed value.
-type OnValue func(ctx context.Context, value *kvpb.RangeFeedValue)
+type OnValue func(ctx context.Context, value *kvpb.RangeFeedValue) error
 
 // OnValue is called for a batch of rangefeed values.
 type OnValues func(ctx context.Context, values []kv.KeyValue)
@@ -331,7 +352,7 @@ func (f *RangeFeed) run(ctx context.Context, frontier span.Frontier, resumeWithF
 
 	// TODO(ajwerner): Consider adding event buffering. Doing so would require
 	// draining when the rangefeed fails.
-	eventCh := make(chan kvcoord.RangeFeedMessage)
+	eventCh := make(chan kvcoord.RangeFeedMessage, 128)
 
 	var rangefeedOpts []kvcoord.RangeFeedOption
 	if f.scanConfig.overSystemTable {
@@ -346,6 +367,13 @@ func (f *RangeFeed) run(ctx context.Context, frontier span.Frontier, resumeWithF
 	if len(f.withMatchingOriginIDs) != 0 {
 		rangefeedOpts = append(rangefeedOpts, kvcoord.WithMatchingOriginIDs(f.withMatchingOriginIDs...))
 	}
+	// TODO(add RangeObserver and RangeFeedOption)
+	//if f.RangeObserver != nil {
+	//	rangefeedOpts = append(rangefeedOpts, kvcoord.WithRangeObserver(f.RangeObserver))
+	//}
+	//if len(f.Knobs.RangefeedOptions) != 0 {
+	//	rangefeedOpts = append(rangefeedOpts, cfg.Knobs.RangefeedOptions...)
+	//}
 	if f.onMetadata != nil {
 		rangefeedOpts = append(rangefeedOpts, kvcoord.WithMetadata())
 	}
@@ -430,7 +458,9 @@ func (f *RangeFeed) processEvents(
 		case ev := <-eventCh:
 			switch {
 			case ev.Val != nil:
-				f.onValue(ctx, ev.Val)
+				if err := f.onValue(ctx, ev.Val); err != nil {
+					return err
+				}
 			case ev.Checkpoint != nil:
 				ts := ev.Checkpoint.ResolvedTS
 				if f.frontierQuantize != 0 {
@@ -442,7 +472,9 @@ func (f *RangeFeed) processEvents(
 					return err
 				}
 				if f.onCheckpoint != nil {
-					f.onCheckpoint(ctx, ev.Checkpoint)
+					if err := f.onCheckpoint(ctx, ev.Checkpoint); err != nil {
+						return err
+					}
 				}
 				if advanced && f.onFrontierAdvance != nil {
 					f.onFrontierAdvance(ctx, frontier.Frontier())
@@ -455,7 +487,9 @@ func (f *RangeFeed) processEvents(
 					return errors.AssertionFailedf(
 						"received unexpected rangefeed SST event with no OnSSTable handler")
 				}
-				f.onSSTable(ctx, ev.SST, ev.RegisteredSpan)
+				if err := f.onSSTable(ctx, ev.SST, ev.RegisteredSpan); err != nil {
+					return err
+				}
 			case ev.DeleteRange != nil:
 				if f.onDeleteRange == nil {
 					if f.knobs != nil && f.knobs.IgnoreOnDeleteRangeError {
