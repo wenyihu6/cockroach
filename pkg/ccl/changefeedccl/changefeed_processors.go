@@ -1089,6 +1089,7 @@ func (cs *cachedState) SetCheckpoint(spans []roachpb.Span, timestamp hlc.Timesta
 		Spans:     spans,
 		Timestamp: timestamp,
 	}
+	fmt.Println("cached state checkpointed ts: ", timestamp, "checkpointed spans: ", spans)
 }
 
 func newJobState(
@@ -1754,6 +1755,7 @@ func (cf *changeFrontier) checkpointJobProgress(
 
 			changefeedProgress := progress.Details.(*jobspb.Progress_Changefeed).Changefeed
 			changefeedProgress.Checkpoint = &checkpoint
+			log.Infof(cf.Ctx(), "here1 change frontier checkpointing highwater=%s and checkpoint=%s", frontier, checkpoint)
 
 			if ptsUpdated, err = cf.manageProtectedTimestamps(cf.Ctx(), txn, changefeedProgress); err != nil {
 				log.Warningf(cf.Ctx(), "error managing protected timestamp record: %v", err)
@@ -1773,14 +1775,11 @@ func (cf *changeFrontier) checkpointJobProgress(
 		if ptsUpdated {
 			cf.lastProtectedTimestampUpdate = timeutil.Now()
 		}
-		if log.V(2) {
-			log.Infof(cf.Ctx(), "change frontier persisted highwater=%s and checkpoint=%s", frontier, checkpoint)
-		}
+		log.Infof(cf.Ctx(), "here3 change frontier persisted highwater=%s and checkpoint=%s", frontier, checkpoint)
 	}
 
 	cf.localState.SetHighwater(frontier)
 	cf.localState.SetCheckpoint(checkpoint.Spans, checkpoint.Timestamp)
-
 	return true, nil
 }
 

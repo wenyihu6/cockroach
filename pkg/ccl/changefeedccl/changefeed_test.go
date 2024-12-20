@@ -2259,7 +2259,7 @@ func TestChangefeedLaggingSpanCheckpointing(t *testing.T) {
 	require.True(t, progress.GetHighWater().IsEmpty() || *progress.GetHighWater() == cursor,
 		"expected empty highwater or %s,  found %s", cursor, progress.GetHighWater())
 	require.NotNil(t, progress.GetChangefeed().Checkpoint)
-	require.Less(t, 0, len(progress.GetChangefeed().Checkpoint.Spans))
+	require.Lessf(t, 0, len(progress.GetChangefeed().Checkpoint.Spans), "got progress %+v", progress)
 	checkpointTS := progress.GetChangefeed().Checkpoint.Timestamp
 	require.True(t, cursor.LessEq(checkpointTS))
 
