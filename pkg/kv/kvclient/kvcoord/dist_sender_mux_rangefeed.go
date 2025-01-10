@@ -7,9 +7,11 @@ package kvcoord
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"sync/atomic"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvclient/rangecache"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -72,6 +74,9 @@ func muxRangeFeed(
 			log.Infof(ctx, "MuxRangeFeed terminating after %s with err=%v", timeutil.Since(start), retErr)
 		}()
 	}
+
+	fmt.Printf("Establishing MuxRangeFeed (%s...; %d spans)\n", spans[0], len(spans))
+	fmt.Println("rangefeed muxer: ", time.Now())
 
 	m := &rangefeedMuxer{
 		g:          ctxgroup.WithContext(ctx),
@@ -342,7 +347,13 @@ func (s *activeMuxRangeFeed) start(ctx context.Context, m *rangefeedMuxer) error
 func (m *rangefeedMuxer) establishMuxConnection(
 	ctx context.Context, client rpc.RestrictedInternalClient, nodeID roachpb.NodeID,
 ) (*muxStream, error) {
+	m.muxClients.Range(func(id roachpb.NodeID, f *future.Future[muxStreamOrError]) bool {
+		fmt.Println("node id in the map: ", id)
+		return true
+	})
 	muxClient, exists := m.muxClients.LoadOrStore(nodeID, future.Make[muxStreamOrError]())
+	fmt.Println("checking if nodeID is in the map: for consumer id", nodeID, exists, m.cfg.consumerID)
+
 	if !exists {
 		// Start mux rangefeed goroutine responsible for receiving MuxRangeFeedEvents.
 		m.g.GoCtx(func(ctx context.Context) error {
@@ -389,6 +400,12 @@ func (m *rangefeedMuxer) startNodeMuxRangeFeed(
 		}()
 	}
 
+	fmt.Printf("Establishing MuxRangeFeed to node %d", nodeID)
+	start := timeutil.Now()
+	defer func() {
+		fmt.Printf("MuxRangeFeed to node %d terminating after %s with err=%v", nodeID, timeutil.Since(start), retErr)
+	}()
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -396,6 +413,7 @@ func (m *rangefeedMuxer) startNodeMuxRangeFeed(
 	if err != nil {
 		// Remove the mux client from the cache if it hit an
 		// error.
+		fmt.Println("error at startNodeMuxRangeFeed: deleted", err, nodeID)
 		m.muxClients.Delete(nodeID)
 		return future.MustSet(stream, muxStreamOrError{err: err})
 	}
@@ -407,6 +425,7 @@ func (m *rangefeedMuxer) startNodeMuxRangeFeed(
 	}
 
 	if recvErr := m.receiveEventsFromNode(ctx, mux, &ms); recvErr != nil {
+		fmt.Println("error at receiveEventsFromNode: deleted here", recvErr, nodeID)
 		// Clear out this client, and restart all streams on this node.
 		// Note: there is a race here where we may delete this muxClient, while
 		// another goroutine loaded it.  That's fine, since we would not
@@ -444,8 +463,14 @@ func (m *rangefeedMuxer) startNodeMuxRangeFeed(
 func (m *rangefeedMuxer) receiveEventsFromNode(
 	ctx context.Context, receiver muxRangeFeedEventReceiver, ms *muxStream,
 ) error {
+	prev := kvpb.RangeFeedEvent{}
+	fmt.Printf("started at receiveEventsFromNode: %v for node %d for muxer consumer id %d\n", time.Now(), ms.nodeID, m.cfg.consumerID)
 	for {
 		event, err := receiver.Recv()
+		if event.RangeFeedEvent == prev {
+			panic("same event wth")
+		}
+		prev = event.RangeFeedEvent
 		if err != nil {
 			return err
 		}
@@ -488,6 +513,11 @@ func (m *rangefeedMuxer) receiveEventsFromNode(
 				// Timestamp field in the request is exclusive, meaning if we send
 				// the request with exactly the ResolveTS, we'll see only rows after
 				// that timestamp.
+				fmt.Println("------- at rangefeed muxer ----")
+				fmt.Println("received at rangefeed muxer event: ", event)
+				fmt.Println("resolved ts: ", t.ResolvedTS)
+				fmt.Printf("t pointer at distsender mux: %p at time %v\n", t, time.Now())
+				fmt.Println("------- end ------")
 				active.startAfter.Forward(t.ResolvedTS)
 			}
 		case *kvpb.RangeFeedError:
@@ -500,6 +530,7 @@ func (m *rangefeedMuxer) receiveEventsFromNode(
 			// expensive, particularly if we have to resolve span.  We do not want
 			// to block receiveEventsFromNode for too long.
 			m.g.GoCtx(func(ctx context.Context) error {
+				fmt.Println("restarting active rangefeed here")
 				return m.restartActiveRangeFeed(ctx, active, t.Error.GoError())
 			})
 			continue
@@ -520,6 +551,7 @@ func (m *rangefeedMuxer) restartActiveRangeFeeds(
 	ctx context.Context, reason error, toRestart []*activeMuxRangeFeed,
 ) error {
 	for _, active := range toRestart {
+		fmt.Println("restarting active rangefeed here as well")
 		if err := m.restartActiveRangeFeed(ctx, active, reason); err != nil {
 			return err
 		}

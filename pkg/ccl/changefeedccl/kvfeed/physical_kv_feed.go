@@ -7,6 +7,7 @@ package kvfeed
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/ccl/changefeedccl/kvevent"
@@ -144,7 +145,13 @@ func (p *rangefeed) addEventsToBuffer(ctx context.Context) error {
 				stop()
 			case *kvpb.RangeFeedCheckpoint:
 				ev := e.RangeFeedEvent
+				fmt.Println("------------------")
+				fmt.Println("event at physical: ", e)
+				fmt.Println("event resolved ts at physical: ", ev.Checkpoint)
+				fmt.Printf("event pointer: %p\n", ev.Checkpoint)
 				ev.Checkpoint.ResolvedTS = quantizeTS(ev.Checkpoint.ResolvedTS, p.cfg.WithFrontierQuantize)
+				fmt.Println("ev.ResolvedTS: ", ev.Checkpoint.ResolvedTS)
+				fmt.Println("------------------")
 				if resolvedTs := ev.Checkpoint.ResolvedTS; !resolvedTs.IsEmpty() && resolvedTs.Less(p.cfg.Frontier) {
 					// RangeFeed happily forwards any closed timestamps it receives as
 					// soon as there are no outstanding intents under them.
