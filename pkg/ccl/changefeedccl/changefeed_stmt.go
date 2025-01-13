@@ -1500,6 +1500,9 @@ func reconcileJobStateWithLocalState(
 	}
 
 	maxBytes := changefeedbase.FrontierCheckpointMaxBytes.Get(&execCfg.Settings.SV)
+	sort.Slice(localState.aggregatorFrontier, func(i, j int) bool {
+		return localState.aggregatorFrontier[j].Timestamp.Less(localState.aggregatorFrontier[i].Timestamp)
+	})
 	checkpoint := checkpoint.Make(sf.Frontier(), func(forEachSpan span.Operation) {
 		for _, fs := range localState.aggregatorFrontier {
 			forEachSpan(fs.Span, fs.Timestamp)

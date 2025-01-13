@@ -27,30 +27,35 @@ func Make(
 	// Collect leading spans into a SpanGroup to merge adjacent spans and store
 	// the lowest timestamp found
 	var checkpointSpanGroup roachpb.SpanGroup
-	checkpointFrontier := hlc.Timestamp{}
+	currCheckpointFrontier := hlc.Timestamp{}
+	prevCheckpointFrontier := hlc.Timestamp{}
+	var prevCheckpointSpans []roachpb.Span
+	var currCheckpointSpans []roachpb.Span
 	forEachSpan(func(s roachpb.Span, ts hlc.Timestamp) span.OpResult {
 		if frontier.Less(ts) {
 			checkpointSpanGroup.Add(s)
-			if checkpointFrontier.IsEmpty() || ts.Less(checkpointFrontier) {
-				checkpointFrontier = ts
+			// check if exceeded yet
+			var used int64
+			for _, sp := range checkpointSpanGroup.Slice() {
+				used += int64(len(sp.Key)) + int64(len(sp.EndKey))
+				if used > maxBytes {
+					return span.StopMatch
+				}
+				currCheckpointSpans = append(currCheckpointSpans, sp)
+				if currCheckpointFrontier.IsEmpty() || ts.Less(currCheckpointFrontier) {
+					currCheckpointFrontier = ts
+				}
 			}
+			prevCheckpointSpans = currCheckpointSpans
+			currCheckpointSpans = []roachpb.Span{}
+			prevCheckpointFrontier = currCheckpointFrontier
+			currCheckpointFrontier = hlc.Timestamp{}
 		}
 		return span.ContinueMatch
 	})
 
-	// Ensure we only return up to maxBytes spans
-	var checkpointSpans []roachpb.Span
-	var used int64
-	for _, span := range checkpointSpanGroup.Slice() {
-		used += int64(len(span.Key)) + int64(len(span.EndKey))
-		if used > maxBytes {
-			break
-		}
-		checkpointSpans = append(checkpointSpans, span)
-	}
-
 	return jobspb.ChangefeedProgress_Checkpoint{
-		Spans:     checkpointSpans,
-		Timestamp: checkpointFrontier,
+		Spans:     prevCheckpointSpans,
+		Timestamp: prevCheckpointFrontier,
 	}
 }
