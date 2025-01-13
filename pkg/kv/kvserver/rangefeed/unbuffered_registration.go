@@ -7,6 +7,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -142,6 +143,11 @@ func (ubr *unbufferedRegistration) publish(
 
 	ubr.assertEvent(ctx, event)
 	strippedEvent := ubr.maybeStripEvent(ctx, event)
+
+	if strippedEvent.Checkpoint != nil {
+		fmt.Printf("check two pointers here %p and %p with %v and %v\n", event.Checkpoint, strippedEvent.Checkpoint, *event.Checkpoint, *strippedEvent.Checkpoint)
+		fmt.Printf("unbuf check event pointer here at publish: %p with id %d\n", strippedEvent.Checkpoint, ubr.id)
+	}
 
 	// Disconnected or catchUpOverflowed is not set and catchUpBuf
 	// is nil. Safe to send to underlying stream.

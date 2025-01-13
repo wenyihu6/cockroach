@@ -2172,6 +2172,7 @@ func (e *RangeFeedEvent) ShallowCopy() *RangeFeedEvent {
 	case *RangeFeedCheckpoint:
 		cpyChk := *t
 		cpy.MustSetValue(&cpyChk)
+		fmt.Printf("check pointer here should be diff: %p, %p\n", e, cpy)
 	case *RangeFeedSSTable:
 		cpySST := *t
 		cpy.MustSetValue(&cpySST)

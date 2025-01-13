@@ -7,6 +7,7 @@ package rangefeed
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -115,7 +116,10 @@ func (br *bufferedRegistration) publish(
 ) {
 	br.assertEvent(ctx, event)
 	e := getPooledSharedEvent(sharedEvent{event: br.maybeStripEvent(ctx, event), alloc: alloc})
-
+	if e.event.Checkpoint != nil {
+		fmt.Printf("check two pointers here %p and %p\n", event, e.event)
+		fmt.Printf("check event pointer here at publish: %p with id %d\n", e.event, br.id)
+	}
 	br.mu.Lock()
 	defer br.mu.Unlock()
 	if br.mu.overflowed || br.mu.disconnected {

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,7 @@ import (
 // rangefeeds. rangefeedMuxer caches MuxRangeFeed stream per node, and executes
 // each range feed request on an appropriate node.
 type rangefeedMuxer struct {
+	id int
 	// Context group controlling execution of MuxRangeFeed calls. When this group
 	// cancels, the entire muxer shuts down.
 	g ctxgroup.Group
@@ -79,6 +81,7 @@ func muxRangeFeed(
 	fmt.Println("rangefeed muxer: ", time.Now())
 
 	m := &rangefeedMuxer{
+		id:         rand.Int(),
 		g:          ctxgroup.WithContext(ctx),
 		registry:   rr,
 		ds:         ds,
@@ -464,7 +467,8 @@ func (m *rangefeedMuxer) receiveEventsFromNode(
 	ctx context.Context, receiver muxRangeFeedEventReceiver, ms *muxStream,
 ) error {
 	prev := kvpb.RangeFeedEvent{}
-	fmt.Printf("started at receiveEventsFromNode: %v for node %d for muxer consumer id %d\n", time.Now(), ms.nodeID, m.cfg.consumerID)
+	fmt.Printf("started at receiveEventsFromNode: %v for node %d for muxer consumer id %d at muxer id: %d at seq id: %d coming from node ds: %d\n",
+		time.Now(), ms.nodeID, m.cfg.consumerID, m.id, atomic.LoadInt64(&m.seqID), m.ds.nodeIDGetter())
 	for {
 		event, err := receiver.Recv()
 		if event.RangeFeedEvent == prev {
@@ -516,7 +520,8 @@ func (m *rangefeedMuxer) receiveEventsFromNode(
 				fmt.Println("------- at rangefeed muxer ----")
 				fmt.Println("received at rangefeed muxer event: ", event)
 				fmt.Println("resolved ts: ", t.ResolvedTS)
-				fmt.Printf("t pointer at distsender mux: %p at time %v\n", t, time.Now())
+				fmt.Printf("t pointer at distsender mux: %p with resolved and span %v at time %v for muxer consumer "+
+					"id %d at muxer id: %d at seq id: %d\n", t, *t, time.Now(), m.cfg.consumerID, m.id, atomic.LoadInt64(&m.seqID))
 				fmt.Println("------- end ------")
 				active.startAfter.Forward(t.ResolvedTS)
 			}

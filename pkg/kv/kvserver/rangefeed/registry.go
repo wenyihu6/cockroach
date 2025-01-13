@@ -198,6 +198,11 @@ func (r *baseRegistration) maybeStripEvent(
 	copyOnWrite := func() interface{} {
 		if ret == event {
 			ret = event.ShallowCopy()
+		} else {
+			fmt.Println("NOT EQUALLLLLL why")
+		}
+		if ret.Checkpoint == event.Checkpoint {
+			fmt.Printf("still equal why %p, %p", ret, event)
 		}
 		return ret.GetValue()
 	}
@@ -229,6 +234,8 @@ func (r *baseRegistration) maybeStripEvent(
 			}
 			t = copyOnWrite().(*kvpb.RangeFeedCheckpoint)
 			t.Span = r.span
+		} else {
+			fmt.Println("checkpoint span equal not checking")
 		}
 	case *kvpb.RangeFeedDeleteRange:
 		// Truncate the range tombstone to the registration bounds.
@@ -241,6 +248,9 @@ func (r *baseRegistration) maybeStripEvent(
 		// filter out irrelevant entries.
 	default:
 		log.Fatalf(ctx, "unexpected RangeFeedEvent variant: %v", t)
+	}
+	if ret == event {
+		fmt.Printf("two pointers here: %p, %p\n", ret.Checkpoint, event.Checkpoint)
 	}
 	return ret
 }

@@ -220,6 +220,7 @@ func (e *Event) MVCCTimestamp() hlc.Timestamp {
 func (e *Event) getTimestamp(backfillTS hlc.Timestamp) hlc.Timestamp {
 	switch e.Type() {
 	case TypeResolved:
+		fmt.Printf("checkpoint event pointer here at getTimestamp: %p\n", e.ev.Checkpoint)
 		return e.ev.Checkpoint.ResolvedTS
 	case TypeKV:
 		if !backfillTS.IsEmpty() {
