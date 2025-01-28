@@ -25,6 +25,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondatapb"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
+	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/util/cache"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/iterutil"
@@ -544,6 +545,15 @@ func (d *eventDecoder) DecodeKV(
 	if errors.Is(err, ErrUnwatchedFamily) {
 		return Row{}, err
 	}
+
+	testutils.CaptureSideEyeSnapshotNoT(context.TODO(), "decodekv")
+	// _ = testutils.CaptureSideEyeSnapshotNoT
+	// runtime.Breakpoint()
+
+	// r, err = d.decodeKV(ctx, kv, rt, schemaTS, keyOnly)
+	// if err == nil {
+	// 	return r, nil
+	// }
 
 	// Failure to decode roachpb.KeyValue we received from rangefeed is pretty bad.
 	// At this point, we only have guesses why this happened (schema change? data corruption?).

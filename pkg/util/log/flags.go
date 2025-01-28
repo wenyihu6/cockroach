@@ -331,7 +331,7 @@ func ApplyConfig(
 		if err != nil {
 			return nil, err
 		}
-		fileSink.fatalOnLogStall = fatalOnLogStall
+		fileSink.fatalOnLogStall = func() bool { return false }
 		attachBufferWrapper(fileSinkInfo, fc.CommonSinkConfig.Buffering, closer)
 		attachSinkInfo(fileSinkInfo, &fc.Channels)
 

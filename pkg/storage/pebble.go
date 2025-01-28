@@ -1225,7 +1225,7 @@ func (p *Pebble) makeMetricEtcEventListener(ctx context.Context) pebble.EventLis
 		},
 		DiskSlow: func(info pebble.DiskSlowInfo) {
 			maxSyncDuration := fs.MaxSyncDuration.Get(&p.cfg.settings.SV)
-			fatalOnExceeded := fs.MaxSyncDurationFatalOnExceeded.Get(&p.cfg.settings.SV)
+			fatalOnExceeded := false // fs.MaxSyncDurationFatalOnExceeded.Get(&p.cfg.settings.SV)
 			if info.Duration.Seconds() >= maxSyncDuration.Seconds() {
 				atomic.AddInt64(&p.diskStallCount, 1)
 				// Note that the below log messages go to the main cockroach log, not

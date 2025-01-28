@@ -21,6 +21,49 @@ type testingT interface {
 	TestFatalerLogger
 }
 
+type fakeT struct {
+	name string
+}
+
+// Errorf implements testingT.
+func (f *fakeT) Errorf(format string, args ...interface{}) {
+	fmt.Printf(format, args...)
+}
+
+// FailNow implements testingT.
+func (f *fakeT) FailNow() {
+	panic("unimplemented")
+}
+
+// Fatal implements testingT.
+func (f *fakeT) Fatal(args ...interface{}) {
+	panic("unimplemented")
+}
+
+// Fatalf implements testingT.
+func (f *fakeT) Fatalf(format string, args ...interface{}) {
+	panic("unimplemented")
+}
+
+// Helper implements testingT.
+func (f *fakeT) Helper() {
+}
+
+// Logf implements testingT.
+func (f *fakeT) Logf(format string, args ...interface{}) {
+	fmt.Printf(format, args...)
+}
+
+func (f *fakeT) Name() string {
+	return f.name
+}
+
+var _ testingT = &fakeT{}
+
+func CaptureSideEyeSnapshotNoT(ctx context.Context, name string) {
+	CaptureSideEyeSnapshot(ctx, &fakeT{name: name})
+}
+
 // CaptureSideEyeSnapshot captures a Side-Eye snapshot if the
 // SIDE_EYE_TOKEN env var is set. If the snapshot is captured, the snapshot's
 // URL is logged. Snapshots are captured with a 90s timeout.
@@ -47,7 +90,7 @@ func CaptureSideEyeSnapshot(ctx context.Context, t testingT) {
 	name = fmt.Sprintf("%s@%s: %s", username, hostname, name)
 
 	snapshotCtx, cancel := context.WithTimeoutCause(
-		ctx, 90*time.Second, errors.New("timed out waiting for Side-Eye snapshot"),
+		ctx, 180*time.Second, errors.New("timed out waiting for Side-Eye snapshot"),
 	)
 	defer cancel()
 	snapshotURL, err := sideeye.CaptureSelfSnapshot(snapshotCtx, name, sideeye.WithEnvironment("unit tests"))
