@@ -2445,11 +2445,9 @@ def go_deps():
         name = "com_github_dataexmachina_dev_side_eye_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/DataExMachina-dev/side-eye-go",
-        sha256 = "60518729ea3c6b1bd57ae454216967e4952923f5b7d7b8ee6f3ab8112ec59d76",
-        strip_prefix = "github.com/DataExMachina-dev/side-eye-go@v0.0.0-20250129155449-07ef0520771b",
-        urls = [
-            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/DataExMachina-dev/side-eye-go/com_github_dataexmachina_dev_side_eye_go-v0.0.0-20250129155449-07ef0520771b.zip",
-        ],
+        # TODO: mirror this repo (to fix, run `./dev generate bazel --mirror`)
+        sum = "h1:eZw4r37yBAnVyjulUTz83ZOXnZOuYGgyx4PfesmwKFw=",
+        version = "v0.0.0-20250129155449-07ef0520771b",
     )
     go_repository(
         name = "com_github_dave_dst",

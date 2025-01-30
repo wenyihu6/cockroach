@@ -13,7 +13,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/ccl/changefeedccl/cdctest"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/skip"
-	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/randutil"
@@ -34,11 +33,11 @@ func TestChangefeedNemeses(t *testing.T) {
 				rng, seed := randutil.NewPseudoRand()
 				t.Logf("random seed: %d", seed)
 
-				sqlDB := sqlutils.MakeSQLRunner(s.DB)
-				withLegacySchemaChanger := maybeDisableDeclarativeSchemaChangesForTest(t, sqlDB)
-				withLegacySchemaChanger = false
+				//sqlDB := sqlutils.MakeSQLRunner(s.DB)
+				//withLegacySchemaChanger := maybeDisableDeclarativeSchemaChangesForTest(t, sqlDB)
+				//withLegacySchemaChanger = false
 
-				v, err := cdctest.RunNemesis(f, s.DB, t.Name(), withLegacySchemaChanger, rng, nop)
+				v, err := cdctest.RunNemesis(f, s.DB, t.Name(), false, rng, nop)
 				if err != nil {
 					t.Fatalf("%+v", err)
 				}
