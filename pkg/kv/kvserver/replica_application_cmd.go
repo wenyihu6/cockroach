@@ -149,6 +149,11 @@ func (c *replicatedCmd) AckSuccess(ctx context.Context) error {
 func (c *replicatedCmd) AckOutcomeAndFinish(ctx context.Context) error {
 	if c.IsLocal() {
 		c.proposal.finishApplication(ctx, c.response)
+		if c.proposal.ec.repl != nil {
+			// TODO(wenyihu6): Check mutex access here. This only works when the
+			// command is successfully applied.
+			c.proposal.appliedAtTicks = c.proposal.ec.repl.mu.ticks - c.proposal.createdAtTicks
+		}
 	}
 	c.finishTracingSpan()
 	return nil

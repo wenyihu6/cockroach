@@ -140,6 +140,10 @@ type ProposalData struct {
 	// last (re-)proposed.
 	proposedAtTicks int64
 
+	// appliedAtTicks is the (logical) time at which this command was locally
+	// applied.
+	appliedAtTicks int64
+
 	// createdAtTicks is the (logical) time at which this command was
 	// *first* proposed.
 	createdAtTicks int64
