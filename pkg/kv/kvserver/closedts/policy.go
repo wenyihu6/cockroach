@@ -128,3 +128,21 @@ func TargetForPolicy(
 	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
 		closedTimestampPropTime, policy)
 }
+
+// TargetForPolicyForRaftTransport is the same as TargetForPolicy, but it takes
+// a dynamically computed raft transport propagation average time. Note that
+// this should only be used for target closed timestamp propagated by raft logs.
+func TargetForPolicyForRaftTransport(
+	now hlc.ClockTimestamp,
+	maxClockOffset time.Duration,
+	lagTargetDuration time.Duration,
+	leadTargetOverride time.Duration,
+	avgLocalApplicationTime time.Duration,
+	policy roachpb.RangeClosedTimestampPolicy,
+) hlc.Timestamp {
+	// See raft_propagation_time.
+	const raftTransportOverhead = 20 * time.Millisecond
+	raftTransportPropTime := avgLocalApplicationTime + raftTransportOverhead
+	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+		raftTransportPropTime, policy)
+}
