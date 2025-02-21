@@ -146,3 +146,21 @@ func TargetForPolicyForRaftTransport(
 	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
 		raftTransportPropTime, policy)
 }
+
+// TargetForPolicyForSideTransport is the same as TargetForPolicy, but it takes
+// a dynamically computed rpc network latency. Note that this should only be
+// used for target closed timestamp propagated by side transport.
+func TargetForPolicyForSideTransport(
+	now hlc.ClockTimestamp,
+	maxClockOffset time.Duration,
+	lagTargetDuration time.Duration,
+	leadTargetOverride time.Duration,
+	sideTransportCloseInterval time.Duration,
+	maxNetworkLatency time.Duration,
+	policy roachpb.RangeClosedTimestampPolicy,
+) hlc.Timestamp {
+	// See side_propagation_time.
+	sideTransportPropTime := maxNetworkLatency + sideTransportCloseInterval
+	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+		sideTransportPropTime, policy)
+}

@@ -79,6 +79,18 @@ type Sender struct {
 	// to this buffer signals the connections to send it on their streams.
 	buf *updatesBuf
 
+	// avgMaxNetWorkLatency tracks the average maximum network latency between the
+	// sender and nodes with its follower replicas. It uses an exponentially
+	// weighted moving average with an effective window size of 30, meaning recent
+	// data points influence the average more while the older data gradually fade.
+	// Thread safe.
+	//
+	// This is used to estimate the time it takes for a closed timestamp update to
+	// arrive at a follower so that we can dynamically adjust the lead time for
+	// the target closed timestamp. Read more in
+	// closedts.TargetForPolicyForSideTransport.
+	avgMaxNetWorkLatency *rpc.ThreadSafeMovingAverage
+
 	// conns contains connections to all nodes with follower replicas of any of
 	// the registered leaseholder. connections are added as nodes get replicas for
 	// ranges with local leases and removed when the respective node no longer has
@@ -203,11 +215,12 @@ func newSenderWithConnFactory(
 	stopper *stop.Stopper, st *cluster.Settings, clock *hlc.Clock, connFactory connFactory,
 ) *Sender {
 	s := &Sender{
-		stopper:     stopper,
-		st:          st,
-		clock:       clock,
-		connFactory: connFactory,
-		buf:         newUpdatesBuf(),
+		stopper:              stopper,
+		st:                   st,
+		clock:                clock,
+		connFactory:          connFactory,
+		buf:                  newUpdatesBuf(),
+		avgMaxNetWorkLatency: rpc.NewThreadMovingAverage(),
 	}
 	s.trackedMu.tracked = make(map[roachpb.RangeID]trackedRange)
 	s.leaseholdersMu.leaseholders = make(map[roachpb.RangeID]leaseholder)
@@ -328,12 +341,13 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
 	for i := range s.trackedMu.lastClosed {
 		pol := roachpb.RangeClosedTimestampPolicy(i)
-		target := closedts.TargetForPolicy(
+		target := closedts.TargetForPolicyForSideTransport(
 			now,
 			maxClockOffset,
 			lagTargetDuration,
 			leadTargetOverride,
 			sideTransportCloseInterval,
+			time.Duration(s.avgMaxNetWorkLatency.Value()),
 			pol,
 		)
 		s.trackedMu.lastClosed[pol] = target
@@ -441,9 +455,12 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			}
 		}
 
+		maxLatency := time.Duration(0)
 		// Open connections to any node that needs info from us and is missing a conn.
 		nodesWithFollowers.ForEach(func(nid int) {
 			nodeID := roachpb.NodeID(nid)
+			maxLatency = max(maxLatency, s.connFactory.latency(nodeID))
+
 			// We don't need to update leaseholders because timestamps we are closing
 			// are written directly to the sideTransportClosedTimestamp fields of the
 			// local replicas in BumpSideTransportClosed.
@@ -456,6 +473,12 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 				s.connsMu.conns[nodeID] = c
 			}
 		})
+
+		// If we are unable to retrieve the latency or if there are no nodes
+		// with followers, skip updating avgMaxNetWorkLatency.
+		if maxLatency != 0 {
+			s.avgMaxNetWorkLatency.Add(float64(maxLatency.Nanoseconds()))
+		}
 		s.connsMu.Unlock()
 	}
 
@@ -641,6 +664,9 @@ func (b *updatesBuf) Close() {
 // connFactory is capable of creating new connections to specific nodes.
 type connFactory interface {
 	new(*Sender, roachpb.NodeID) conn
+	// Latency returns an estimate of the latency from this node to the given
+	// remote node. Note that it can return zero if it fails retrieve latency.
+	latency(nodeID roachpb.NodeID) time.Duration
 }
 
 // conn is a side-transport connection to a node. A conn watches an updatesBuf
@@ -670,9 +696,18 @@ func (f *rpcConnFactory) new(s *Sender, nodeID roachpb.NodeID) conn {
 	return newRPCConn(f.dialer, s, nodeID, f.testingKnobs)
 }
 
+// latency implements the connFactory interface.
+func (f *rpcConnFactory) latency(nodeID roachpb.NodeID) time.Duration {
+	// Ignore errors, as failing to retrieve latency from a node is not a big deal
+	// and will simply return zero. The caller is expected to handle this case.
+	latency, _ := f.dialer.Latency(nodeID)
+	return latency
+}
+
 // nodeDialer abstracts *nodedialer.Dialer.
 type nodeDialer interface {
 	Dial(ctx context.Context, nodeID roachpb.NodeID, class rpc.ConnectionClass) (_ *grpc.ClientConn, err error)
+	Latency(nodeID roachpb.NodeID) (time.Duration, error)
 }
 
 // On sending errors, we sleep a bit as to not spin on a tripped

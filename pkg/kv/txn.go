@@ -895,6 +895,7 @@ func (txn *Txn) UpdateDeadline(ctx context.Context, deadline hlc.Timestamp) erro
 // the current time, except in extraordinary circumstances. In cases where
 // considering it helps, it helps a lot. In cases where considering it
 // does not help, it does not hurt much.
+// TODO(wenyihu6): check here
 func (txn *Txn) DeadlineLikelySufficient() bool {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
