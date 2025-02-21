@@ -144,6 +144,10 @@ type ProposalData struct {
 	// *first* proposed.
 	createdAtTicks int64
 
+	// createdAtTs is the (wall) time at which this command was *first* proposed.
+	// Similar to createdAtTicks.
+	createdAtTs time.Time
+
 	// command is the log entry that is encoded into encodedCommand and proposed
 	// to raft. Never mutated.
 	command *kvserverpb.RaftCommand
@@ -237,6 +241,18 @@ func (proposal *ProposalData) Context() context.Context {
 // be subject to replication admission control.
 func (proposal *ProposalData) useReplicationAdmissionControl() bool {
 	return proposal.raftAdmissionMeta != nil
+}
+
+// recordProposalToLocalApplicationLatency records the duration of the last
+// local application on successful writes.
+func (proposal *ProposalData) recordProposalToLocalApplicationLatency() {
+	if proposal.ec.repl == nil {
+		return
+	}
+	if ts := proposal.createdAtTs; !ts.IsZero() {
+		// Read-only commands have a zero replicatingSince timestamp.
+		proposal.ec.repl.recordProposalToLocalApplicationLatency(timeutil.Since(ts))
+	}
 }
 
 // finishApplication is called when a command application has finished. The

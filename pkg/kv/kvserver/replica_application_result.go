@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
@@ -335,7 +336,12 @@ func (r *Replica) makeReproposal(origP *ProposalData) (reproposal *ProposalData,
 		idKey:           raftlog.MakeCmdIDKey(),
 		proposedAtTicks: 0, // set in registerProposalLocked
 		createdAtTicks:  0, // set in registerProposalLocked
-		command:         &newCommand,
+		// Reset createdAtTs during re-proposal as it is used to predict the closed
+		// timestamp propgation. The Now() used for closed timestamp calculation is
+		// captured during propBuf.FlushLockedWithRaftGroup, so it will be refreshed
+		// during re-proposals.
+		createdAtTs: time.Time{}, // set in registerProposalLocked
+		command:     &newCommand,
 
 		// Next comes the block of fields that are "moved" to the new proposal. See
 		// the deferred function call below which, correspondingly, clears these
