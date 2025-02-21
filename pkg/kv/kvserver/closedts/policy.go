@@ -12,14 +12,12 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
-// TargetForPolicy returns the target closed timestamp for a range with the
-// given policy.
-func TargetForPolicy(
+func targetForPolicy(
 	now hlc.ClockTimestamp,
 	maxClockOffset time.Duration,
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
-	sideTransportCloseInterval time.Duration,
+	closedTimestampPropTime time.Duration,
 	policy roachpb.RangeClosedTimestampPolicy,
 ) hlc.Timestamp {
 	var res hlc.Timestamp
@@ -49,35 +47,10 @@ func TargetForPolicy(
 		//
 		//  # The sender must account for the time it takes to propagate a
 		//  # closed timestamp update to its followers.
-		//  closed_ts_at_sender = closed_ts_at_follower + propagation_time
-		//
-		//  # Closed timestamps propagate in two ways. Both need to make it to
-		//  # followers in time.
-		//  propagation_time = max(raft_propagation_time, side_propagation_time)
-		//
-		//  # Raft propagation takes 3 network hops to go from a leader proposing
-		//  # a write (with a closed timestamp update) to the write being applied.
-		//  # 1. leader sends MsgProp with entry
-		//  # 2. followers send MsgPropResp with vote
-		//  # 3. leader sends MsgProp with higher commit index
-		//  #
-		//  # We also add on a small bit of overhead for request evaluation, log
-		//  # sync, and state machine apply latency.
-		//  raft_propagation_time = max_network_rtt * 1.5 + raft_overhead
-		//
-		//  # Side-transport propagation takes 1 network hop, as there is no voting.
-		//  # However, it is delayed by the full side_transport_close_interval in
-		//  # the worst-case.
-		//  side_propagation_time = max_network_rtt * 0.5 + side_transport_close_interval
+		//  closed_ts_at_sender = closed_ts_at_follower + closed_timestamp_propagation_time
 		//
 		//  # Combine, we get the following result
-		//  closed_ts_at_sender = now + max_offset + max(
-		//    max_network_rtt * 1.5 + raft_overhead,
-		//    max_network_rtt * 0.5 + side_transport_close_interval,
-		//  )
-		//
-		// By default, this leads to a closed timestamp target that leads the
-		// senders current clock by 800ms.
+		//  closed_ts_at_sender = now + max_offset + closed_timestamp_propagation_time
 		//
 		// NOTE: this calculation takes into consideration maximum clock skew as
 		// it relates to a transaction's uncertainty interval, but it does not
@@ -90,28 +63,12 @@ func TargetForPolicy(
 		// when two nodes have skewed physical clocks, the "stability" property
 		// of HLC propagation when nodes are communicating should reduce the
 		// effective HLC clock skew.
-
-		// TODO(nvanbenschoten): make this dynamic, based on the measured
-		// network latencies recorded by the RPC context. This isn't trivial and
-		// brings up a number of questions. For instance, how far into the tail
-		// do we care about? Do we place upper and lower bounds on this value?
-		const maxNetworkRTT = 150 * time.Millisecond
-
-		// See raft_propagation_time.
-		const raftTransportOverhead = 20 * time.Millisecond
-		raftTransportPropTime := (maxNetworkRTT*3)/2 + raftTransportOverhead
-
-		// See side_propagation_time.
-		sideTransportPropTime := maxNetworkRTT/2 + sideTransportCloseInterval
-
-		// See propagation_time.
-		maxTransportPropTime := max(sideTransportPropTime, raftTransportPropTime)
-
+		//
 		// Include a small amount of extra margin to smooth out temporary
 		// network blips or anything else that slows down closed timestamp
 		// propagation momentarily.
 		const bufferTime = 25 * time.Millisecond
-		leadTimeAtSender := maxTransportPropTime + maxClockOffset + bufferTime
+		leadTimeAtSender := closedTimestampPropTime + maxClockOffset + bufferTime
 		res = now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
 	default:
 		panic("unexpected RangeClosedTimestampPolicy")
@@ -120,4 +77,54 @@ func TargetForPolicy(
 	// and also because arithmetic with logical timestamp doesn't make much sense.
 	res.Logical = 0
 	return res
+}
+
+// TargetForPolicy returns the target closed timestamp for a range with the
+// given policy. It uses a hardcoded estimation for the closed timestamp
+// propagation.
+func TargetForPolicy(
+	now hlc.ClockTimestamp,
+	maxClockOffset time.Duration,
+	lagTargetDuration time.Duration,
+	leadTargetOverride time.Duration,
+	sideTransportCloseInterval time.Duration,
+	policy roachpb.RangeClosedTimestampPolicy,
+) hlc.Timestamp {
+	//  # Closed timestamps propagate in two ways. Both need to make it to
+	//  # followers in time.
+	//  propagation_time = max(raft_propagation_time, side_propagation_time)
+	//
+	//  # Raft propagation takes 3 network hops to go from a leader proposing
+	//  # a write (with a closed timestamp update) to the write being applied.
+	//  # 1. leader sends MsgProp with entry
+	//  # 2. followers send MsgPropResp with vote
+	//  # 3. leader sends MsgProp with higher commit index
+	//  #
+	//  # We also add on a small bit of overhead for request evaluation, log
+	//  # sync, and state machine apply latency.
+	//  raft_propagation_time = max_network_rtt * 1.5 + raft_overhead
+	//
+	//  # Side-transport propagation takes 1 network hop, as there is no voting.
+	//  # However, it is delayed by the full side_transport_close_interval in
+	//  # the worst-case.
+	//  side_propagation_time = max_network_rtt * 0.5 + side_transport_close_interval
+	//
+	// TODO(nvanbenschoten): make this dynamic, based on the measured
+	// network latencies recorded by the RPC context. This isn't trivial and
+	// brings up a number of questions. For instance, how far into the tail
+	// do we care about? Do we place upper and lower bounds on this value?
+	const maxNetworkRTT = 150 * time.Millisecond
+
+	// See raft_propagation_time.
+	const raftTransportOverhead = 20 * time.Millisecond
+	raftTransportPropTime := (maxNetworkRTT*3)/2 + raftTransportOverhead
+
+	// See side_propagation_time.
+	sideTransportPropTime := maxNetworkRTT/2 + sideTransportCloseInterval
+
+	// By default, this leads to a closed timestamp target that leads the
+	// senders current clock by 800ms.
+	closedTimestampPropTime := max(raftTransportPropTime, sideTransportPropTime)
+	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+		closedTimestampPropTime, policy)
 }
