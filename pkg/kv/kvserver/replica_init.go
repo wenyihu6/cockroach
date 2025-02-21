@@ -9,6 +9,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/VividCortex/ewma"
 	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/abortspan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
@@ -145,6 +146,7 @@ func newUninitializedReplicaWithoutRaftGroup(
 	r.mu.quiescent = true
 	r.mu.conf = store.cfg.DefaultSpanConfig
 
+	r.mu.avgLocalApplicationTime = ewma.NewMovingAverage()
 	r.mu.proposals = map[kvserverbase.CmdIDKey]*ProposalData{}
 	r.mu.checksums = map[uuid.UUID]*replicaChecksum{}
 	r.mu.proposalBuf.Init((*replicaProposer)(r), tracker.NewLockfreeTracker(), r.Clock(), r.ClusterSettings())

@@ -33,6 +33,7 @@ import (
 
 // mockReplica is a mock implementation of the Replica interface.
 type mockReplica struct {
+	nodeID  roachpb.NodeID
 	storeID roachpb.StoreID
 	rangeID roachpb.RangeID
 	mu      struct {
@@ -84,6 +85,10 @@ func (m *mockReplica) removeReplica(nid roachpb.NodeID) {
 
 // mockConnFactory is a mock implementation of the connFactory interface.
 type mockConnFactory struct{}
+
+func (f *mockConnFactory) latency(_ roachpb.NodeID) time.Duration {
+	return 10 * time.Millisecond
+}
 
 func (f *mockConnFactory) new(_ *Sender, nodeID roachpb.NodeID) conn {
 	return &mockConn{nodeID: nodeID}
@@ -417,6 +422,10 @@ type mockDialer struct {
 	}
 }
 
+func (m *mockDialer) Latency(nodeID roachpb.NodeID) (time.Duration, error) {
+	return 10 * time.Millisecond, nil
+}
+
 var _ nodeDialer = &mockDialer{}
 
 type nodeAddr struct {
@@ -612,6 +621,10 @@ func TestSenderReceiverIntegration(t *testing.T) {
 
 type failingDialer struct {
 	dialCount int32
+}
+
+func (f *failingDialer) Latency(_ roachpb.NodeID) (time.Duration, error) {
+	return 10 * time.Millisecond, nil
 }
 
 var _ nodeDialer = &failingDialer{}

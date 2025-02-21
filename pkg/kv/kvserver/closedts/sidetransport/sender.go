@@ -11,6 +11,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/VividCortex/ewma"
 	"io"
 	"slices"
 	"strings"
@@ -78,6 +79,9 @@ type Sender struct {
 	// buf contains recent messages published to connections. Adding a message
 	// to this buffer signals the connections to send it on their streams.
 	buf *updatesBuf
+
+	// average of max latency to reach nodes
+	avgMaxNetWorkLatency ewma.MovingAverage
 
 	// conns contains connections to all nodes with follower replicas of any of
 	// the registered leaseholder. connections are added as nodes get replicas for
@@ -200,14 +204,18 @@ func NewSender(
 }
 
 func newSenderWithConnFactory(
-	stopper *stop.Stopper, st *cluster.Settings, clock *hlc.Clock, connFactory connFactory,
+	stopper *stop.Stopper,
+	st *cluster.Settings,
+	clock *hlc.Clock,
+	connFactory connFactory,
 ) *Sender {
 	s := &Sender{
-		stopper:     stopper,
-		st:          st,
-		clock:       clock,
-		connFactory: connFactory,
-		buf:         newUpdatesBuf(),
+		stopper:              stopper,
+		st:                   st,
+		clock:                clock,
+		connFactory:          connFactory,
+		buf:                  newUpdatesBuf(),
+		avgMaxNetWorkLatency: ewma.NewMovingAverage(),
 	}
 	s.trackedMu.tracked = make(map[roachpb.RangeID]trackedRange)
 	s.leaseholdersMu.leaseholders = make(map[roachpb.RangeID]leaseholder)
@@ -328,13 +336,13 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
 	for i := range s.trackedMu.lastClosed {
 		pol := roachpb.RangeClosedTimestampPolicy(i)
-		target := closedts.TargetForPolicy(
+		target := closedts.TargetForPolicyForSideTransport(
 			now,
 			maxClockOffset,
 			lagTargetDuration,
 			leadTargetOverride,
-			sideTransportCloseInterval,
 			pol,
+			time.Duration(s.avgMaxNetWorkLatency.Value())+sideTransportCloseInterval,
 		)
 		s.trackedMu.lastClosed[pol] = target
 		msg.ClosedTimestamps[pol] = ctpb.Update_GroupUpdate{
@@ -441,9 +449,12 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			}
 		}
 
+		maxLatency := time.Duration(0)
 		// Open connections to any node that needs info from us and is missing a conn.
 		nodesWithFollowers.ForEach(func(nid int) {
 			nodeID := roachpb.NodeID(nid)
+			maxLatency = max(maxLatency, s.connFactory.latency(nodeID))
+
 			// We don't need to update leaseholders because timestamps we are closing
 			// are written directly to the sideTransportClosedTimestamp fields of the
 			// local replicas in BumpSideTransportClosed.
@@ -453,9 +464,12 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			if _, ok := s.connsMu.conns[nodeID]; !ok {
 				c := s.connFactory.new(s, nodeID)
 				c.run(ctx, s.stopper)
-				s.connsMu.conns[nodeID] = c
 			}
 		})
+
+		if maxLatency != 0 {
+			s.avgMaxNetWorkLatency.Add(float64(maxLatency.Nanoseconds()))
+		}
 		s.connsMu.Unlock()
 	}
 
@@ -641,6 +655,7 @@ func (b *updatesBuf) Close() {
 // connFactory is capable of creating new connections to specific nodes.
 type connFactory interface {
 	new(*Sender, roachpb.NodeID) conn
+	latency(nodeID roachpb.NodeID) time.Duration
 }
 
 // conn is a side-transport connection to a node. A conn watches an updatesBuf
@@ -670,8 +685,16 @@ func (f *rpcConnFactory) new(s *Sender, nodeID roachpb.NodeID) conn {
 	return newRPCConn(f.dialer, s, nodeID, f.testingKnobs)
 }
 
+func (f *rpcConnFactory) latency(nodeID roachpb.NodeID) time.Duration {
+	// Ignore since it is not a big deal if we can't get the latency from one
+	// node.
+	latency, _ := f.dialer.Latency(nodeID)
+	return latency
+}
+
 // nodeDialer abstracts *nodedialer.Dialer.
 type nodeDialer interface {
+	Latency(nodeID roachpb.NodeID) (time.Duration, error)
 	Dial(ctx context.Context, nodeID roachpb.NodeID, class rpc.ConnectionClass) (_ *grpc.ClientConn, err error)
 }
 

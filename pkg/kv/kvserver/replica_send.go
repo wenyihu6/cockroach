@@ -1342,6 +1342,7 @@ func (ec *endCmds) done(
 
 	if ts := ec.replicatingSince; !ts.IsZero() {
 		ec.repl.store.metrics.RaftReplicationLatency.RecordValue(timeutil.Since(ts).Nanoseconds())
+		ec.repl.recordLastLocalApplicationDuration(timeutil.Since(ts))
 	}
 
 	// Release the latches acquired by the request and exit lock wait-queues. Must

@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"github.com/VividCortex/ewma"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -854,6 +855,9 @@ type Replica struct {
 		// lastMessageAtTicks tracks the time of the last received message, in
 		// ticks.
 		lastMessageAtTicks int64
+
+		// check to make sure we want a mutex here -> mention about the window here
+		avgLocalApplicationTime ewma.MovingAverage
 
 		// Counts Raft messages refused due to queue congestion.
 		droppedMessages int

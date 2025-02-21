@@ -7,7 +7,6 @@ package kvserver
 
 import (
 	"context"
-
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/sidetransport"
@@ -16,6 +15,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
+	"time"
 )
 
 // BumpSideTransportClosed advances the range's closed timestamp if it can. If
@@ -108,17 +108,31 @@ func (r *Replica) BumpSideTransportClosed(
 	return res
 }
 
+// averageTimeToApplyLocally returns. TODO(wenyihu6): is this okay? Getting the
+// median over a period of 5 mins window seems to be a better approach.
+func (r *Replica) averageTimeToApplyLocallyRLocked() time.Duration {
+	return time.Duration(r.mu.avgLocalApplicationTime.Value())
+}
+
+// Check if it is fine to hold locks here.
+func (r *Replica) recordLastLocalApplicationDuration(timeToApply time.Duration) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.mu.avgLocalApplicationTime.Add(float64(timeToApply))
+}
+
 // closedTimestampTargetRLocked computes the timestamp we'd like to close for
 // this range. Note that we might not be able to ultimately close this timestamp
 // if there are requests in flight.
 func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
-	return closedts.TargetForPolicy(
+	return closedts.TargetForPolicyForRaftTransport(
 		r.Clock().NowAsClockTimestamp(),
 		r.Clock().MaxOffset(),
 		closedts.TargetDuration.Get(&r.ClusterSettings().SV),
 		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV),
-		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV),
 		r.closedTimestampPolicyRLocked(),
+		// TODO(wenyihu6): make sure this is what we want to do
+		r.averageTimeToApplyLocallyRLocked(),
 	)
 }
 
