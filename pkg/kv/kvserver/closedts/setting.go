@@ -11,6 +11,14 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/settings"
 )
 
+var LeadForGlobalReadsAutoTune = settings.RegisterBoolSetting(
+	settings.SystemVisible,
+	"kv.closed_timestamp.lead_for_global_reads_auto_tune",
+	"if nonzero, attempt to provide closed timestamp notifications for timestamps trailing cluster time by approximately this duration",
+	false,
+	settings.WithPublic,
+)
+
 // NB: These settings are SystemVisible because they need to be read by e.g.
 // rangefeed clients and follower_read_timestamp(). However, they really need
 // to see the host's setting, not the tenant's setting. See:

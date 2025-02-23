@@ -9,8 +9,13 @@ import (
 	"context"
 	gosql "database/sql"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/rpc"
+	"github.com/cockroachdb/cockroach/pkg/server"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"google.golang.org/grpc"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,6 +38,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/datapathutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils"
+	"github.com/cockroachdb/cockroach/pkg/testutils/serverutils/regionlatency"
 	"github.com/cockroachdb/cockroach/pkg/testutils/skip"
 	"github.com/cockroachdb/cockroach/pkg/testutils/testcluster"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
@@ -42,6 +48,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/tracing/tracingpb"
 	"github.com/cockroachdb/datadriven"
 	"github.com/cockroachdb/errors"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestMultiRegionDataDriven_global_tables(t *testing.T) {
@@ -157,6 +164,174 @@ func testMultiRegionDataDriven(t *testing.T, testPath string) {
 				return ""
 			case "sleep-for-follower-read":
 				time.Sleep(time.Second)
+			case "new-cluster-with-latencies":
+				mustHaveArgOrFatal(t, d, "delay")
+				mustHaveArgOrFatal(t, d, nodes)
+				mustHaveArgOrFatal(t, d, azsPerRegion)
+				var latencies string
+				d.ScanArgs(t, "delay", &latencies)
+				var numNodes, numAZsPerRegion int
+				d.ScanArgs(t, nodes, &numNodes)
+				d.ScanArgs(t, azsPerRegion, &numAZsPerRegion)
+
+				var err error
+				regionLatenciesPairs, err := parseRegionMap(latencies)
+				regionLatencies := regionLatenciesPairs.ToLatencyMap()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if ds.tc != nil {
+					t.Fatal("cluster already exists, cleanup cluster first")
+				}
+
+				localities := makeLocalities(regionLatencies, numNodes, numAZsPerRegion)
+				regions := make([]string, len(localities))
+				for i, l := range localities {
+					regions[i], _ = l.Find("region")
+				}
+				serverArgs := make(map[int]base.TestServerArgs)
+				recCh = make(chan tracingpb.Recording, 1)
+				pauseAfter := make(chan struct{})
+				var latencyEnabled atomic.Bool
+				signalAfter := make([]chan struct{}, numNodes)
+				var addrsToNodeIDs syncutil.Map[string, int]
+				fmt.Println("starting test cluster")
+				fmt.Println(numNodes)
+				fmt.Println(localities)
+				fmt.Println(numAZsPerRegion)
+				fmt.Println(regionLatenciesPairs)
+
+				for i := 0; i < numNodes; i++ {
+					st := cluster.MakeClusterSettings()
+					// Prevent rebalancing from happening automatically (i.e., make it
+					// exceedingly unlikely).
+					// TODO(rafi): use more explicit cluster setting once it's available;
+					// see https://github.com/cockroachdb/cockroach/issues/110740.
+					allocatorimpl.LeaseRebalanceThreshold.Override(ctx, &st.SV, 10.0)
+					signalAfter[i] = make(chan struct{})
+					serverArg := base.TestServerArgs{
+						Locality: localities[i],
+						Settings: st,
+						Knobs: base.TestingKnobs{
+							Server: &server.TestingKnobs{
+								PauseAfterGettingRPCAddress:  pauseAfter,
+								SignalAfterGettingRPCAddress: signalAfter[i],
+								ContextTestingKnobs: rpc.ContextTestingKnobs{
+									InjectedLatencyOracle:  regionlatency.MakeAddrMap(),
+									InjectedLatencyEnabled: latencyEnabled.Load,
+									UnaryClientInterceptor: func(
+										target string, class rpc.ConnectionClass,
+									) grpc.UnaryClientInterceptor {
+										return func(
+											ctx context.Context, method string, req, reply interface{},
+											cc *grpc.ClientConn, invoker grpc.UnaryInvoker,
+											opts ...grpc.CallOption,
+										) error {
+											if !log.ExpensiveLogEnabled(ctx, 2) {
+												return invoker(ctx, method, req, reply, cc, opts...)
+											}
+											var nodeID int
+											if nodeIDPtr, ok := addrsToNodeIDs.Load(target); ok {
+												nodeID = *nodeIDPtr
+											}
+											start := timeutil.Now()
+											defer func() {
+												log.VEventf(ctx, 2, "%d->%d (%v->%v) %s %v %v took %v",
+													i, nodeID, localities[i], localities[nodeID],
+													method, req, reply, timeutil.Since(start),
+												)
+											}()
+											return invoker(ctx, method, req, reply, cc, opts...)
+										}
+									},
+								},
+							},
+							JobsTestingKnobs: jobs.NewTestingKnobsWithShortIntervals(), // speeds up test
+							SQLExecutor: &sql.ExecutorTestingKnobs{
+								WithStatementTrace: func(trace tracingpb.Recording, stmt string) {
+									mu.Lock()
+									defer mu.Unlock()
+									if stmt == traceStmt {
+										recCh <- trace
+									}
+								},
+							},
+							// NB: This test is asserting on whether it reads from the leaseholder
+							// or the follower first, so it has to route to leaseholder when
+							// requested.
+							KVClient: &kvcoord.ClientTestingKnobs{RouteToLeaseholderFirst: true},
+						},
+					}
+					serverArgs[i] = serverArg
+				}
+				cs := cluster.MakeTestingClusterSettings()
+				tc := testcluster.NewTestCluster(t, numNodes, base.TestClusterArgs{
+					ParallelStart:     true,
+					ServerArgsPerNode: serverArgs,
+					ServerArgs: base.TestServerArgs{
+						// We need to disable the default test tenant here
+						// because it appears as though operations like
+						// "wait-for-zone-config-changes" only work correctly
+						// when called from the system tenant. More
+						// investigation is required (tracked with #76378).
+						DefaultTestTenant: base.TODOTestTenantDisabled,
+						Settings:          cs,
+					},
+				})
+				fmt.Println("starting test cluster")
+				go func() {
+					for _, c := range signalAfter {
+						<-c
+					}
+					assert.NoError(t, regionLatencies.Apply(tc))
+					close(pauseAfter)
+				}()
+
+				fmt.Println("enable latency2")
+				tc.Start(t)
+
+				fmt.Println("enable latency waiting start")
+				ds.tc = tc
+				enableLatency := func() {
+					latencyEnabled.Store(true)
+					for i := 0; i < numNodes; i++ {
+						tc.Server(i).RPCContext().RemoteClocks.TestingResetLatencyInfos()
+					}
+				}
+
+				fmt.Println("enable ")
+				for i := 0; i < numNodes; i++ {
+					nodeID := i
+					addrsToNodeIDs.Store(tc.Server(i).RPCAddr(), &nodeID)
+				}
+
+				sqlConn, err := ds.getSQLConn(0)
+				if err != nil {
+					return err.Error()
+				}
+				// Speed up closing of timestamps, in order to sleep less below before
+				// we can use follower_read_timestamp(). follower_read_timestamp() uses
+				// sum of the following settings. Also, disable all kvserver lease
+				// transfers other than those required to satisfy a lease preference.
+				// This prevents the lease shifting around too quickly, which leads to
+				// concurrent replication changes being proposed by prior leaseholders.
+				for _, stmt := range strings.Split(`
+SET CLUSTER SETTING kv.closed_timestamp.target_duration = '0.4s';
+SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '50ms';
+SET CLUSTER SETTING kv.closed_timestamp.propagation_slack = '0.5s';
+SET CLUSTER SETTING kv.allocator.load_based_rebalancing = 'off';
+SET CLUSTER SETTING kv.allocator.load_based_lease_rebalancing.enabled = false;
+SET CLUSTER SETTING kv.allocator.min_lease_transfer_interval = '5m'
+`,
+					";") {
+					_, err = sqlConn.Exec(stmt)
+					if err != nil {
+						return err.Error()
+					}
+				}
+				fmt.Println("enable latency")
+				enableLatency()
+
 			case "new-cluster":
 				if ds.tc != nil {
 					t.Fatal("cluster already exists, cleanup cluster first")
@@ -484,13 +659,16 @@ SET CLUSTER SETTING kv.allocator.min_lease_transfer_interval = '5m'
 
 // Constants corresponding to command-options accepted by the data-driven test.
 const (
-	serverIdx        = "idx"
-	serverLocalities = "localities"
-	tableName        = "table-name"
-	dbName           = "db-name"
-	partitionName    = "partition-name"
-	numVoters        = "num-voters"
-	numNonVoters     = "num-non-voters"
+	serverIdx            = "idx"
+	serverLocalities     = "localities"
+	tableName            = "table-name"
+	dbName               = "db-name"
+	partitionName        = "partition-name"
+	numVoters            = "num-voters"
+	numNonVoters         = "num-non-voters"
+	serverLatenciesDelay = "delay"
+	nodes                = "num-nodes"
+	azsPerRegion         = "num-azs-per-region"
 )
 
 type replicaType int
@@ -874,4 +1052,72 @@ func lookupTable(ec *sql.ExecutorConfig, database, table string) (catalog.TableD
 	}
 
 	return tableDesc, nil
+}
+
+func parseRegionMap(input string) (regionlatency.RoundTripPairs, error) {
+	result := regionlatency.RoundTripPairs{}
+
+	// Split by space to get key-value pairs
+	pairs := strings.Split(input, "+")
+
+	for _, pair := range pairs {
+		// Split each pair into the region pair and value
+		parts := strings.Split(pair, ":")
+		if len(parts) != 2 {
+			return nil, errors.Newf("invalid format for pair: %s", pair)
+		}
+
+		// Parse the region pair
+		pairStr := parts[0]
+		// Extract regions
+		regions := strings.Split(pairStr, ",")
+		if len(regions) != 2 {
+			//return nil, fmt.Errorf("invalid number of regions in pair: %s", pairStr)
+			return nil, errors.Newf("invalid number of regions in pair: %s", pairStr)
+		}
+
+		// Parse the value
+		value, err := time.ParseDuration(parts[1])
+		if err != nil {
+			return nil, errors.Wrap(err, "failed to parse duration")
+		}
+
+		// Create the pair and add to map
+		pair := regionlatency.Pair{
+			A: regions[0],
+			B: regions[1],
+		}
+		result[pair] = value
+	}
+	return result, nil
+}
+
+func distribute(total, num int) []int {
+	res := make([]int, num)
+	for i := range res {
+		// Use the average number of remaining connections.
+		div := len(res) - i
+		res[i] = (total + div/2) / div
+		total -= res[i]
+	}
+	return res
+}
+
+func makeLocalities(
+	lm regionlatency.LatencyMap, numNodes, azsPerRegion int,
+) (ret []roachpb.Locality) {
+	regions := lm.GetRegions()
+	for regionIdx, nodesInRegion := range distribute(numNodes, len(regions)) {
+		for azIdx, nodesInAZ := range distribute(nodesInRegion, azsPerRegion) {
+			for i := 0; i < nodesInAZ; i++ {
+				ret = append(ret, roachpb.Locality{
+					Tiers: []roachpb.Tier{
+						{Key: "region", Value: regions[regionIdx]},
+						{Key: "az", Value: string(rune('a' + azIdx))},
+					},
+				})
+			}
+		}
+	}
+	return ret
 }

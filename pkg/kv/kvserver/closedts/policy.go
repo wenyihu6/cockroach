@@ -6,6 +6,7 @@
 package closedts
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -134,17 +135,29 @@ func TargetForPolicy(
 // this should only be used for target closed timestamp propagated by raft logs.
 func TargetForPolicyForRaftTransport(
 	now hlc.ClockTimestamp,
+	autoTune bool,
 	maxClockOffset time.Duration,
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
 	avgLocalApplicationTime time.Duration,
+	sideTransportCloseInterval time.Duration,
 	policy roachpb.RangeClosedTimestampPolicy,
 ) hlc.Timestamp {
+	var target hlc.Timestamp
+	if !autoTune || avgLocalApplicationTime == 0 {
+		target = TargetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+			sideTransportCloseInterval, policy)
+		//fmt.Println("hardcoded target for raft: ", target)
+		return target
+	}
 	// See raft_propagation_time.
 	const raftTransportOverhead = 20 * time.Millisecond
 	raftTransportPropTime := avgLocalApplicationTime + raftTransportOverhead
-	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+	autoTuneClosedTs := targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
 		raftTransportPropTime, policy)
+	//fmt.Println("autoTuneClosedTs target for raft: ", autoTuneClosedTs)
+	fmt.Println("auto tune should be further behind at raft: ", target.LessEq(autoTuneClosedTs))
+	return autoTuneClosedTs
 }
 
 // TargetForPolicyForSideTransport is the same as TargetForPolicy, but it takes
@@ -152,6 +165,7 @@ func TargetForPolicyForRaftTransport(
 // used for target closed timestamp propagated by side transport.
 func TargetForPolicyForSideTransport(
 	now hlc.ClockTimestamp,
+	autoTune bool,
 	maxClockOffset time.Duration,
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
@@ -159,8 +173,18 @@ func TargetForPolicyForSideTransport(
 	maxNetworkLatency time.Duration,
 	policy roachpb.RangeClosedTimestampPolicy,
 ) hlc.Timestamp {
+	var target hlc.Timestamp
+	if !autoTune || maxNetworkLatency == 0 {
+		target = TargetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+			sideTransportCloseInterval, policy)
+		fmt.Println("hardcoded target for side transport: ", target)
+		return target
+	}
 	// See side_propagation_time.
 	sideTransportPropTime := maxNetworkLatency + sideTransportCloseInterval
-	return targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
+	autoTuneClosedTs := targetForPolicy(now, maxClockOffset, lagTargetDuration, leadTargetOverride,
 		sideTransportPropTime, policy)
+	//fmt.Println("autoTuneClosedTs target for side transport: ", autoTuneClosedTs)
+	fmt.Println("auto tune should be further behind at side transport: ", target.LessEq(autoTuneClosedTs), maxNetworkLatency)
+	return autoTuneClosedTs
 }

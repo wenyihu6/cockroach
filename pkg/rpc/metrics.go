@@ -200,7 +200,7 @@ type ThreadSafeMovingAverage struct {
 // 30, where recent data points have a higher influence, and older data
 // gradually decays.
 func NewThreadMovingAverage() *ThreadSafeMovingAverage {
-	return &ThreadSafeMovingAverage{ma: ewma.NewMovingAverage()}
+	return &ThreadSafeMovingAverage{ma: ewma.NewMovingAverage(20)}
 }
 
 func (t *ThreadSafeMovingAverage) Set(v float64) {

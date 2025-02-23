@@ -115,10 +115,12 @@ func (r *Replica) BumpSideTransportClosed(
 func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
 	return closedts.TargetForPolicyForRaftTransport(
 		r.Clock().NowAsClockTimestamp(),
+		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV),
 		r.Clock().MaxOffset(),
 		closedts.TargetDuration.Get(&r.ClusterSettings().SV),
 		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV),
 		time.Duration(r.avgProposalToLocalApplicationLatency.Value()),
+		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV),
 		r.closedTimestampPolicyRLocked(),
 	)
 }
