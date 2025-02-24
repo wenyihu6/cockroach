@@ -12,6 +12,19 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
+func computeTarget(
+	now hlc.ClockTimestamp,
+	maxClockOffset time.Duration,
+	closedTsPropTime time.Duration,
+) hlc.Timestamp {
+	// Include a small amount of extra margin to smooth out temporary
+	// network blips or anything else that slows down closed timestamp
+	// propagation momentarily.
+	const bufferTime = 25 * time.Millisecond
+	leadTimeAtSender := closedTsPropTime + maxClockOffset + bufferTime
+	return now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
+}
+
 func hardcodeTargetToLeadForGlobalReads(
 	now hlc.ClockTimestamp,
 	maxClockOffset time.Duration,
@@ -91,12 +104,7 @@ func hardcodeTargetToLeadForGlobalReads(
 	// See propagation_time.
 	maxTransportPropTime := max(sideTransportPropTime, raftTransportPropTime)
 
-	// Include a small amount of extra margin to smooth out temporary
-	// network blips or anything else that slows down closed timestamp
-	// propagation momentarily.
-	const bufferTime = 25 * time.Millisecond
-	leadTimeAtSender := maxTransportPropTime + maxClockOffset + bufferTime
-	return now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
+	return computeTarget(now, maxClockOffset, maxTransportPropTime)
 }
 
 // TargetForPolicy returns the target closed timestamp for a range with the
@@ -106,7 +114,10 @@ func TargetForPolicy(
 	maxClockOffset time.Duration,
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
+	leadTargetAutoTune bool,
 	sideTransportCloseInterval time.Duration,
+	observedRaftPropLatency time.Duration,
+	observedSideTransportLatency time.Duration,
 	policy roachpb.RangeClosedTimestampPolicy,
 ) hlc.Timestamp {
 	var res hlc.Timestamp
@@ -120,7 +131,28 @@ func TargetForPolicy(
 			res = now.ToTimestamp().Add(leadTargetOverride.Nanoseconds(), 0)
 			break
 		}
-		res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
+		if !leadTargetAutoTune || (observedRaftPropLatency == 0 && observedSideTransportLatency == 0) {
+			// If auto-tune is disabled or if no data observed, fall back to the
+			// hardcoded calculation.
+			res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
+			break
+		}
+		if observedRaftPropLatency != 0 {
+			// Use past observed raft proposal latencies to estimate time for raft
+			// logs to propagate closed ts to followers. See raft_propagation_time.
+			const raftTransportOverhead = 20 * time.Millisecond
+			raftTransportPropTime := observedRaftPropLatency + raftTransportOverhead
+			res = computeTarget(now, maxClockOffset, raftTransportPropTime)
+			break
+		}
+		if observedSideTransportLatency != 0 {
+			// Use past observed network latencies to estimate time for side transport
+			// to propagate closed ts to followers. See side_propagation_time.
+			sideTransportPropTime := observedSideTransportLatency + sideTransportCloseInterval
+			res = computeTarget(now, maxClockOffset, sideTransportPropTime)
+			break
+		}
+		// This should never happen.
 	default:
 		panic("unexpected RangeClosedTimestampPolicy")
 	}

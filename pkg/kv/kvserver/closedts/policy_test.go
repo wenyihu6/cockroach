@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TODO(wenyihu6): add test here
 func TestTargetForPolicy(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
@@ -69,12 +70,15 @@ func TestTargetForPolicy(t *testing.T) {
 	} {
 		t.Run("", func(t *testing.T) {
 			target := TargetForPolicy(
-				now.UnsafeToClockTimestamp(),
-				maxClockOffset,
-				tc.lagTargetNanos,
-				tc.leadTargetOverride,
-				tc.sideTransportCloseInterval,
-				tc.rangePolicy,
+				now.UnsafeToClockTimestamp(),  /*now*/
+				maxClockOffset,                /*maxClockOffset*/
+				tc.lagTargetNanos,             /*lagTargetDuration*/
+				tc.leadTargetOverride,         /*leadTargetOverride*/
+				false,                         /*leadTargetAutoTune*/
+				tc.sideTransportCloseInterval, /*sideTransportCloseInterval*/
+				0,                             /*observedRaftPropLatency*/
+				0,                             /*observedSideTransportLatency*/
+				tc.rangePolicy,                /*policy*/
 			)
 			require.Equal(t, tc.expClosedTSTarget, target)
 		})
