@@ -150,11 +150,14 @@ func newMockReplicaEx(id roachpb.RangeID, replicas ...roachpb.ReplicationTarget)
 func expGroupUpdates(s *Sender, now hlc.ClockTimestamp) []ctpb.Update_GroupUpdate {
 	targetForPolicy := func(pol roachpb.RangeClosedTimestampPolicy) hlc.Timestamp {
 		return closedts.TargetForPolicy(
-			now,
-			s.clock.MaxOffset(),
-			closedts.TargetDuration.Get(&s.st.SV),
-			closedts.LeadForGlobalReadsOverride.Get(&s.st.SV),
-			closedts.SideTransportCloseInterval.Get(&s.st.SV),
+			now,                                   /*now*/
+			s.clock.MaxOffset(),                   /*maxClockOffset*/
+			closedts.TargetDuration.Get(&s.st.SV), /*lagTargetDuration*/
+			closedts.LeadForGlobalReadsOverride.Get(&s.st.SV), /*leadTargetOverride*/
+			closedts.LeadForGlobalReadsAutoTune.Get(&s.st.SV), /*leadTargetAutoTune*/
+			closedts.SideTransportCloseInterval.Get(&s.st.SV), /*sideTransportCloseInterval*/
+			0, /*observedRaftPropLatency*/
+			time.Duration(s.avgMaxNetWorkLatency.Value()), /*observedSideTransportLatency*/
 			pol,
 		)
 	}

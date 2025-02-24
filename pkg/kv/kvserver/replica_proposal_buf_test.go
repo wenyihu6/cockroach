@@ -175,12 +175,15 @@ func (t *testProposer) closedTimestampTarget() hlc.Timestamp {
 		return hlc.Timestamp{}
 	}
 	return closedts.TargetForPolicy(
-		t.clock.NowAsClockTimestamp(),
-		t.clock.MaxOffset(),
-		1*time.Second,
-		0,
-		200*time.Millisecond,
-		t.rangePolicy,
+		t.clock.NowAsClockTimestamp(), /*now*/
+		t.clock.MaxOffset(),           /*maxClockOffset*/
+		1*time.Second,                 /*lagTargetDuration*/
+		0,                             /*leadTargetOverride*/
+		false,                         /*leadTargetAutoTune*/
+		200*time.Millisecond,          /*sideTransportCloseInterval*/
+		0,                             /*observedRaftPropLatency*/
+		0,                             /*observedSideTransportLatency*/
+		t.rangePolicy,                 /*policy*/
 	)
 }
 

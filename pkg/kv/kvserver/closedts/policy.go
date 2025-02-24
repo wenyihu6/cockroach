@@ -12,6 +12,21 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
+// computeTarget returns the target closed timestamp using the estimation
+// formula below.
+func computeTarget(
+	now hlc.ClockTimestamp, maxClockOffset time.Duration, closedTsPropTime time.Duration,
+) hlc.Timestamp {
+	// Include a small amount of extra margin to smooth out temporary
+	// network blips or anything else that slows down closed timestamp
+	// propagation momentarily.
+	const bufferTime = 25 * time.Millisecond
+	leadTimeAtSender := closedTsPropTime + maxClockOffset + bufferTime
+	return now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
+}
+
+// hardcodeTargetToLeadForGlobalReads returns the target closed timestamp using
+// hardcoded constants and the estimation formula.
 func hardcodeTargetToLeadForGlobalReads(
 	now hlc.ClockTimestamp, maxClockOffset time.Duration, sideTransportCloseInterval time.Duration,
 ) hlc.Timestamp {
@@ -89,12 +104,7 @@ func hardcodeTargetToLeadForGlobalReads(
 	// See propagation_time.
 	maxTransportPropTime := max(sideTransportPropTime, raftTransportPropTime)
 
-	// Include a small amount of extra margin to smooth out temporary
-	// network blips or anything else that slows down closed timestamp
-	// propagation momentarily.
-	const bufferTime = 25 * time.Millisecond
-	leadTimeAtSender := maxTransportPropTime + maxClockOffset + bufferTime
-	return now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
+	return computeTarget(now, maxClockOffset, maxTransportPropTime)
 }
 
 // TargetForPolicy returns the target closed timestamp for a range with the
@@ -104,7 +114,10 @@ func TargetForPolicy(
 	maxClockOffset time.Duration,
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
+	leadTargetAutoTune bool,
 	sideTransportCloseInterval time.Duration,
+	observedRaftTransportLatency time.Duration,
+	observedSideTransportLatency time.Duration,
 	policy roachpb.RangeClosedTimestampPolicy,
 ) hlc.Timestamp {
 	var res hlc.Timestamp
@@ -118,7 +131,37 @@ func TargetForPolicy(
 			res = now.ToTimestamp().Add(leadTargetOverride.Nanoseconds(), 0)
 			break
 		}
-		res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
+		// If auto-tune is disabled, fall back to the hardcoded calculation.
+		if !leadTargetAutoTune {
+			res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
+			break
+		}
+		const raftTransportOverhead = 20 * time.Millisecond
+		switch {
+		case observedRaftTransportLatency == 0 && observedSideTransportLatency == 0:
+			// No data is observed yet, fall back to the hardcoded calculation.
+			res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
+		case observedRaftTransportLatency != 0 && observedSideTransportLatency == 0:
+			// Use past observed raft proposal latencies to estimate time for raft
+			// logs to propagate closed ts to followers. See raft_propagation_time.
+			raftTransportPropTime := observedRaftTransportLatency + raftTransportOverhead
+			res = computeTarget(now, maxClockOffset, raftTransportPropTime)
+		case observedRaftTransportLatency == 0 && observedSideTransportLatency != 0:
+			// Use past observed network latencies to estimate time for side transport
+			// to propagate closed ts to followers. See side_propagation_time.
+			sideTransportPropTime := observedSideTransportLatency + sideTransportCloseInterval
+			res = computeTarget(now, maxClockOffset, sideTransportPropTime)
+		case observedRaftTransportLatency != 0 && observedSideTransportLatency != 0:
+			// Should be impossible to have both observedRaftTransportLatency and
+			// observedSideTransportLatency. In case it happens, we take the max.
+			raftTransportPropTime := observedRaftTransportLatency + raftTransportOverhead
+			sideTransportPropTime := observedSideTransportLatency + sideTransportCloseInterval
+			propagationTime := max(raftTransportPropTime, sideTransportPropTime)
+			res = computeTarget(now, maxClockOffset, propagationTime)
+		default:
+			// This should never happen.
+			panic("programming error: unexpected state in LEAD_FOR_GLOBAL_READS")
+		}
 	default:
 		panic("unexpected RangeClosedTimestampPolicy")
 	}

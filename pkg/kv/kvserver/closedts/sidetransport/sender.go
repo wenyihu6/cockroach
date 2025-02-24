@@ -338,15 +338,20 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	lagTargetDuration := closedts.TargetDuration.Get(&s.st.SV)
 	leadTargetOverride := closedts.LeadForGlobalReadsOverride.Get(&s.st.SV)
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
+	leadTargeAutoTune := closedts.LeadForGlobalReadsAutoTune.Get(&s.st.SV)
+	avgMaxNetWorkLatency := time.Duration(s.avgMaxNetWorkLatency.Value())
 	for i := range s.trackedMu.lastClosed {
 		pol := roachpb.RangeClosedTimestampPolicy(i)
 		target := closedts.TargetForPolicy(
-			now,
-			maxClockOffset,
-			lagTargetDuration,
-			leadTargetOverride,
-			sideTransportCloseInterval,
-			pol,
+			now,                        /*now*/
+			maxClockOffset,             /*maxClockOffset*/
+			lagTargetDuration,          /*lagTargetDuration*/
+			leadTargetOverride,         /*leadTargetOverride*/
+			leadTargeAutoTune,          /*leadTargetAutoTune*/
+			sideTransportCloseInterval, /*sideTransportCloseInterval*/
+			0,                          /*observedRaftPropLatency*/
+			avgMaxNetWorkLatency,       /*observedSideTransportLatency*/
+			pol,                        /*policy*/
 		)
 		s.trackedMu.lastClosed[pol] = target
 		msg.ClosedTimestamps[pol] = ctpb.Update_GroupUpdate{
