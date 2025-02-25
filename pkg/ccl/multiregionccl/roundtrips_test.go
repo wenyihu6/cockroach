@@ -151,10 +151,10 @@ func TestEnsureLocalReadsOnGlobalTables(t *testing.T) {
 	require.NoError(t, writeErr)
 }
 
-// TestEnsureLocalReadsOnGlobalTablesWithDelay tests that
-// kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled correctly
-// auto-tunes closed timestamp updates to dynamically adjust the lead time for
-// global reads based on the observed network latencies.
+// TestEnsureLocalReadsOnGlobalTablesWithDelay is an end-to-end test for
+// kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled. It ensures that
+// closed timestamp updates are dynamically adjusted based on the observed
+// network latencies.
 //
 // This test ensures that all present time reads on GLOBAL tables don't incur a
 // network hop even when there is a delay in the network latencies that exceed
@@ -163,10 +163,15 @@ func TestEnsureLocalReadsOnGlobalTables(t *testing.T) {
 // fail as the default hardcoded lead time for global tables will be too short
 // for the 500ms network latencies. Follower reads would fail to serve reads
 // locally and incur a network hop.
+//
+// Note that auto-tuning is just an estimation and can be inaccurate since it
+// does not take full application on readers into account. So this test can
+// become flaky when writes are involved. So this test only tests for side
+// transport propagations by not involving any write traffic.
 func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-	skip.UnderDuress(t, "too slow, this test use long simulated network latencies")
+	//skip.UnderDuress(t, "too slow, this test use long simulated network latencies")
 
 	// ensureOnlyLocalReads looks at a trace to ensure that reads were served
 	// locally. It returns true if the read was served as a follower read.
@@ -214,7 +219,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 
 	// Most of cluster settings are set based on TestColdStartLatency which also
 	// use simulated network latencies in order to make the test less flaky.
-	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '50 ms'`)
+	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '200 ms'`)
 
 	// Enable the lead for global reads auto-tuning. Disabling it fails test since
 	// the default hardcoded lead time for global tables will be too short for the
@@ -239,27 +244,6 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 
 	// Enable simulated latencies late in the process to minimize startup time.
 	enableLatency()
-
-	// Set up some write traffic in the background.
-	errCh := make(chan error)
-	stopWritesCh := make(chan struct{})
-	go func() {
-		i := 0
-		for {
-			select {
-			case <-stopWritesCh:
-				errCh <- nil
-				return
-			case <-time.After(10 * time.Millisecond):
-				_, err := sqlDB.Exec(`INSERT INTO t.test_table VALUES($1)`, i)
-				i++
-				if err != nil {
-					errCh <- err
-					return
-				}
-			}
-		}
-	}()
 
 	populateClosedTsPolicy := func(i int) bool {
 		conn := tc.ServerConn(i)
@@ -287,12 +271,6 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 		return isLeaseHolder
 	}
 
-	// Without this population first, the test is flaky since it takes sometime
-	// for the latencies to be observed by sideTransport.Sender and replicas.
-	for i := 0; i < numServers; i++ {
-		populateClosedTsPolicy(i)
-	}
-
 	for i := 0; i < numServers; i++ {
 		isLeaseHolder := populateClosedTsPolicy(i)
 		conn := tc.ServerConn(i)
@@ -307,8 +285,4 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 		// leaseholder on the other hand won't serve a follower read.
 		require.Equal(t, !isLeaseHolder, followerRead, "%v", rec)
 	}
-
-	close(stopWritesCh)
-	writeErr := <-errCh
-	require.NoError(t, writeErr)
 }

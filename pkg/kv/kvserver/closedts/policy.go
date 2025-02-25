@@ -6,6 +6,7 @@
 package closedts
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -140,16 +141,19 @@ func TargetForPolicy(
 		switch {
 		case observedRaftTransportLatency == 0 && observedSideTransportLatency == 0:
 			// No data is observed yet, fall back to the hardcoded calculation.
+			fmt.Println("No data is observed yet, fall back to the hardcoded calculation.")
 			res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
 		case observedRaftTransportLatency != 0 && observedSideTransportLatency == 0:
 			// Use past observed raft proposal latencies to estimate time for raft
 			// logs to propagate closed ts to followers. See raft_propagation_time.
 			raftTransportPropTime := observedRaftTransportLatency + raftTransportOverhead
+			fmt.Println("Use raftTransportPropTime: ", raftTransportPropTime)
 			res = computeTarget(now, maxClockOffset, raftTransportPropTime)
 		case observedRaftTransportLatency == 0 && observedSideTransportLatency != 0:
 			// Use past observed network latencies to estimate time for side transport
 			// to propagate closed ts to followers. See side_propagation_time.
 			sideTransportPropTime := observedSideTransportLatency + sideTransportCloseInterval
+			fmt.Println("Use sideTransportPropTime: ", sideTransportPropTime)
 			res = computeTarget(now, maxClockOffset, sideTransportPropTime)
 		case observedRaftTransportLatency != 0 && observedSideTransportLatency != 0:
 			// Should be impossible to have both observedRaftTransportLatency and
