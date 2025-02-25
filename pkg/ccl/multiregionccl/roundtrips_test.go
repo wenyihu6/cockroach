@@ -7,6 +7,7 @@ package multiregionccl_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -158,7 +159,6 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 	skip.UnderRace(t, "https://github.com/cockroachdb/cockroach/issues/102798")
-	skip.UnderStress(t, "slow under stress")
 
 	// ensureOnlyLocalReads looks at a trace to ensure that reads were served
 	// locally. It returns true if the read was served as a follower read.
@@ -198,7 +198,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	numServers := 3
 
 	// Start the server with a 500ms injected network latency.
-	tc, sqlDB, cleanup, delay := multiregionccltestutils.TestingCreateMultiRegionClusterWithDelay(
+	tc, sqlDB, cleanup, enableDelay := multiregionccltestutils.TestingCreateMultiRegionClusterWithDelay(
 		t, numServers, knobs, 500*time.Millisecond, multiregionccltestutils.WithReplicationMode(base.ReplicationManual),
 	)
 	defer cleanup()
@@ -210,6 +210,10 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	require.NoError(t, err)
 	_, err = sqlDB.Exec(`CREATE TABLE t.test_table (k INT PRIMARY KEY) LOCALITY GLOBAL`)
 	require.NoError(t, err)
+	_, _ = sqlDB.Exec("SET CLUSTER SETTING kv.allocator.load_based_rebalancing = off")
+	_, _ = sqlDB.Exec("SET CLUSTER SETTING kv.allocator.min_lease_transfer_interval = '10ms'")
+	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.rangefeed.closed_timestamp_refresh_interval = '200ms'`)
+	_, _ = sqlDB.Exec(`-- ALTER TENANT ALL SET CLUSTER SETTING spanconfig.reconciliation_job.checkpoint_interval = '500ms'`)
 
 	var tableID uint32
 	err = sqlDB.QueryRow(`SELECT id from system.namespace WHERE name='test_table'`).Scan(&tableID)
@@ -220,10 +224,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	tc.SplitRangeOrFatal(t, tablePrefix.AsRawKey())
 	tc.AddVotersOrFatal(t, tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2))
 
-	_, _ = sqlDB.Exec("SET CLUSTER SETTING kv.allocator.load_based_rebalancing = off")
-	_, _ = sqlDB.Exec("SET CLUSTER SETTING kv.allocator.min_lease_transfer_interval = '10ms'")
-
-	delay()
+	enableDelay()
 
 	// Set up some write traffic in the background.
 	errCh := make(chan error)
@@ -248,8 +249,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 
 	for i := 0; i < numServers; i++ {
 		conn := tc.ServerConn(i)
-		isLeaseHolder := false
-		testutils.SucceedsSoon(t, func() error {
+		testutils.SucceedsWithin(t, func() error {
 			// Run a query to populate its cache.
 			_, err = conn.Exec("SELECT * from t.test_table WHERE k=1")
 			require.NoError(t, err)
@@ -265,11 +265,36 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 			if expected, got := roachpb.LEAD_FOR_GLOBAL_READS, entry.ClosedTimestampPolicy; got != expected {
 				return errors.Newf("expected closedts policy %s, got %s", expected, got)
 			}
+			t.Logf("suceeded at populating closed ts policy for: %d", tc.Server(i).NodeID())
+			return nil
+		}, 5*time.Minute)
+	}
 
-			t.Logf("suceeded at populating closed ts policy")
+	fmt.Println("done with cache population")
+
+	for i := 0; i < numServers; i++ {
+		conn := tc.ServerConn(i)
+		isLeaseHolder := false
+		testutils.SucceedsWithin(t, func() error {
+			// Run a query to populate its cache.
+			_, err = conn.Exec("SELECT * from t.test_table WHERE k=1")
+			require.NoError(t, err)
+
+			// Check that the cache was indeed populated.
+			cache := tc.Server(i).DistSenderI().(*kvcoord.DistSender).RangeDescriptorCache()
+			entry, err := cache.TestingGetCached(
+				context.Background(), tablePrefix, false /* inverted */, roachpb.LAG_BY_CLUSTER_SETTING,
+			)
+			require.NoError(t, err)
+			require.False(t, entry.Lease.Empty())
+
+			if expected, got := roachpb.LEAD_FOR_GLOBAL_READS, entry.ClosedTimestampPolicy; got != expected {
+				return errors.Newf("expected closedts policy %s, got %s", expected, got)
+			}
+			t.Logf("suceeded at populating closed ts policy for: %d", tc.Server(i).NodeID())
 			isLeaseHolder = entry.Lease.Replica.NodeID == tc.Server(i).NodeID()
 			return nil
-		})
+		}, 5*time.Minute)
 
 		// Run the query to ensure local read.
 		_, err = conn.Exec(presentTimeRead)
@@ -286,4 +311,5 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	close(stopWritesCh)
 	writeErr := <-errCh
 	require.NoError(t, writeErr)
+	//t.Fatal("I want to see the trace")
 }

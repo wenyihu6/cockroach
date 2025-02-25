@@ -370,6 +370,10 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	}
 	s.leaseholdersMu.Unlock()
 
+	if len(leaseholders) != 0 && time.Duration(s.avgMaxNetWorkLatency.Value()) == 0 {
+		fmt.Println("hardcoded res at a leaseholder node")
+	}
+
 	// We'll accumulate all the nodes we need to connect to in order to check if
 	// we need to open new connections or close existing ones.
 	nodesWithFollowers := intsets.MakeFast()

@@ -914,6 +914,7 @@ func (txn *Txn) DeadlineLikelySufficient() bool {
 		leadTargetOverride := closedts.LeadForGlobalReadsOverride.Get(sv)
 		sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(sv)
 		leadTargetAutoTune := closedts.LeadForGlobalReadsAutoTune.Get(sv)
+		fmt.Println("TargetForPolicy called from DeadlineLikelySufficient")
 		return closedts.TargetForPolicy(now, maxClockOffset,
 			lagTargetDuration, leadTargetOverride, leadTargetAutoTune, sideTransportCloseInterval,
 			0, /*observedRaftPropLatency*/
