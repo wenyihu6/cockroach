@@ -451,6 +451,10 @@ type Replica struct {
 	// timestamp, independent of the source.
 	sideTransportClosedTimestamp sidetransportAccess
 
+	// latencyFunc returns the latency from this node to a remote node and a bool
+	// indicating whether the latency is valid.
+	latencyFunc func(roachpb.NodeID) (time.Duration, bool)
+
 	// shMu contains "shared" fields which are mutated while both raftMu and mu are
 	// held. They can be accessed when either of the two mutexes is held.
 	//

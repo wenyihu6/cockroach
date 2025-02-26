@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -258,6 +259,9 @@ func (proposal *ProposalData) useReplicationAdmissionControl() bool {
 // The method is safe to call more than once, but only the first result will be
 // returned to the client.
 func (proposal *ProposalData) finishApplication(ctx context.Context, pr proposalResult) {
+	if proposal.Request != nil && proposal.createdAtTs != 0 {
+		fmt.Println("----------- proposal finished application: -----------", proposal.Request)
+	}
 	proposal.ec.done(ctx, proposal.Request, pr.Reply, pr.Err, proposal.createdAtTs /*writeProposalCreatedAt*/)
 	proposal.signalProposalResult(pr)
 	if proposal.sp != nil {

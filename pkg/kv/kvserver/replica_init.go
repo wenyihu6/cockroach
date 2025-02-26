@@ -140,6 +140,7 @@ func newUninitializedReplicaWithoutRaftGroup(
 		avgProposalToLocalApplicationLatency: rpc.NewThreadMovingAverage(),
 	}
 	r.sideTransportClosedTimestamp.init(store.cfg.ClosedTimestampReceiver, rangeID)
+	r.latencyFunc = store.cfg.RPCContext.RemoteClocks.Latency
 
 	r.mu.pendingLeaseRequest = makePendingLeaseRequest(r)
 	r.mu.stateLoader = stateloader.Make(rangeID)

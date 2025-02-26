@@ -403,6 +403,7 @@ func (p *peer) runOnce(ctx context.Context, report func(error)) error {
 		defer p.remoteClocks.OnDisconnect(ctx, p.k.NodeID)
 	}
 
+	fmt.Println("round trip: ", p.roundTripLatency.Value())
 	if err := runSingleHeartbeat(
 		ctx, NewHeartbeatClient(cc), p.k, p.peerMetrics.roundTripLatency, nil /* no remote clocks */, p.opts, p.heartbeatTimeout, PingRequest_BLOCKING,
 	); err != nil {
@@ -511,6 +512,7 @@ func runSingleHeartbeat(
 			log.Ops.Fatalf(ctx, "%v", err)
 		}
 	} else {
+		fmt.Println("ping duration: ", pingDuration, "from node: ", opts.NodeID.Get(), "to node: ", k.NodeID)
 		roundTripLatency.Add(float64(pingDuration.Nanoseconds())) // source for metrics
 	}
 

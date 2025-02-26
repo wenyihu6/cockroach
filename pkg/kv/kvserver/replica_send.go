@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"runtime/pprof"
 	"time"
@@ -1353,6 +1354,10 @@ func (ec *endCmds) done(
 		// Read-only or read-write commands that did not result in writes have zero
 		// writeProposalCreatedAt.
 		ec.repl.recordProposalToLocalApplicationLatency(writeProposalCreatedAt.Elapsed())
+		if ec.replicatingSince.IsZero() {
+			fmt.Println("WHATTTTTT")
+		}
+		fmt.Println("my new metrics: ", writeProposalCreatedAt.Elapsed(), " for reuqest: ", ba)
 	}
 
 	// Release the latches acquired by the request and exit lock wait-queues. Must

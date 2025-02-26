@@ -177,7 +177,7 @@ func TestingCreateMultiRegionClusterWithDelay(
 
 	result := regionlatency.RoundTripPairs{}
 	for i := 0; i < numServers; i++ {
-		for j := i + 1; j < numServers; j++ {
+		for j := 0; j < numServers; j++ {
 			pair := regionlatency.Pair{
 				A: regionNames[i],
 				B: regionNames[j],

@@ -7,6 +7,7 @@ package nodedialer
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"time"
 
@@ -92,6 +93,7 @@ func (n *Dialer) Dial(
 	if n == nil || n.resolver == nil {
 		return nil, errors.New("no node dialer configured")
 	}
+	fmt.Println("connecting to another node: ", nodeID)
 	// Don't trip the breaker if we're already canceled.
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, errors.Wrap(ctxErr, "dial")

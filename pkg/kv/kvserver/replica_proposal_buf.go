@@ -1224,6 +1224,7 @@ func (rp *replicaProposer) registerProposalLocked(p *ProposalData) {
 		p.createdAtTicks = rp.mu.ticks
 	}
 	if p.createdAtTs == 0 {
+		fmt.Println("------------ started request at: ---------", p.Request.IsSingleRequestLeaseRequest())
 		p.createdAtTs = crtime.NowMono()
 	}
 	rp.mu.lastProposalAtTicks = rp.mu.ticks // monotonically increasing

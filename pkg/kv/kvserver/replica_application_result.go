@@ -339,8 +339,8 @@ func (r *Replica) makeReproposal(origP *ProposalData) (reproposal *ProposalData,
 		// closed timestamp propagation. The Now() used for closed timestamp
 		// calculation is captured during propBuf.FlushLockedWithRaftGroup, so it
 		// will be refreshed during re-proposals.
-		createdAtTs: 0, // set in registerProposalLocked
-		command:     &newCommand,
+		//createdAtTs: 0, // set in registerProposalLocked
+		command: &newCommand,
 
 		// Next comes the block of fields that are "moved" to the new proposal. See
 		// the deferred function call below which, correspondingly, clears these

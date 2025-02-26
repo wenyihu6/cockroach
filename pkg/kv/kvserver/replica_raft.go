@@ -144,6 +144,11 @@ func (r *Replica) evalAndPropose(
 	// Make it a truly replicated proposal. We measure the replication latency
 	// from this point on.
 	proposal.ec = makeReplicatedEndCmds(r, g, *st, timeutil.Now())
+	//kc := proposal.command.ReplicatedEvalResult.Delta.KeyCount
+	//vc := proposal.command.ReplicatedEvalResult.Delta.ValCount
+	//ic := proposal.command.ReplicatedEvalResult.Delta.IntentCount
+	//sz := proposal.command.WriteBatch.Size()
+	//fmt.Printf("proposing command to write %d new keys, %d new values, %d new intents, write batch size=%d bytes: \n", kc, vc, ic, sz)
 
 	if log.ExpensiveLogEnabled(proposal.Context(), 2) {
 		// Local copies to avoid allocating to heap if not logging.
@@ -1002,6 +1007,9 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 		return unquiesceAndWakeLeader, nil
 	})
 	r.mu.applyingEntries = hasMsg(msgStorageApply)
+	//if r.mu.applyingEntries {
+	//	fmt.Println("applying entries: ", msgStorageApply.From, msgStorageApply.To, len(msgStorageApply.Entries))
+	//}
 	pausedFollowers := r.mu.pausedFollowers
 	r.mu.Unlock()
 	if errors.Is(err, errRemoved) {
