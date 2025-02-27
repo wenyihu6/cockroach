@@ -476,6 +476,7 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 		// have the proposal be immutable.
 		if !reproposal {
 			lai, closedTimestamp, err := b.allocateLAIAndClosedTimestampLocked(ctx, p, closedTSTarget)
+			log.Infof(ctx, "proposing command %v carrying closed timestamp %v", p.Request, closedTimestamp)
 			if err != nil {
 				firstErr = err
 				continue
@@ -862,7 +863,7 @@ func proposeBatch(
 		return nil
 	}
 	replID := p.getReplicaID()
-	log.Infof(ctx, "proposing command from replica id: %d", replID)
+	log.Infof(ctx, "proposing command from replica id: %d for request %v", replID, props[0].Request)
 	err := raftGroup.Step(raftpb.Message{
 		Type:    raftpb.MsgProp,
 		From:    raftpb.PeerID(replID),
@@ -876,6 +877,7 @@ func proposeBatch(
 		for _, p := range props {
 			log.Event(p.Context(), "entry dropped")
 		}
+		log.Infof(ctx, "entry dropped")
 		p.onErrProposalDropped(ents, props, raftGroup.BasicStatus().RaftState)
 		return nil //nolint:returnerrcheck
 	}
@@ -1227,7 +1229,7 @@ func (rp *replicaProposer) registerProposalLocked(p *ProposalData) {
 	if p.createdAtTs == 0 {
 		if !p.Request.IsSingleRequestLeaseRequest() && !p.Request.IsSingleSubsumeRequest() {
 			fmt.Println("------------ started request at: --------- at replica id ", rp.replicaID)
-			log.Infof(context.Background(), "------------ started request at: --------- at replica id %d", rp.replicaID)
+			log.Infof(context.Background(), "------------ started request at: --------- at replica id %d for request %v", rp.replicaID, p.Request)
 			p.createdAtTs = crtime.NowMono()
 		}
 	}

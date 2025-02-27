@@ -83,7 +83,7 @@ func (rsl StateLoader) Load(
 	s.LeaseAppliedIndex = as.LeaseAppliedIndex
 	ms := as.RangeStats.ToStats()
 	s.Stats = &ms
-	log.Infof(ctx, "updated closed timestamp: %d", as.RaftClosedTimestamp)
+	log.Infof(ctx, "updated closed timestamp: %d for range %d", as.RaftClosedTimestamp, desc.RangeID)
 	s.RaftClosedTimestamp = as.RaftClosedTimestamp
 
 	// Invariant: TruncatedState == nil. The field is being phased out. The

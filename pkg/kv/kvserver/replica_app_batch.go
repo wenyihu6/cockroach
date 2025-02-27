@@ -559,8 +559,13 @@ func (b *replicaAppBatch) stageTrivialReplicatedEvalResult(
 		b.state.LeaseAppliedIndex = leaseAppliedIndex
 	}
 	if cts := cmd.Cmd.ClosedTimestamp; cts != nil && !cts.IsEmpty() {
-		log.Infof(ctx, "updated closed timestamp at b: %d received at %d for range id: %d",
-			*cts, b.r.store.NodeID(), b.r.RangeID)
+		if cmd.proposal != nil && cmd.proposal.Request != nil {
+			log.Infof(ctx, "updated closed timestamp at b: %d received at %d for range id: %d at time %s For request %v\n",
+				*cts, b.r.store.NodeID(), b.r.RangeID, time.Now(), cmd.proposal.Request)
+		} else {
+			log.Infof(ctx, "updated closed timestamp at b: %d received at %d for range id: %d at time %s\n",
+				*cts, b.r.store.NodeID(), b.r.RangeID, time.Now())
+		}
 		b.state.RaftClosedTimestamp = *cts
 		b.closedTimestampSetter.record(cmd, b.state.Lease)
 	}

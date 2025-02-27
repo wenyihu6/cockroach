@@ -1056,7 +1056,7 @@ func (r *Replica) evaluateProposal(
 		res.Local.RequiresRaft()
 
 	if needConsensus {
-		log.VEventf(ctx, 2, "need consensus on write batch with op count=%d", batch.Count())
+		log.VEventf(ctx, 2, "need consensus on write batch for %v", ba)
 
 		// Set the proposal's WriteBatch, which is the serialized representation of
 		// the proposals effect on RocksDB.
@@ -1084,6 +1084,8 @@ func (r *Replica) evaluateProposal(
 		if res.Replicated.Delta.ContainsEstimates > 0 {
 			res.Replicated.Delta.ContainsEstimates *= 2
 		}
+	} else {
+		log.VEventf(ctx, 2, "does not need consensus on write batch with op count=%v", ba)
 	}
 
 	return ba, &res, needConsensus, nil

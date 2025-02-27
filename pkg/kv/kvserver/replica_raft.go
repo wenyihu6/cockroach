@@ -137,6 +137,7 @@ func (r *Replica) evalAndPropose(
 		// find them.
 		proposal.ec = makeUnreplicatedEndCmds(r, g, *st)
 		pr := makeProposalResult(proposal.Local.Reply, pErr, intents, endTxns)
+		log.Infof(proposal.Context(), "async consensus proposal: %s", pErr)
 		proposal.finishApplication(ctx, pr, false)
 		return proposalCh, nil, "", nil, nil
 	}
@@ -983,6 +984,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 			outboundMsgs, msgStorageAppend, msgStorageApply = splitLocalStorageMsgs(asyncRd.Messages)
 		}
 		if switchToPullModeAfterReady {
+			log.Infof(ctx, "switching to SetLazyReplication true")
 			raftGroup.SetLazyReplication(true)
 		}
 		if rac2ModeForReady == rac2.MsgAppPull {
@@ -1885,6 +1887,7 @@ func (r *Replica) sendRaftMessages(
 			// Replica.handleRaftReadyRaftMuLocked.
 			r.sendLocalRaftMsg(message, willDeliverLocal)
 		default:
+			log.Infof(ctx, "sending remote message to %d from %d type %s", message.To, message.From, message.Type)
 			_, drop := blocked[roachpb.ReplicaID(message.To)]
 			if drop {
 				r.store.Metrics().RaftPausedFollowerDroppedMsgs.Inc(1)
@@ -1964,6 +1967,7 @@ func (r *Replica) sendRaftMessages(
 
 // sendLocalRaftMsg sends a message to the local raft state machine.
 func (r *Replica) sendLocalRaftMsg(msg raftpb.Message, willDeliverLocal bool) {
+	log.Infof(r.AnnotateCtx(context.Background()), "sending local Raft message %v From %d To %d", msg.Type, msg.From, msg.To)
 	if msg.To != raftpb.PeerID(r.ReplicaID()) {
 		panic("incorrect message target")
 	}
@@ -2028,7 +2032,7 @@ func (r *Replica) sendRaftMessage(
 	ctx context.Context, msg raftpb.Message, lowPriorityOverride bool,
 ) {
 	lastToReplica, lastFromReplica := r.getLastReplicaDescriptors()
-
+	log.Infof(ctx, "sending Raft message %v from %d to %d", msg, msg.From, msg.To)
 	r.mu.RLock()
 	traced := r.mu.raftTracer.MaybeTrace(msg)
 	fromReplica, fromErr := r.getReplicaDescriptorByIDRLocked(roachpb.ReplicaID(msg.From), lastToReplica)

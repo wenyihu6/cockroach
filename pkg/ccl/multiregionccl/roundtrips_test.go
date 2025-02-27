@@ -227,12 +227,13 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 
 	// Most of cluster settings are set based on TestColdStartLatency which also
 	// use simulated network latencies in order to make the test less flaky.
-	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '500ms'`)
+	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '200ms'`)
 
 	// Enable the lead for global reads auto-tuning. Disabling it fails test since
 	// the default hardcoded lead time for global tables will be too short for the
 	// 500ms network latencies.
 	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled = true`)
+	//_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_override = '1500ms'`)
 	_, _ = sqlDB.Exec(`CREATE DATABASE t PRIMARY REGION "us-east1" REGIONS "us-east2", "us-east3"`)
 	_, _ = sqlDB.Exec(`CREATE TABLE t.test_table (k INT PRIMARY KEY) LOCALITY GLOBAL`)
 	_, _ = sqlDB.Exec("SET CLUSTER SETTING kv.allocator.load_based_rebalancing = off")

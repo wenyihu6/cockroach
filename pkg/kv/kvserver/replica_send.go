@@ -1359,7 +1359,7 @@ func (ec *endCmds) done(
 			fmt.Println("WHATTTTTT")
 		}
 		fmt.Println("my new metrics: ", writeProposalCreatedAt.Elapsed(), " for reuqest: ", ba)
-		log.Infof(ctx, "my new metrics: %v for request: %v and tobi's metrics is %v", writeProposalCreatedAt.Elapsed(), ba, timeutil.Since(ec.replicatingSince))
+		log.Infof(ctx, "my new metrics: %v for request: %v and tobi's metrics is %v at time %s", writeProposalCreatedAt.Elapsed(), ba, timeutil.Since(ec.replicatingSince), time.Now())
 	}
 
 	// Release the latches acquired by the request and exit lock wait-queues. Must
