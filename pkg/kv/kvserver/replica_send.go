@@ -1330,6 +1330,7 @@ func (ec *endCmds) done(
 	br *kvpb.BatchResponse,
 	pErr *kvpb.Error,
 	writeProposalCreatedAt crtime.Mono,
+	b bool,
 ) {
 	if ec.repl == nil {
 		// The endCmds were cleared. This may no longer be necessary, see the comment on
@@ -1350,7 +1351,7 @@ func (ec *endCmds) done(
 		ec.repl.store.metrics.RaftReplicationLatency.RecordValue(timeutil.Since(ts).Nanoseconds())
 	}
 
-	if successfulWrites := writeProposalCreatedAt != 0 && pErr == nil; successfulWrites {
+	if successfulWrites := writeProposalCreatedAt != 0 && pErr == nil; successfulWrites && b {
 		// Read-only or read-write commands that did not result in writes have zero
 		// writeProposalCreatedAt.
 		ec.repl.recordProposalToLocalApplicationLatency(writeProposalCreatedAt.Elapsed())
@@ -1358,6 +1359,7 @@ func (ec *endCmds) done(
 			fmt.Println("WHATTTTTT")
 		}
 		fmt.Println("my new metrics: ", writeProposalCreatedAt.Elapsed(), " for reuqest: ", ba)
+		log.Infof(ctx, "my new metrics: %v for request: %v and tobi's metrics is %v", writeProposalCreatedAt.Elapsed(), ba, timeutil.Since(ec.replicatingSince))
 	}
 
 	// Release the latches acquired by the request and exit lock wait-queues. Must

@@ -862,6 +862,7 @@ func proposeBatch(
 		return nil
 	}
 	replID := p.getReplicaID()
+	log.Infof(ctx, "proposing command from replica id: %d", replID)
 	err := raftGroup.Step(raftpb.Message{
 		Type:    raftpb.MsgProp,
 		From:    raftpb.PeerID(replID),
@@ -1224,8 +1225,11 @@ func (rp *replicaProposer) registerProposalLocked(p *ProposalData) {
 		p.createdAtTicks = rp.mu.ticks
 	}
 	if p.createdAtTs == 0 {
-		fmt.Println("------------ started request at: ---------", p.Request.IsSingleRequestLeaseRequest())
-		p.createdAtTs = crtime.NowMono()
+		if !p.Request.IsSingleRequestLeaseRequest() && !p.Request.IsSingleSubsumeRequest() {
+			fmt.Println("------------ started request at: --------- at replica id ", rp.replicaID)
+			log.Infof(context.Background(), "------------ started request at: --------- at replica id %d", rp.replicaID)
+			p.createdAtTs = crtime.NowMono()
+		}
 	}
 	rp.mu.lastProposalAtTicks = rp.mu.ticks // monotonically increasing
 	if prev := rp.mu.proposals[p.idKey]; prev != nil && prev != p {
@@ -1311,5 +1315,5 @@ func (rp *replicaProposer) rejectProposalWithErrLocked(
 	ctx context.Context, prop *ProposalData, err error,
 ) {
 	(*Replica)(rp).cleanupFailedProposalLocked(prop)
-	prop.finishApplication(ctx, makeProposalResultPErr(kvpb.NewError(err)))
+	prop.finishApplication(ctx, makeProposalResultPErr(kvpb.NewError(err)), false)
 }

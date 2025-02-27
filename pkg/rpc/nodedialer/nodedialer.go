@@ -103,6 +103,7 @@ func (n *Dialer) Dial(
 		err = errors.Wrapf(err, "failed to resolve n%d", nodeID)
 		return nil, err
 	}
+	log.Infof(ctx, "dialing n%d\n", nodeID)
 	conn, _, _, _, err := n.dial(ctx, nodeID, addr, locality, true, class)
 	return conn, err
 }
@@ -136,6 +137,7 @@ func (n *Dialer) DialInternalClient(
 	if n == nil || n.resolver == nil {
 		return nil, errors.New("no node dialer configured")
 	}
+	log.Infof(ctx, "dialing internal client to n%d\n", nodeID)
 	{
 		// If we're dialing the local node, don't go through gRPC.
 		localClient := n.rpcContext.GetLocalInternalClientForAddr(nodeID)

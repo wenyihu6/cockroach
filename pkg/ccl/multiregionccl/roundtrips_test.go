@@ -216,8 +216,9 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	tc, sqlDB, cleanup, enableLatency := multiregionccltestutils.TestingCreateMultiRegionClusterWithDelay(
 		t, numServers, knobs, 200*time.Millisecond, multiregionccltestutils.WithReplicationMode(base.ReplicationManual))
 
-	enableLatency()
-	time.Sleep(10 * time.Second)
+	//enableLatency()
+	//fmt.Println("started enabledelay: ", time.Now())
+	//time.Sleep(10 * time.Second)
 	//tc, sqlDB, cleanup := multiregionccltestutils.TestingCreateMultiRegionCluster(
 	//	t, numServers, knobs, multiregionccltestutils.WithReplicationMode(base.ReplicationManual),
 	//)
@@ -226,7 +227,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 
 	// Most of cluster settings are set based on TestColdStartLatency which also
 	// use simulated network latencies in order to make the test less flaky.
-	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '200ms'`)
+	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '500ms'`)
 
 	// Enable the lead for global reads auto-tuning. Disabling it fails test since
 	// the default hardcoded lead time for global tables will be too short for the
@@ -239,26 +240,26 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.rangefeed.closed_timestamp_refresh_interval = '200ms'`)
 	_, _ = sqlDB.Exec(`ALTER TENANT ALL SET CLUSTER SETTING spanconfig.reconciliation_job.checkpoint_interval = '500ms'`)
 
-	// Set up some write traffic in the background.
-	//errCh := make(chan error)
-	//stopWritesCh := make(chan struct{})
-	//go func() {
-	//	i := 0
-	//	for {
-	//		select {
-	//		case <-stopWritesCh:
-	//			errCh <- nil
-	//			return
-	//		case <-time.After(10 * time.Millisecond):
-	//			_, err := sqlDB.Exec(`INSERT INTO t.test_table VALUES($1)`, i)
-	//			i++
-	//			if err != nil {
-	//				errCh <- err
-	//				return
-	//			}
-	//		}
-	//	}
-	//}()
+	//Set up some write traffic in the background.
+	errCh := make(chan error)
+	stopWritesCh := make(chan struct{})
+	go func() {
+		i := 0
+		for {
+			select {
+			case <-stopWritesCh:
+				errCh <- nil
+				return
+			case <-time.After(10 * time.Millisecond):
+				_, err := sqlDB.Exec(`INSERT INTO t.test_table VALUES($1)`, i)
+				i++
+				if err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
 
 	var tableID uint32
 	err := sqlDB.QueryRow(`SELECT id from system.namespace WHERE name='test_table'`).Scan(&tableID)
@@ -271,6 +272,9 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	tc.AddVotersOrFatal(t, tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2))
 
 	fmt.Println("started enabledelay: ", time.Now())
+	enableLatency()
+	log.Infof(context.Background(), "started enabledelay: %v", time.Now())
+	time.Sleep(10 * time.Second)
 	// Enable simulated latencies late in the process to minimize startup time.
 
 	populateClosedTsPolicy := func(i int) bool {
@@ -313,8 +317,8 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 		// leaseholder on the other hand won't serve a follower read.
 		require.Equal(t, !isLeaseHolder, followerRead, "%v", rec)
 	}
-	//
-	//close(stopWritesCh)
-	//writeErr := <-errCh
-	//require.NoError(t, writeErr)
+
+	close(stopWritesCh)
+	writeErr := <-errCh
+	require.NoError(t, writeErr)
 }

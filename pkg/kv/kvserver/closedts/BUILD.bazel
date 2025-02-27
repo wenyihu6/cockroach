@@ -12,6 +12,7 @@ go_library(
         "//pkg/roachpb",
         "//pkg/settings",
         "//pkg/util/hlc",
+        "//pkg/util/log",
     ],
 )
 

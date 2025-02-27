@@ -258,12 +258,12 @@ func (proposal *ProposalData) useReplicationAdmissionControl() bool {
 //
 // The method is safe to call more than once, but only the first result will be
 // returned to the client.
-func (proposal *ProposalData) finishApplication(ctx context.Context, pr proposalResult) {
+func (proposal *ProposalData) finishApplication(ctx context.Context, pr proposalResult, b bool) {
 	if proposal.Request != nil && proposal.createdAtTs != 0 && pr.Err != nil {
 		fmt.Println("----------- proposal finished application: -----------", proposal.Request)
 		fmt.Println("duration: ", proposal.createdAtTs.Elapsed(), "ticks: ", (proposal.ec.repl.mu.ticks-proposal.createdAtTicks)*int64(proposal.ec.repl.store.cfg.RaftTickInterval))
 	}
-	proposal.ec.done(ctx, proposal.Request, pr.Reply, pr.Err, proposal.createdAtTs /*writeProposalCreatedAt*/)
+	proposal.ec.done(ctx, proposal.Request, pr.Reply, pr.Err, proposal.createdAtTs /*writeProposalCreatedAt*/, b)
 	proposal.signalProposalResult(pr)
 	if proposal.sp != nil {
 		proposal.sp.Finish()

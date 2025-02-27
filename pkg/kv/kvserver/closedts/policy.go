@@ -6,11 +6,13 @@
 package closedts
 
 import (
+	"context"
 	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
 // computeTarget returns the target closed timestamp using the estimation
@@ -146,13 +148,16 @@ func TargetForPolicy(
 			// Use past observed raft proposal latencies to estimate time for raft
 			// logs to propagate closed ts to followers. See raft_propagation_time.
 			raftTransportPropTime := observedRaftTransportLatency + raftTransportOverhead
-			fmt.Println("Use observedRaftTransportLatency: ", observedRaftTransportLatency)
+			fmt.Println("Use observedRaftTransportLatency: ", observedRaftTransportLatency, "raftTransportPropTime: ", raftTransportPropTime)
+			log.Infof(context.Background(), "Use observedRaftTransportLatency: %v, raftTransportPropTime: %v", observedRaftTransportLatency, raftTransportPropTime)
 			res = computeTarget(now, maxClockOffset, raftTransportPropTime)
 		case observedRaftTransportLatency == 0 && observedSideTransportLatency != 0:
 			// Use past observed network latencies to estimate time for side transport
 			// to propagate closed ts to followers. See side_propagation_time.
 			sideTransportPropTime := observedSideTransportLatency + sideTransportCloseInterval
-			fmt.Println("Use observedSideTransportLatency: ", observedSideTransportLatency)
+			fmt.Println("Use observedSideTransportLatency: ", observedSideTransportLatency,
+				"sideTransportPropTime: ", sideTransportPropTime)
+			log.Infof(context.Background(), "Use observedSideTransportLatency: %v, sideTransportPropTime: %v", observedSideTransportLatency, sideTransportPropTime)
 			res = computeTarget(now, maxClockOffset, sideTransportPropTime)
 		case observedRaftTransportLatency != 0 && observedSideTransportLatency != 0:
 			// Should be impossible to have both observedRaftTransportLatency and

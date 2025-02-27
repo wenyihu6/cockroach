@@ -7,6 +7,7 @@ package stateloader
 
 import (
 	"context"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
@@ -82,6 +83,7 @@ func (rsl StateLoader) Load(
 	s.LeaseAppliedIndex = as.LeaseAppliedIndex
 	ms := as.RangeStats.ToStats()
 	s.Stats = &ms
+	log.Infof(ctx, "updated closed timestamp: %d", as.RaftClosedTimestamp)
 	s.RaftClosedTimestamp = as.RaftClosedTimestamp
 
 	// Invariant: TruncatedState == nil. The field is being phased out. The

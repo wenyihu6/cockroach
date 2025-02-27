@@ -148,7 +148,7 @@ func (c *replicatedCmd) AckSuccess(ctx context.Context) error {
 // AckOutcomeAndFinish implements the apply.AppliedCommand.
 func (c *replicatedCmd) AckOutcomeAndFinish(ctx context.Context) error {
 	if c.IsLocal() {
-		c.proposal.finishApplication(ctx, c.response)
+		c.proposal.finishApplication(ctx, c.response, true)
 	}
 	c.finishTracingSpan()
 	return nil

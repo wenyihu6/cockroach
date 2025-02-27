@@ -559,6 +559,8 @@ func (b *replicaAppBatch) stageTrivialReplicatedEvalResult(
 		b.state.LeaseAppliedIndex = leaseAppliedIndex
 	}
 	if cts := cmd.Cmd.ClosedTimestamp; cts != nil && !cts.IsEmpty() {
+		log.Infof(ctx, "updated closed timestamp at b: %d received at %d for range id: %d",
+			*cts, b.r.store.NodeID(), b.r.RangeID)
 		b.state.RaftClosedTimestamp = *cts
 		b.closedTimestampSetter.record(cmd, b.state.Lease)
 	}

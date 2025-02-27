@@ -137,7 +137,7 @@ func (r *Replica) evalAndPropose(
 		// find them.
 		proposal.ec = makeUnreplicatedEndCmds(r, g, *st)
 		pr := makeProposalResult(proposal.Local.Reply, pErr, intents, endTxns)
-		proposal.finishApplication(ctx, pr)
+		proposal.finishApplication(ctx, pr, false)
 		return proposalCh, nil, "", nil, nil
 	}
 
@@ -1679,7 +1679,7 @@ func (r *Replica) refreshProposalsLocked(
 				p.finishApplication(ctx, makeProposalResultErr(
 					kvpb.NewAmbiguousResultErrorf(
 						"unable to determine whether command was applied via snapshot",
-					)))
+					)), false)
 			}
 			continue
 
@@ -1748,7 +1748,7 @@ func (r *Replica) refreshProposalsLocked(
 		if err := r.mu.proposalBuf.ReinsertLocked(ctx, p); err != nil {
 			r.cleanupFailedProposalLocked(p)
 			p.finishApplication(ctx, makeProposalResultErr(
-				kvpb.NewAmbiguousResultError(err)))
+				kvpb.NewAmbiguousResultError(err)), false)
 			continue
 		}
 		r.store.metrics.RaftCommandsReproposed.Inc(1)
