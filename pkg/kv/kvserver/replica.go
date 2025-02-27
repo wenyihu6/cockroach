@@ -7,6 +7,9 @@ package kvserver
 
 import (
 	"context"
+	"fmt"
+	"github.com/VividCortex/ewma"
+	"github.com/cockroachdb/crlib/crtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -960,7 +963,12 @@ type Replica struct {
 	// 3. No measurements are recorded for proposal failures (e.g. due to
 	// AmbiguousResultError, rejected proposal, or for request evaluation that did
 	// not lead to raft proposals).
-	avgProposalToLocalApplicationLatency *rpc.ThreadSafeMovingAverage
+	proposalLatencyTrackerMu struct {
+		syncutil.Mutex
+		lastRecorded                         crtime.Mono
+		maxNetWorklatency                    ewma.MovingAverage
+		avgProposalToLocalApplicationLatency ewma.MovingAverage
+	}
 
 	rangefeedMu struct {
 		syncutil.RWMutex
@@ -1064,11 +1072,25 @@ func (r *Replica) LogStorageRaftMuLocked() *logstore.LogStore {
 	return r.raftMu.logStorage
 }
 
+func (r *Replica) getMaxNetWorkLatency() time.Duration {
+	r.proposalLatencyTrackerMu.Lock()
+	defer r.proposalLatencyTrackerMu.Unlock()
+	return time.Duration(int64(r.proposalLatencyTrackerMu.maxNetWorklatency.Value()))
+}
+
+func (r *Replica) recordMaxNetWorkLatency(maxLatency time.Duration) {
+	r.proposalLatencyTrackerMu.Lock()
+	defer r.proposalLatencyTrackerMu.Unlock()
+	r.proposalLatencyTrackerMu.maxNetWorklatency.Add(float64(maxLatency.Nanoseconds()))
+}
+
 // recordProposalToLocalApplicationLatency records the duration it took between
 // a proposal being submitted to Raft and its local application for successful
 // writes.
 func (r *Replica) recordProposalToLocalApplicationLatency(timeToProposeAndApply time.Duration) {
-	r.avgProposalToLocalApplicationLatency.Add(float64(timeToProposeAndApply.Nanoseconds()))
+	r.proposalLatencyTrackerMu.Lock()
+	defer r.proposalLatencyTrackerMu.Unlock()
+	r.proposalLatencyTrackerMu.avgProposalToLocalApplicationLatency.Add(float64(timeToProposeAndApply.Nanoseconds()))
 }
 
 // cleanupFailedProposal cleans up after a proposal that has failed. It
@@ -1565,6 +1587,16 @@ func (r *Replica) setLastReplicaDescriptors(req *kvserverpb.RaftMessageRequest) 
 	defer lsr.Unlock()
 	lsr.to = req.ToReplica
 	lsr.from = req.FromReplica
+	if latency, b := r.latencyFunc(lsr.from.NodeID); b {
+		r.recordMaxNetWorkLatency(latency)
+		fmt.Println("recorded latency: ", r.getMaxNetWorkLatency())
+	}
+
+	//if r.proposalLatencyTrackerMu.lastRecorded.Elapsed() < 10*time.Second {
+	//	return
+	//}
+	//r.proposalLatencyTrackerMu.lastRecorded = crtime.NowMono()
+	//r.proposalLatencyTrackerMu.maxNetWorklatency.Add(float64(maxLatency.Nanoseconds()))
 }
 
 // getLastReplicaDescriptors gets the most recently seen replica descriptors.

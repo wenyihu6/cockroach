@@ -7,7 +7,6 @@ package kvserver
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
@@ -114,7 +113,11 @@ func (r *Replica) BumpSideTransportClosed(
 // this range. Note that we might not be able to ultimately close this timestamp
 // if there are requests in flight.
 func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
-	fmt.Println("closedTimestampTargetRLocked called: ", time.Duration(r.avgProposalToLocalApplicationLatency.Value()))
+	// time.Duration(r.proposalLatencyTrackerMu.maxNetWorklatency.Value()*3)
+	//maxLatency := r.getMaxNetWorkLatency()
+	//fmt.Println("r.proposalLatencyTrackerMu.maxNetWorklatency.Value() = ", maxLatency)
+	//r.proposalLatencyTrackerMu.Lock()
+	//defer r.proposalLatencyTrackerMu.Unlock()
 	return closedts.TargetForPolicy(
 		r.Clock().NowAsClockTimestamp(),                                  /*now*/
 		r.Clock().MaxOffset(),                                            /*maxClockOffset*/
@@ -122,7 +125,8 @@ func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
 		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV), /*leadTargetOverride*/
 		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV), /*leadTargetAutoTune*/
 		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV), /*sideTransportCloseInterval*/
-		time.Duration(r.avgProposalToLocalApplicationLatency.Value()),    /*observedRaftPropLatency*/
+		max(500*time.Millisecond,
+			time.Duration(r.proposalLatencyTrackerMu.avgProposalToLocalApplicationLatency.Value())), /*observedRaftPropLatency*/
 		0,                                /*observedSideTransportLatency*/
 		r.closedTimestampPolicyRLocked(), /*policy*/
 	)

@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"github.com/VividCortex/ewma"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/keys"
@@ -136,8 +137,7 @@ func newUninitializedReplicaWithoutRaftGroup(
 			DisableTxnPushing:  store.TestingKnobs().DontPushOnLockConflictError,
 			TxnWaitKnobs:       store.TestingKnobs().TxnWaitKnobs,
 		}),
-		allocatorToken:                       &plan.AllocatorToken{},
-		avgProposalToLocalApplicationLatency: rpc.NewThreadMovingAverage(),
+		allocatorToken: &plan.AllocatorToken{},
 	}
 	r.sideTransportClosedTimestamp.init(store.cfg.ClosedTimestampReceiver, rangeID)
 	r.latencyFunc = store.cfg.RPCContext.RemoteClocks.Latency
@@ -146,6 +146,8 @@ func newUninitializedReplicaWithoutRaftGroup(
 	r.mu.stateLoader = stateloader.Make(rangeID)
 	r.mu.quiescent = true
 	r.mu.conf = store.cfg.DefaultSpanConfig
+	r.proposalLatencyTrackerMu.maxNetWorklatency = ewma.NewMovingAverage()
+	r.proposalLatencyTrackerMu.avgProposalToLocalApplicationLatency = ewma.NewMovingAverage()
 
 	r.mu.proposals = map[kvserverbase.CmdIDKey]*ProposalData{}
 	r.mu.checksums = map[uuid.UUID]*replicaChecksum{}

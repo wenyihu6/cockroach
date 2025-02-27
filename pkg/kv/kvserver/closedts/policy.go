@@ -145,9 +145,9 @@ func TargetForPolicy(
 		case observedRaftTransportLatency != 0 && observedSideTransportLatency == 0:
 			// Use past observed raft proposal latencies to estimate time for raft
 			// logs to propagate closed ts to followers. See raft_propagation_time.
-			//raftTransportPropTime := observedRaftTransportLatency + raftTransportOverhead
+			raftTransportPropTime := observedRaftTransportLatency + raftTransportOverhead
 			fmt.Println("Use observedRaftTransportLatency: ", observedRaftTransportLatency)
-			res = computeTarget(now, maxClockOffset, 1000*time.Millisecond)
+			res = computeTarget(now, maxClockOffset, raftTransportPropTime)
 		case observedRaftTransportLatency == 0 && observedSideTransportLatency != 0:
 			// Use past observed network latencies to estimate time for side transport
 			// to propagate closed ts to followers. See side_propagation_time.
