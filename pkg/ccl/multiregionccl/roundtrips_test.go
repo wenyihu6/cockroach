@@ -270,7 +270,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	// Split the range at the start of the table and add a voter to all nodes in
 	// the cluster.
 	tc.SplitRangeOrFatal(t, tablePrefix.AsRawKey())
-	tc.AddVotersOrFatal(t, tablePrefix.AsRawKey(), tc.Target(0), tc.Target(1), tc.Target(2))
+	tc.AddVotersOrFatal(t, tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2))
 
 	fmt.Println("started enabledelay: ", time.Now())
 	enableLatency()
