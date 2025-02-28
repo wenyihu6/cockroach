@@ -113,6 +113,13 @@ func (r *Replica) BumpSideTransportClosed(
 // this range. Note that we might not be able to ultimately close this timestamp
 // if there are requests in flight.
 func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
+	replica := r.descRLocked()
+	var maxLatency time.Duration
+	for _, rep := range replica.InternalReplicas {
+		if latency, b := r.store.cfg.Latency(rep.NodeID); b {
+			maxLatency = max(maxLatency, latency)
+		}
+	}
 	return closedts.TargetForPolicy(
 		r.Clock().NowAsClockTimestamp(),                                  /*now*/
 		r.Clock().MaxOffset(),                                            /*maxClockOffset*/
@@ -120,8 +127,7 @@ func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
 		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV), /*leadTargetOverride*/
 		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV), /*leadTargetAutoTune*/
 		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV), /*sideTransportCloseInterval*/
-		time.Duration(r.avgProposalToLocalApplicationLatency.Value()),    /*observedRaftPropLatency*/
-		0,                                /*observedSideTransportLatency*/
+		maxLatency,
 		r.closedTimestampPolicyRLocked(), /*policy*/
 	)
 }

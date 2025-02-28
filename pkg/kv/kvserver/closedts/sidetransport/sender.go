@@ -349,7 +349,6 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			leadTargetOverride,         /*leadTargetOverride*/
 			leadTargeAutoTune,          /*leadTargetAutoTune*/
 			sideTransportCloseInterval, /*sideTransportCloseInterval*/
-			0,                          /*observedRaftPropLatency*/
 			avgMaxNetWorkLatency,       /*observedSideTransportLatency*/
 			pol,                        /*policy*/
 		)

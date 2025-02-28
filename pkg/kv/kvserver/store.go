@@ -1368,6 +1368,10 @@ type ConsistencyTestingKnobs struct {
 	ConsistencyQueueResultHook func(response kvpb.CheckConsistencyResponse)
 }
 
+func (sc *StoreConfig) Latency(id roachpb.NodeID) (time.Duration, bool) {
+	return sc.RPCContext.RemoteClocks.Latency(id)
+}
+
 // Valid returns true if the StoreConfig is populated correctly.
 // We don't check for Gossip and DB since some of our tests pass
 // that as nil.

@@ -166,7 +166,6 @@ func TestEnsureLocalReadsOnGlobalTables(t *testing.T) {
 func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
-	skip.UnderDuress(t, "too slow, this test use long simulated network latencies")
 
 	// ensureOnlyLocalReads looks at a trace to ensure that reads were served
 	// locally. It returns true if the read was served as a follower read.
@@ -208,18 +207,21 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	// Start the server with a 500ms injected network latency. The injected
 	// latencies are not applied until enableLatency() is called below.
 	tc, sqlDB, cleanup, enableLatency := multiregionccltestutils.TestingCreateMultiRegionClusterWithDelay(
-		t, numServers, knobs, 500*time.Millisecond, multiregionccltestutils.WithReplicationMode(base.ReplicationManual))
+		t, numServers, knobs, 150*time.Millisecond, multiregionccltestutils.WithReplicationMode(base.ReplicationManual))
 
 	defer cleanup()
 
 	// Most of cluster settings are set based on TestColdStartLatency which also
 	// use simulated network latencies in order to make the test less flaky.
-	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '50 ms'`)
+	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.side_transport_interval = '200 ms'`)
 
 	// Enable the lead for global reads auto-tuning. Disabling it fails test since
 	// the default hardcoded lead time for global tables will be too short for the
 	// 500ms network latencies.
 	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled = true`)
+	_, _ = sqlDB.Exec(`SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled = true`)
+	// lead_for_global_reads_override
+	_, _ = sqlDB.Exec(`-- SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_override = '1500ms'`)
 	_, _ = sqlDB.Exec(`CREATE DATABASE t PRIMARY REGION "us-east1" REGIONS "us-east2", "us-east3"`)
 	_, _ = sqlDB.Exec(`CREATE TABLE t.test_table (k INT PRIMARY KEY) LOCALITY GLOBAL`)
 	_, _ = sqlDB.Exec("SET CLUSTER SETTING kv.allocator.load_based_rebalancing = off")
@@ -276,6 +278,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 			)
 			require.NoError(t, err)
 			require.False(t, entry.Lease.Empty())
+			log.Infof(context.Background(), "cache entry: %v", entry.Desc)
 
 			if expected, got := roachpb.LEAD_FOR_GLOBAL_READS, entry.ClosedTimestampPolicy; got != expected {
 				return errors.Newf("expected closedts policy %s, got %s", expected, got)
@@ -288,10 +291,10 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	}
 
 	// Without this population first, the test is flaky since it takes sometime
-	// for the latencies to be observed by sideTransport.Sender and replicas.
-	for i := 0; i < numServers; i++ {
-		populateClosedTsPolicy(i)
-	}
+	//// for the latencies to be observed by sideTransport.Sender and replicas.
+	//for i := 0; i < numServers; i++ {
+	//	populateClosedTsPolicy(i)
+	//}
 
 	for i := 0; i < numServers; i++ {
 		isLeaseHolder := populateClosedTsPolicy(i)
