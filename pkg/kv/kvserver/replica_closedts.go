@@ -119,14 +119,13 @@ func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
 	//r.proposalLatencyTrackerMu.Lock()
 	//defer r.proposalLatencyTrackerMu.Unlock()
 	return closedts.TargetForPolicy(
-		r.Clock().NowAsClockTimestamp(),                                  /*now*/
-		r.Clock().MaxOffset(),                                            /*maxClockOffset*/
-		closedts.TargetDuration.Get(&r.ClusterSettings().SV),             /*lagTargetDuration*/
-		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV), /*leadTargetOverride*/
-		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV), /*leadTargetAutoTune*/
-		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV), /*sideTransportCloseInterval*/
-		max(500*time.Millisecond,
-			time.Duration(r.proposalLatencyTrackerMu.avgProposalToLocalApplicationLatency.Value())), /*observedRaftPropLatency*/
+		r.Clock().NowAsClockTimestamp(),                                                        /*now*/
+		r.Clock().MaxOffset(),                                                                  /*maxClockOffset*/
+		closedts.TargetDuration.Get(&r.ClusterSettings().SV),                                   /*lagTargetDuration*/
+		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV),                       /*leadTargetOverride*/
+		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV),                       /*leadTargetAutoTune*/
+		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV),                       /*sideTransportCloseInterval*/
+		time.Duration(r.proposalLatencyTrackerMu.avgProposalToLocalApplicationLatency.Value()), /*observedRaftPropLatency*/
 		0,                                /*observedSideTransportLatency*/
 		r.closedTimestampPolicyRLocked(), /*policy*/
 	)

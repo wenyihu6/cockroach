@@ -7,7 +7,6 @@ package multiregionccl_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -211,10 +210,12 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 
 	numServers := 3
 
+	const simulatedLatency = 100 * time.Millisecond
+
 	// Start the server with a 500ms injected network latency. The injected
 	// latencies are not applied until enableLatency() is called below.
 	tc, sqlDB, cleanup, enableLatency := multiregionccltestutils.TestingCreateMultiRegionClusterWithDelay(
-		t, numServers, knobs, 200*time.Millisecond, multiregionccltestutils.WithReplicationMode(base.ReplicationManual))
+		t, numServers, knobs, simulatedLatency, multiregionccltestutils.WithReplicationMode(base.ReplicationManual))
 
 	//enableLatency()
 	//fmt.Println("started enabledelay: ", time.Now())
@@ -271,11 +272,27 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	// the cluster.
 	tc.SplitRangeOrFatal(t, tablePrefix.AsRawKey())
 	tc.AddVotersOrFatal(t, tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2))
+	require.NoError(t, tc.WaitForVoters(tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2)))
 
-	fmt.Println("started enabledelay: ", time.Now())
 	enableLatency()
-	log.Infof(context.Background(), "started enabledelay: %v", time.Now())
-	time.Sleep(10 * time.Second)
+	for i := 0; i < numServers; i++ {
+		testutils.SucceedsWithin(t, func() error {
+			for j := 0; j < numServers; j++ {
+				if i == j {
+					continue
+				}
+				latency, ok := tc.Server(i).RPCContext().RemoteClocks.Latency(tc.Server(j).NodeID())
+				if !ok || latency < simulatedLatency {
+					return errors.Newf("expected latency to be %s, got %s", simulatedLatency, latency)
+				}
+				return nil
+			}
+			return nil
+		}, 5*time.Minute)
+	}
+
+	log.Infof(context.Background(), "enabledelay here at %s", time.Now())
+
 	// Enable simulated latencies late in the process to minimize startup time.
 
 	populateClosedTsPolicy := func(i int) bool {
