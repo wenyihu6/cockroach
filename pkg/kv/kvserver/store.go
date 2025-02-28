@@ -3536,6 +3536,10 @@ func (s *Store) updateReplicationGauges(ctx context.Context) error {
 	s.metrics.IOOverload.Update(ioOverload)
 	s.metrics.RaftCommandsPending.Update(pendingRaftProposalCount)
 	s.metrics.SlowRaftRequests.Update(slowRaftProposalCount)
+	log.Infof(ctx, "raftlog slow requests: %d", slowRaftProposalCount)
+	log.Infof(ctx, "RaftLogFollowerBehindCount: %d", behindCount)
+	log.Infof(ctx, "RaftPausedFollowerCount: %d", pausedFollowerCount)
+	log.Infof(ctx, "underreplicatedRangeCount: %d", underreplicatedRangeCount)
 
 	var averageLockHoldDurationNanos int64
 	var averageLockWaitDurationNanos int64

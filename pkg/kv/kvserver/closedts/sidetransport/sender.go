@@ -340,6 +340,7 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
 	leadTargeAutoTune := closedts.LeadForGlobalReadsAutoTune.Get(&s.st.SV)
 	avgMaxNetWorkLatency := time.Duration(s.avgMaxNetWorkLatency.Value())
+	log.Infof(ctx, "side-transport publishing message with avgMaxNetWorkLatency: %v", avgMaxNetWorkLatency)
 	for i := range s.trackedMu.lastClosed {
 		pol := roachpb.RangeClosedTimestampPolicy(i)
 		target := closedts.TargetForPolicy(

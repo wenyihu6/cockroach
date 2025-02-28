@@ -1887,7 +1887,7 @@ func (r *Replica) sendRaftMessages(
 			// Replica.handleRaftReadyRaftMuLocked.
 			r.sendLocalRaftMsg(message, willDeliverLocal)
 		default:
-			log.Infof(ctx, "sending remote message to %d from %d type %s", message.To, message.From, message.Type)
+			log.Infof(ctx, "sending remote message to %d from %d type %s, msg: %s", message.To, message.From, message.Type, message.String())
 			_, drop := blocked[roachpb.ReplicaID(message.To)]
 			if drop {
 				r.store.Metrics().RaftPausedFollowerDroppedMsgs.Inc(1)
