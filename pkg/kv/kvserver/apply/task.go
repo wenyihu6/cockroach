@@ -7,6 +7,7 @@ package apply
 
 import (
 	"context"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 
 	"github.com/cockroachdb/cockroach/pkg/raft/raftpb"
 	"github.com/cockroachdb/errors"
@@ -292,6 +293,7 @@ func (t *Task) applyOneBatch(ctx context.Context, iter CommandIterator) error {
 		return err
 	}
 
+	log.Info(ctx, "applied commands at applyOneBatch")
 	// Finish and acknowledge the outcome of each command.
 	return forEachAppliedCmdIter(ctx, appliedIter, AppliedCommand.AckOutcomeAndFinish)
 }

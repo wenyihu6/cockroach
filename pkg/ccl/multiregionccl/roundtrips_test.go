@@ -243,25 +243,25 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	_, _ = sqlDB.Exec(`ALTER TENANT ALL SET CLUSTER SETTING spanconfig.reconciliation_job.checkpoint_interval = '500ms'`)
 
 	//Set up some write traffic in the background.
-	//errCh := make(chan error)
-	//stopWritesCh := make(chan struct{})
-	//go func() {
-	//	i := 0
-	//	for {
-	//		select {
-	//		case <-stopWritesCh:
-	//			errCh <- nil
-	//			return
-	//		case <-time.After(10 * time.Millisecond):
-	//			_, err := sqlDB.Exec(`INSERT INTO t.test_table VALUES($1)`, i)
-	//			i++
-	//			if err != nil {
-	//				errCh <- err
-	//				return
-	//			}
-	//		}
-	//	}
-	//}()
+	errCh := make(chan error)
+	stopWritesCh := make(chan struct{})
+	go func() {
+		i := 0
+		for {
+			select {
+			case <-stopWritesCh:
+				errCh <- nil
+				return
+			case <-time.After(10 * time.Millisecond):
+				_, err := sqlDB.Exec(`INSERT INTO t.test_table VALUES($1)`, i)
+				i++
+				if err != nil {
+					errCh <- err
+					return
+				}
+			}
+		}
+	}()
 
 	var tableID uint32
 	err := sqlDB.QueryRow(`SELECT id from system.namespace WHERE name='test_table'`).Scan(&tableID)
@@ -337,7 +337,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 		require.Equal(t, !isLeaseHolder, followerRead, "%v", rec)
 	}
 	//
-	//close(stopWritesCh)
-	//writeErr := <-errCh
-	//require.NoError(t, writeErr)
+	close(stopWritesCh)
+	writeErr := <-errCh
+	require.NoError(t, writeErr)
 }

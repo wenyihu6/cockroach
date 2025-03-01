@@ -140,7 +140,7 @@ func (c *replicatedCmd) AckSuccess(ctx context.Context) error {
 	resp.Reply = &reply
 	resp.EncounteredIntents = c.proposal.Local.DetachEncounteredIntents()
 	resp.EndTxns = c.proposal.Local.DetachEndTxns(false /* alwaysOnly */)
-	log.Event(ctx, "ack-ing replication success to the client; application will continue async w.r.t. the client")
+	log.Info(ctx, "ack-ing replication success to the client; application will continue async w.r.t. the client")
 	c.proposal.signalProposalResult(resp)
 	return nil
 }
