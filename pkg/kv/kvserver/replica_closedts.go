@@ -17,6 +17,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
+	"github.com/cockroachdb/crlib/crtime"
 )
 
 // BumpSideTransportClosed advances the range's closed timestamp if it can. If
@@ -136,6 +137,16 @@ func (r *Replica) ForwardSideTransportClosedTimestamp(
 	r.sideTransportClosedTimestamp.forward(ctx, closed, lai, knownApplied)
 }
 
+// maxReplicaRTTCache caches the maximum network round-trip time (RTT) to any replica
+// in the range. This value is used to compute closed timestamp targets that account
+// for network propagation delays.
+type maxReplicaRTTCache struct {
+	// Value stores the maximum RTT across all replicas.
+	value time.Duration
+	// LastUpdated tracks when the cache was last refreshed.
+	lastUpdated crtime.Mono
+}
+
 // getMaxReplicaNetworkRTTRLocked returns the maximum network round-trip time (RTT)
 // to any replica in the range. This value helps compute closed timestamp targets
 // that account for network propagation delays between tshe leaseholder and followers.
@@ -150,17 +161,51 @@ func (r *Replica) ForwardSideTransportClosedTimestamp(
 // The caller must hold r.mu for reading.
 func (r *Replica) getMaxReplicaNetworkRTTRLocked() time.Duration {
 	r.mu.AssertRHeld()
-	desc := r.descRLocked()
-	getNodeLatency := r.store.GetStoreConfig().RPCContext.RemoteClocks.Latency
 
-	maxRTT := time.Duration(0)
-	for _, replica := range desc.InternalReplicas {
-		if rtt, ok := getNodeLatency(replica.NodeID); ok {
-			maxRTT = max(maxRTT, rtt)
+	const (
+		// Acceptable RTT range is 0-400ms. Values outside this are considered
+		// outliers.
+		minValidRTT = 0
+		maxValidRTT = 400 * time.Millisecond
+
+		// Cache refresh intervals.
+		normalRefreshInterval     = 5 * time.Minute
+		aggressiveRefreshInterval = 10 * time.Second
+	)
+
+	isValidRTT := func(rtt time.Duration) bool {
+		return rtt > minValidRTT && rtt < maxValidRTT
+	}
+
+	shouldRefreshCache := func(hasValidCachedRTT bool) bool {
+		elapsed := r.mu.maxReplicaRTT.lastUpdated.Elapsed()
+		if !hasValidCachedRTT {
+			// Refresh more frequently if current value is invalid.
+			return elapsed > aggressiveRefreshInterval
+		}
+		return elapsed > normalRefreshInterval
+	}
+
+	hasValidCachedRTT := isValidRTT(r.mu.maxReplicaRTT.value)
+	if shouldRefreshCache(hasValidCachedRTT) {
+		desc := r.descRLocked()
+		getNodeLatency := r.store.GetStoreConfig().RPCContext.RemoteClocks.Latency
+
+		maxRTT := time.Duration(0)
+		for _, replica := range desc.InternalReplicas {
+			if rtt, ok := getNodeLatency(replica.NodeID); ok {
+				maxRTT = max(maxRTT, rtt)
+			}
+		}
+
+		// Update cache if new RTT is valid or current cached value is invalid.
+		if isValidRTT(maxRTT) || !hasValidCachedRTT {
+			r.mu.maxReplicaRTT.value = maxRTT
+			r.mu.maxReplicaRTT.lastUpdated = crtime.NowMono()
 		}
 	}
 
-	return maxRTT
+	return r.mu.maxReplicaRTT.value
 }
 
 // sidetransportAccess encapsulates state related to the closed timestamp's
