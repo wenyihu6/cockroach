@@ -117,6 +117,8 @@ func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
 		r.Clock().MaxOffset(),
 		closedts.TargetDuration.Get(&r.ClusterSettings().SV),
 		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV),
+		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV),
+		r.getMaxReplicaNetworkRTTRLocked(),
 		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV),
 		r.closedTimestampPolicyRLocked(),
 	)

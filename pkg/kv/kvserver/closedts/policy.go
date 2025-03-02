@@ -12,10 +12,11 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
-func hardcodeTargetToLeadForGlobalReads(
+func computeTargetToLeadForGlobalReads(
 	now hlc.ClockTimestamp,
 	maxClockOffset time.Duration,
 	sideTransportCloseInterval time.Duration,
+	networkRTT time.Duration,
 ) hlc.Timestamp {
 	// The LEAD_FOR_GLOBAL_READS calculation is more complex. Instead of the
 	// policy defining an offset from the publisher's perspective, the
@@ -75,21 +76,18 @@ func hardcodeTargetToLeadForGlobalReads(
 	// of HLC propagation when nodes are communicating should reduce the
 	// effective HLC clock skew.
 
-	// TODO(nvanbenschoten): make this dynamic, based on the measured
-	// network latencies recorded by the RPC context. This isn't trivial and
-	// brings up a number of questions. For instance, how far into the tail
-	// do we care about? Do we place upper and lower bounds on this value?
-	const maxNetworkRTT = 150 * time.Millisecond
-
 	// See raft_propagation_time.
 	const raftTransportOverhead = 20 * time.Millisecond
-	raftTransportPropTime := (maxNetworkRTT*3)/2 + raftTransportOverhead
+	raftTransportPropTime := (networkRTT*3)/2 + raftTransportOverhead
 
 	// See side_propagation_time.
-	sideTransportPropTime := maxNetworkRTT/2 + sideTransportCloseInterval
+	sideTransportPropTime := networkRTT/2 + sideTransportCloseInterval
 
 	// See propagation_time.
-	maxTransportPropTime := max(sideTransportPropTime, raftTransportPropTime)
+	maxTransportPropTime := sideTransportPropTime
+	if maxTransportPropTime < raftTransportPropTime {
+		maxTransportPropTime = raftTransportPropTime
+	}
 
 	// Include a small amount of extra margin to smooth out temporary
 	// network blips or anything else that slows down closed timestamp
@@ -99,6 +97,20 @@ func hardcodeTargetToLeadForGlobalReads(
 	return now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
 }
 
+// TODO(wenyihu6): should i make this configurable -> make sure to use 150 when observed is 0
+const lowerBound = 150 * time.Millisecond
+const upperBound = 700 * time.Millisecond
+
+func clampLatency(latency time.Duration) time.Duration {
+	if latency < lowerBound {
+		return lowerBound
+	}
+	if latency > upperBound {
+		return upperBound
+	}
+	return latency
+}
+
 // TargetForPolicy returns the target closed timestamp for a range with the
 // given policy.
 func TargetForPolicy(
@@ -106,6 +118,8 @@ func TargetForPolicy(
 	maxClockOffset time.Duration,
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
+	leadTargetAutoTune bool,
+	observedNetworkRTT time.Duration,
 	sideTransportCloseInterval time.Duration,
 	policy roachpb.RangeClosedTimestampPolicy,
 ) hlc.Timestamp {
@@ -120,7 +134,12 @@ func TargetForPolicy(
 			res = now.ToTimestamp().Add(leadTargetOverride.Nanoseconds(), 0)
 			break
 		}
-		res = hardcodeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval)
+		if leadTargetAutoTune {
+			res = computeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval,
+				clampLatency(observedNetworkRTT))
+			break
+		}
+		res = computeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval, observedNetworkRTT)
 	default:
 		panic("unexpected RangeClosedTimestampPolicy")
 	}

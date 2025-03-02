@@ -912,9 +912,11 @@ func (txn *Txn) DeadlineLikelySufficient() bool {
 		maxClockOffset := txn.db.Clock().MaxOffset()
 		lagTargetDuration := closedts.TargetDuration.Get(sv)
 		leadTargetOverride := closedts.LeadForGlobalReadsOverride.Get(sv)
+		leadTargetAutoTune := closedts.LeadForGlobalReadsAutoTune.Get(sv)
 		sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(sv)
+		// TODO(wenyihu6): check here and make sure add comments for the args we are passing
 		return closedts.TargetForPolicy(now, maxClockOffset,
-			lagTargetDuration, leadTargetOverride, sideTransportCloseInterval,
+			lagTargetDuration, leadTargetOverride, leadTargetAutoTune, 0, sideTransportCloseInterval,
 			roachpb.LEAD_FOR_GLOBAL_READS).Add(int64(time.Second), 0)
 	}
 

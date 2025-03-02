@@ -1231,6 +1231,19 @@ func (r *Replica) descRLocked() *roachpb.RangeDescriptor {
 	return r.shMu.state.Desc
 }
 
+func (r *Replica) getMaxReplicaNetworkRTTRLocked() time.Duration {
+	r.mu.AssertRHeld()
+	desc := r.shMu.state.Desc
+	latency := time.Duration(0)
+	latencyFunc := r.store.GetStoreConfig().RPCContext.RemoteClocks.Latency
+	for _, rep := range desc.InternalReplicas {
+		if rtt, ok := latencyFunc(rep.NodeID); ok {
+			latency = max(latency, rtt)
+		}
+	}
+	return latency
+}
+
 // closedTimestampPolicyRLocked returns the closed timestamp policy of the
 // range, which is updated asynchronously by listening in on span configuration
 // changes.
