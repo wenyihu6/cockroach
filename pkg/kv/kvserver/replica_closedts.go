@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
@@ -113,12 +114,14 @@ func (r *Replica) BumpSideTransportClosed(
 // if there are requests in flight.
 func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
 	return closedts.TargetForPolicy(
-		r.Clock().NowAsClockTimestamp(),
-		r.Clock().MaxOffset(),
-		closedts.TargetDuration.Get(&r.ClusterSettings().SV),
-		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV),
-		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV),
-		r.closedTimestampPolicyRLocked(),
+		r.Clock().NowAsClockTimestamp(),                                  /*now*/
+		r.Clock().MaxOffset(),                                            /*maxClockOffset*/
+		closedts.TargetDuration.Get(&r.ClusterSettings().SV),             /*lagTargetDuration*/
+		closedts.LeadForGlobalReadsOverride.Get(&r.ClusterSettings().SV), /*leadTargetOverride*/
+		closedts.LeadForGlobalReadsAutoTune.Get(&r.ClusterSettings().SV), /*leadTargetAutoTune*/
+		closedts.SideTransportCloseInterval.Get(&r.ClusterSettings().SV), /*sideTransportCloseInterval*/
+		r.getMaxReplicaNetworkRTTRLocked(),                               /*observedNetworkRTT*/
+		r.closedTimestampPolicyRLocked(),                                 /*policy*/
 	)
 }
 
@@ -131,6 +134,33 @@ func (r *Replica) ForwardSideTransportClosedTimestamp(
 	// applied index has been applied locally yet.
 	const knownApplied = false
 	r.sideTransportClosedTimestamp.forward(ctx, closed, lai, knownApplied)
+}
+
+// getMaxReplicaNetworkRTTRLocked returns the maximum network round-trip time (RTT)
+// to any replica in the range. This value helps compute closed timestamp targets
+// that account for network propagation delays between tshe leaseholder and followers.
+//
+// The method maintains a cached RTT value that is periodically refreshed. The cache
+// is refreshed when either:
+// 1. The cached value is outside acceptable bounds (0 to 400ms)
+//   - Refreshes every 10 seconds in this case
+//
+// 2. The cache has expired (after 5 minutes)
+//
+// The caller must hold r.mu for reading.
+func (r *Replica) getMaxReplicaNetworkRTTRLocked() time.Duration {
+	r.mu.AssertRHeld()
+	desc := r.descRLocked()
+	getNodeLatency := r.store.GetStoreConfig().RPCContext.RemoteClocks.Latency
+
+	maxRTT := time.Duration(0)
+	for _, replica := range desc.InternalReplicas {
+		if rtt, ok := getNodeLatency(replica.NodeID); ok {
+			maxRTT = max(maxRTT, rtt)
+		}
+	}
+
+	return maxRTT
 }
 
 // sidetransportAccess encapsulates state related to the closed timestamp's
