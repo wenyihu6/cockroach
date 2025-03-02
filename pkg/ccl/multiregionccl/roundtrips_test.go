@@ -273,6 +273,7 @@ func TestEnsureLocalReadsOnGlobalTablesWithDelay(t *testing.T) {
 	tc.SplitRangeOrFatal(t, tablePrefix.AsRawKey())
 	tc.AddVotersOrFatal(t, tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2))
 	require.NoError(t, tc.WaitForVoters(tablePrefix.AsRawKey(), tc.Target(1), tc.Target(2)))
+	//require.NoError(t, tc.WaitForFullReplication())
 
 	enableLatency()
 	for i := 0; i < numServers; i++ {
