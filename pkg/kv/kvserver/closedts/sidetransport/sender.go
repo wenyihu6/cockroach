@@ -227,6 +227,10 @@ func newSenderWithConnFactory(
 	return s
 }
 
+func (s *Sender) GetAvgMaxNetWorkLatency() time.Duration {
+	return time.Duration(s.avgMaxNetWorkLatency.Value())
+}
+
 // Run starts a goroutine that periodically closes new timestamps for all the
 // ranges where the leaseholder is on this node.
 //
@@ -339,7 +343,7 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	leadTargetOverride := closedts.LeadForGlobalReadsOverride.Get(&s.st.SV)
 	leadTargeAutoTune := closedts.LeadForGlobalReadsAutoTune.Get(&s.st.SV)
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
-	avgMaxNetWorkLatency := time.Duration(s.avgMaxNetWorkLatency.Value())
+	avgMaxNetWorkLatency := s.GetAvgMaxNetWorkLatency()
 	for i := range s.trackedMu.lastClosed {
 		pol := roachpb.RangeClosedTimestampPolicy(i)
 		target := closedts.TargetForPolicy(
@@ -379,6 +383,7 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	for rid := range s.trackedMu.tracked {
 		if _, ok := leaseholders[rid]; !ok {
 			msg.Removed = append(msg.Removed, rid)
+			log.Infof(ctx, "removing r%d", rid)
 			delete(s.trackedMu.tracked, rid)
 		}
 	}
@@ -391,6 +396,11 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 
 		// Check whether the desired timestamp can be closed on this range.
 		closeRes := lh.BumpSideTransportClosed(ctx, now, s.trackedMu.lastClosed)
+		if closeRes.OK {
+			log.Infof(ctx, "sending closed timestamp %s on success for r%d with %v", s.trackedMu.lastClosed[roachpb.LEAD_FOR_GLOBAL_READS], lhRangeID, tracked)
+		} else {
+			log.Infof(ctx, "failed to bump closed timestamp %s due to %v for r%d", s.trackedMu.lastClosed, closeRes.FailReason, lhRangeID)
+		}
 
 		// Ensure that we're communicating with all of the range's followers. Note
 		// that we're including this range's followers before deciding below if the
@@ -413,6 +423,7 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			// need to un-track it.
 			if tracked {
 				msg.Removed = append(msg.Removed, lhRangeID)
+				log.Infof(ctx, "removing: r%d", lhRangeID)
 				delete(s.trackedMu.tracked, lhRangeID)
 			}
 			continue
@@ -435,12 +446,24 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			// updated through implicit updates for the new policy.
 			needExplicit = true
 		}
+		log.Infof(ctx, "needs explicit: adding %v for r%d", needExplicit, lhRangeID)
+		log.Infof(ctx, "msg.Removed before r%d", msg.Removed)
 		if needExplicit {
+			//for i, r := range msg.Removed {
+			//	if r == lhRangeID {
+			//		msg.Removed = append(msg.Removed[:i], msg.Removed[i+1:]...)
+			//		log.Infof(ctx, "checking here worked r%d", lhRangeID)
+			//		break
+			//	}
+			//}
+			log.Infof(ctx, "removing r%d", msg.Removed)
+
 			msg.AddedOrUpdated = append(msg.AddedOrUpdated, ctpb.Update_RangeUpdate{
 				RangeID: lhRangeID,
 				LAI:     closeRes.LAI,
 				Policy:  closeRes.Policy,
 			})
+			log.Infof(ctx, "adding r%d", lhRangeID)
 			s.trackedMu.tracked[lhRangeID] = trackedRange{lai: closeRes.LAI, policy: closeRes.Policy}
 		}
 	}

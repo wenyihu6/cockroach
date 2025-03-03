@@ -16,6 +16,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
 	"github.com/cockroachdb/cockroach/pkg/storage/fs"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/errors"
 )
@@ -82,6 +83,7 @@ func (rsl StateLoader) Load(
 	s.LeaseAppliedIndex = as.LeaseAppliedIndex
 	ms := as.RangeStats.ToStats()
 	s.Stats = &ms
+	log.Infof(ctx, "updated closed timestamp: %d for range %d", as.RaftClosedTimestamp, desc.RangeID)
 	s.RaftClosedTimestamp = as.RaftClosedTimestamp
 
 	// Invariant: TruncatedState == nil. The field is being phased out. The

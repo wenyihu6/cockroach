@@ -475,6 +475,10 @@ func (b *propBuf) FlushLockedWithRaftGroup(
 		// have the proposal be immutable.
 		if !reproposal {
 			lai, closedTimestamp, err := b.allocateLAIAndClosedTimestampLocked(ctx, p, closedTSTarget)
+			log.Infof(ctx, "proposing command %v carrying closed timestamp %v", p.Request, closedTimestamp)
+			if err != nil {
+				log.Infof(ctx, "failed to allocate LAI and closed timestamp for proposal %v: %v", p.Request, err)
+			}
 			if err != nil {
 				firstErr = err
 				continue

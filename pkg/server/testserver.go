@@ -1999,6 +1999,10 @@ func (ts *testServer) NodeDescStoreI() interface{} {
 	return ts.sqlServer.execCfg.DistSQLPlanner.NodeDescStore()
 }
 
+func (ts *testServer) Sender() interface{} {
+	return ts.topLevelServer.ctSender
+}
+
 // MigrationServer is part of the serverutils.ApplicationLayerInterface.
 func (ts *testServer) MigrationServer() interface{} {
 	return ts.topLevelServer.migrationServer

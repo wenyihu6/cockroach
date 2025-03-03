@@ -6,6 +6,9 @@
 package closedts
 
 import (
+	"context"
+	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -13,11 +16,10 @@ import (
 )
 
 func computeTargetToLeadForGlobalReads(
-	now hlc.ClockTimestamp,
 	maxClockOffset time.Duration,
 	sideTransportCloseInterval time.Duration,
 	networkRTT time.Duration,
-) hlc.Timestamp {
+) time.Duration {
 	// The LEAD_FOR_GLOBAL_READS calculation is more complex. Instead of the
 	// policy defining an offset from the publisher's perspective, the
 	// policy defines a goal from the consumer's perspective - the goal
@@ -94,7 +96,7 @@ func computeTargetToLeadForGlobalReads(
 	// propagation momentarily.
 	const bufferTime = 25 * time.Millisecond
 	leadTimeAtSender := maxTransportPropTime + maxClockOffset + bufferTime
-	return now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
+	return leadTimeAtSender
 }
 
 // TODO(wenyihu6): should i make this configurable -> make sure to use 150 when observed is 0
@@ -134,12 +136,18 @@ func TargetForPolicy(
 			res = now.ToTimestamp().Add(leadTargetOverride.Nanoseconds(), 0)
 			break
 		}
+		var leadTime time.Duration
 		if leadTargetAutoTune {
-			res = computeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval,
+			leadTime = computeTargetToLeadForGlobalReads(maxClockOffset, sideTransportCloseInterval,
 				clampLatency(observedNetworkRTT))
-			break
+			fmt.Println("clampLatency(observedNetworkRTT): ", clampLatency(observedNetworkRTT), "leadTime: ", leadTime)
+			log.Infof(context.Background(), "clampLatency(observedNetworkRTT): %s, leadTime: %s", clampLatency(observedNetworkRTT), leadTime)
+		} else {
+			leadTime = computeTargetToLeadForGlobalReads(maxClockOffset, sideTransportCloseInterval, observedNetworkRTT)
+			fmt.Println("not: ", observedNetworkRTT, "leadTime: ", leadTime)
+			log.Infof(context.Background(), "not: %s, leadTime: %s", observedNetworkRTT, leadTime)
 		}
-		res = computeTargetToLeadForGlobalReads(now, maxClockOffset, sideTransportCloseInterval, observedNetworkRTT)
+		res = now.ToTimestamp().Add(leadTime.Nanoseconds(), 0)
 	default:
 		panic("unexpected RangeClosedTimestampPolicy")
 	}

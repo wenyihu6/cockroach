@@ -101,7 +101,9 @@ func (s *Receiver) GetClosedTimestamp(
 	if !ok {
 		return hlc.Timestamp{}, 0
 	}
-	return conn.GetClosedTimestamp(ctx, rangeID)
+	res, lai := conn.GetClosedTimestamp(ctx, rangeID)
+	log.Infof(ctx, "received closed timestamp for r%d: %s", rangeID, res)
+	return res, lai
 }
 
 // onFirstMsg is called when the first message on a stream is received. This is
@@ -228,6 +230,13 @@ func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 		log.Fatalf(ctx, "wrong NodeID; expected %d, got %d", r.nodeID, msg.NodeID)
 	}
 
+	//for _, rangeID := range msg.Removed {
+	//	log.Infof(ctx, "removing: r%d", rangeID)
+	//}
+	for _, rng := range msg.AddedOrUpdated {
+		log.Infof(ctx, "here adding: r%d with len(msg.Removed): %d", rng.RangeID, len(msg.Removed))
+	}
+
 	// Handle the removed ranges. In order to not lose closed ts info, before we
 	// can remove a range from our tracking, we copy the info about its closed
 	// timestamp to the local replica(s). Note that it's important to do this
@@ -246,6 +255,7 @@ func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 			if !ok {
 				log.Fatalf(ctx, "attempting to unregister a missing range: r%d", rangeID)
 			}
+			log.Infof(ctx, "removing range from our tracking on receiver side r%d: %s", rangeID, r.mu.lastClosed[info.policy])
 			r.stores.ForwardSideTransportClosedTimestampForRange(
 				ctx, rangeID, r.mu.lastClosed[info.policy], info.lai)
 		}
@@ -269,16 +279,23 @@ func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 	r.mu.lastSeqNum = msg.SeqNum
 
 	for _, rng := range msg.AddedOrUpdated {
+		log.Infof(ctx, "adding at receiver side: %v", rng.RangeID)
 		r.mu.tracked[rng.RangeID] = trackedRange{
 			lai:    rng.LAI,
 			policy: rng.Policy,
 		}
 	}
 	for _, rangeID := range msg.Removed {
+		log.Infof(ctx, "removing: r%d", rangeID)
 		delete(r.mu.tracked, rangeID)
 	}
+	for rangeID, v := range r.mu.tracked {
+		log.Infof(ctx, "tracking range r%d with policy %s", rangeID, v.policy)
+	}
+	log.Infof(ctx, "\ntracking %d ranges\n", len(r.mu.tracked))
 	for _, update := range msg.ClosedTimestamps {
 		r.mu.lastClosed[update.Policy] = update.ClosedTimestamp
+		log.Infof(ctx, "received closed timestamp for %s", update.ClosedTimestamp)
 	}
 }
 

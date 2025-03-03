@@ -86,8 +86,21 @@ func (r *Replica) BumpSideTransportClosed(
 	// proposals and their timestamps are still tracked in proposal buffer's
 	// tracker, and they'll be considered below.
 	if len(r.mu.proposals) > 0 || r.mu.applyingEntries {
-		res.FailReason = sidetransport.ProposalsInFlight
-		return res
+		if r.mu.applyingEntries {
+			log.Infof(ctx, "applying entries for r%d", r.RangeID)
+		}
+		onlyHasRequestLease := true
+		for _, v := range r.mu.proposals {
+			log.Infof(ctx, "proposal for r%d: %+v", v.Request.RangeID, v.Request)
+			if !v.Request.IsSingleRequestLeaseRequest() {
+				onlyHasRequestLease = false
+				break
+			}
+		}
+		if !onlyHasRequestLease {
+			res.FailReason = sidetransport.ProposalsInFlight
+			return res
+		}
 	}
 
 	// MaybeForwardClosedLocked checks that there are no evaluating requests

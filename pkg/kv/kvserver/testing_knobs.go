@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/sidetransport"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/base"
@@ -556,6 +557,8 @@ type StoreTestingKnobs struct {
 	// messages because it has no updates and heartbeats are turned off. This
 	// simulation is only meaningful for ranges that use leader leases.
 	DisableUpdateLastUpdateTimesMapOnRaftGroupStep func(r *Replica) bool
+
+	Sender func(s sidetransport.Sender)
 }
 
 // ModuleTestingKnobs is part of the base.ModuleTestingKnobs interface.
