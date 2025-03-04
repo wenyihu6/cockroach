@@ -8,8 +8,8 @@ package cockroach.kv.kvserver.ctupdate;
 option go_package = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb";
 
 import "roachpb/data.proto";
+import "roachpb/metadata.proto";
 import "util/hlc/timestamp.proto";
-
 import "gogoproto/gogo.proto";
 
 // Update contains information about (the advancement of) closed timestamps for
@@ -59,6 +59,7 @@ message Update {
   message GroupUpdate {
     roachpb.RangeClosedTimestampPolicy policy = 1;
     util.hlc.Timestamp closed_timestamp = 2 [(gogoproto.nullable) = false];
+    roachpb.LocalityComparisonWrapper locality = 3[(gogoproto.nullable) = false];
   }
   repeated GroupUpdate closed_timestamps = 4 [(gogoproto.nullable) = false];
 
@@ -81,6 +82,7 @@ message Update {
     uint64 range_id = 1 [(gogoproto.customname) = "RangeID", (gogoproto.casttype) = "github.com/cockroachdb/cockroach/pkg/roachpb.RangeID"];
     uint64 lai = 2 [(gogoproto.customname) = "LAI", (gogoproto.casttype) = "github.com/cockroachdb/cockroach/pkg/kv/kvpb.LeaseAppliedIndex"];
     roachpb.RangeClosedTimestampPolicy policy = 3;
+    roachpb.LocalityComparisonWrapper locality = 4[(gogoproto.nullable) = false];
   }
   repeated RangeUpdate added_or_updated = 6 [(gogoproto.nullable) = false];
 }
