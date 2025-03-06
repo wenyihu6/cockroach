@@ -21,6 +21,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/rpc"
 	"github.com/cockroachdb/cockroach/pkg/rpc/nodedialer"
@@ -89,6 +90,11 @@ type Sender struct {
 		syncutil.Mutex
 		conns map[roachpb.NodeID]conn
 	}
+
+	// latencyRefresher periodically refreshes latency information for this node.
+	// Based on the follower nodes this node has, the latency refresher will
+	// update the latency for different locality comparison types.
+	latencyRefresher *multiregionlatency.LatencyRefresher
 }
 
 // streamState encapsulates the state that's tracked by a stream. Both the
@@ -153,6 +159,12 @@ type Replica interface {
 		now hlc.ClockTimestamp,
 		targetByPolicy [roachpb.MAX_CLOSED_TIMESTAMP_POLICY]hlc.Timestamp,
 	) BumpSideTransportClosedResult
+
+	// GetLocalityProximity gets the locality proximity between the leaseholder
+	// and its follower replicas based on node localities. It is used for
+	// LEAD_FOR_GLOBAL_READS to estimate network latency and time it takes to
+	// propagate closed timestamps.
+	GetLocalityProximity() roachpb.LocalityComparisonType
 }
 
 // BumpSideTransportClosedResult represents the retval of BumpSideTransportClosed.
@@ -194,13 +206,21 @@ const (
 // NewSender creates a Sender. Run must be called on it afterwards to get it to
 // start publishing closed timestamps.
 func NewSender(
-	stopper *stop.Stopper, st *cluster.Settings, clock *hlc.Clock, dialer *nodedialer.Dialer,
+	stopper *stop.Stopper,
+	st *cluster.Settings,
+	clock *hlc.Clock,
+	dialer *nodedialer.Dialer,
+	latencyRefresher *multiregionlatency.LatencyRefresher,
 ) *Sender {
-	return newSenderWithConnFactory(stopper, st, clock, newRPCConnFactory(dialer, connTestingKnobs{}))
+	return newSenderWithConnFactory(stopper, st, clock, newRPCConnFactory(dialer, connTestingKnobs{}), latencyRefresher)
 }
 
 func newSenderWithConnFactory(
-	stopper *stop.Stopper, st *cluster.Settings, clock *hlc.Clock, connFactory connFactory,
+	stopper *stop.Stopper,
+	st *cluster.Settings,
+	clock *hlc.Clock,
+	connFactory connFactory,
+	latencyRefresher *multiregionlatency.LatencyRefresher,
 ) *Sender {
 	s := &Sender{
 		stopper:     stopper,
@@ -212,7 +232,30 @@ func newSenderWithConnFactory(
 	s.trackedMu.tracked = make(map[roachpb.RangeID]trackedRange)
 	s.leaseholdersMu.leaseholders = make(map[roachpb.RangeID]leaseholder)
 	s.connsMu.conns = make(map[roachpb.NodeID]conn)
+	s.latencyRefresher = latencyRefresher
 	return s
+}
+
+// getFollowerNodes returns the node IDs of all the nodes that have follower
+// replicas for the leaseholders on this node.
+func (s *Sender) getFollowerNodes() roachpb.NodeIDSlice {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	nodes := make(roachpb.NodeIDSlice, 0, len(s.connsMu.conns))
+	for nodeID := range s.connsMu.conns {
+		nodes = append(nodes, nodeID)
+	}
+	return nodes
+}
+
+// getIntervalForLatencyRefresher returns the interval at which the latency
+// refresher used for the side transport should be run. It returns 0 if the
+// auto-tuning is disabled.
+func (s *Sender) getIntervalForLatencyRefresher() time.Duration {
+	if closedts.LeadForGlobalReadsAutoTune.Get(&s.st.SV) && (closedts.LeadForGlobalReadsOverride.Get(&s.st.SV) == 0) {
+		return 1 * time.Minute
+	}
+	return 0
 }
 
 // Run starts a goroutine that periodically closes new timestamps for all the
@@ -240,18 +283,31 @@ func (s *Sender) Run(ctx context.Context, nodeID roachpb.NodeID) {
 
 			var timer timeutil.Timer
 			defer timer.Stop()
+			var timerForLatencyRefresher timeutil.Timer
+			defer timerForLatencyRefresher.Stop()
+
 			for {
 				interval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
+				intervalForLatencyRefresher := s.getIntervalForLatencyRefresher()
 				if interval > 0 {
 					timer.Reset(interval)
 				} else {
 					// Disable the side-transport.
 					timer.Stop()
 				}
+				if intervalForLatencyRefresher > 0 {
+					timerForLatencyRefresher.Reset(intervalForLatencyRefresher)
+				} else {
+					// Disable the side-transport.
+					timerForLatencyRefresher.Stop()
+				}
 				select {
 				case <-timer.C:
 					timer.Read = true
 					s.publish(ctx)
+				case <-timerForLatencyRefresher.C:
+					timerForLatencyRefresher.Read = true
+					s.latencyRefresher.RefreshLatency(s.getFollowerNodes())
 				case <-confCh:
 					// Loop around to use the updated timer.
 					continue
@@ -373,6 +429,21 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	for _, lh := range leaseholders {
 		lhRangeID := lh.GetRangeID()
 		lastMsg, tracked := s.trackedMu.tracked[lhRangeID]
+
+		// For LEAD_FOR_GLOBAL_READS with auto-tuning enabled, use latencyRefresher
+		// to get the most recent network latency info rather than the
+		// closedts.DefaultMaxNetworkRTT.
+		if (leadTargetOverride == 0) && closedts.LeadForGlobalReadsAutoTune.Get(&s.st.SV) {
+			s.trackedMu.lastClosed[roachpb.LEAD_FOR_GLOBAL_READS] = closedts.TargetForPolicy(
+				now,
+				maxClockOffset,
+				lagTargetDuration,
+				leadTargetOverride,
+				sideTransportCloseInterval,
+				s.latencyRefresher.GetLatencyByLocalityProximity(lh.GetLocalityProximity()),
+				roachpb.LEAD_FOR_GLOBAL_READS,
+			)
+		}
 
 		// Check whether the desired timestamp can be closed on this range.
 		closeRes := lh.BumpSideTransportClosed(ctx, now, s.trackedMu.lastClosed)
