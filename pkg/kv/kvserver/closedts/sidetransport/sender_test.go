@@ -68,6 +68,10 @@ func (m *mockReplica) BumpSideTransportClosed(
 	}
 }
 
+func (r *mockReplica) GetLocalityProximity() roachpb.LocalityComparisonType {
+	return roachpb.LocalityComparisonType_UNDEFINED
+}
+
 func (m *mockReplica) removeReplica(nid roachpb.NodeID) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

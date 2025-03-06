@@ -159,7 +159,6 @@ func (hs *HeartbeatService) Ping(ctx context.Context, request *PingRequest) (*Pi
 	response := PingResponse{
 		Pong:                           request.Ping,
 		ServerTime:                     hs.clock.Now().UnixNano(),
-		ServerVersion:                  hs.version.LatestVersion(),
 		ClusterName:                    hs.clusterName,
 		DisableClusterNameVerification: hs.disableClusterNameVerification,
 	}

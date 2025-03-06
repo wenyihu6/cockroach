@@ -498,6 +498,8 @@ type Replica struct {
 	}
 
 	mu struct {
+		cachedLocalityProximity roachpb.LocalityComparisonType
+
 		// Protects all fields in the mu struct.
 		ReplicaMutex
 		// The destroyed status of a replica indicating if it's alive, corrupt,
@@ -1229,6 +1231,30 @@ func (r *Replica) Desc() *roachpb.RangeDescriptor {
 func (r *Replica) descRLocked() *roachpb.RangeDescriptor {
 	r.mu.AssertRHeld()
 	return r.shMu.state.Desc
+}
+
+func (r *Replica) GetLocalityProximity() roachpb.LocalityComparisonType {
+	r.mu.AssertRHeld()
+	desc := r.descRLocked()
+
+	result := roachpb.LocalityComparisonType_UNDEFINED
+	fromLocality := r.store.GetStoreConfig().StorePool.GetNodeLocality(r.NodeID())
+	for _, sp := range desc.InternalReplicas {
+		toLocality := r.store.GetStoreConfig().StorePool.GetNodeLocality(sp.NodeID)
+		comparisonResult, _, _ := fromLocality.CompareWithLocality(toLocality)
+		switch comparisonResult {
+		case roachpb.LocalityComparisonType_CROSS_REGION:
+			return roachpb.LocalityComparisonType_CROSS_REGION
+		case roachpb.LocalityComparisonType_SAME_REGION_CROSS_ZONE:
+			result = roachpb.LocalityComparisonType_SAME_REGION_CROSS_ZONE
+		case roachpb.LocalityComparisonType_SAME_REGION_SAME_ZONE:
+			if result != roachpb.LocalityComparisonType_SAME_REGION_CROSS_ZONE {
+				result = roachpb.LocalityComparisonType_SAME_REGION_SAME_ZONE
+			}
+		}
+	}
+	r.mu.cachedLocalityProximity = result
+	return result
 }
 
 // closedTimestampPolicyRLocked returns the closed timestamp policy of the

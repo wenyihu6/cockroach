@@ -826,6 +826,12 @@ message LeafTxnFinalState {
   reserved 8;
 }
 
+enum GlobalReadsClosedTimestampPolicy {
+  option (gogoproto.goproto_enum_prefix) = false;
+  MULTI_REGION_FOR_GLOBAL_READS = 0;
+  SINGLE_REGION_FOR_GLOBAL_READS = 1;
+}
+
 // RangeClosedTimestampPolicy represents the policy used by the leaseholder of a
 // range to establish and publish closed timestamps. The policy dictates how far
 // in the past (lag) or in the future (lead) MVCC history is closed off.

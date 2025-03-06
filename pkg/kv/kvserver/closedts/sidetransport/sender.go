@@ -11,6 +11,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency"
 	"io"
 	"slices"
 	"strings"
@@ -89,6 +90,8 @@ type Sender struct {
 		syncutil.Mutex
 		conns map[roachpb.NodeID]conn
 	}
+
+	latencyRefresher *multiregionlatency.LatencyRefresher
 }
 
 // streamState encapsulates the state that's tracked by a stream. Both the
@@ -153,6 +156,8 @@ type Replica interface {
 		now hlc.ClockTimestamp,
 		targetByPolicy [roachpb.MAX_CLOSED_TIMESTAMP_POLICY]hlc.Timestamp,
 	) BumpSideTransportClosedResult
+
+	GetLocalityProximity() roachpb.LocalityComparisonType
 }
 
 // BumpSideTransportClosedResult represents the retval of BumpSideTransportClosed.
@@ -194,25 +199,44 @@ const (
 // NewSender creates a Sender. Run must be called on it afterwards to get it to
 // start publishing closed timestamps.
 func NewSender(
-	stopper *stop.Stopper, st *cluster.Settings, clock *hlc.Clock, dialer *nodedialer.Dialer,
+	stopper *stop.Stopper,
+	st *cluster.Settings,
+	clock *hlc.Clock,
+	dialer *nodedialer.Dialer,
+	latencyRefresher *multiregionlatency.LatencyRefresher,
 ) *Sender {
-	return newSenderWithConnFactory(stopper, st, clock, newRPCConnFactory(dialer, connTestingKnobs{}))
+	return newSenderWithConnFactory(stopper, st, clock, newRPCConnFactory(dialer, connTestingKnobs{}), latencyRefresher)
 }
 
 func newSenderWithConnFactory(
-	stopper *stop.Stopper, st *cluster.Settings, clock *hlc.Clock, connFactory connFactory,
+	stopper *stop.Stopper,
+	st *cluster.Settings,
+	clock *hlc.Clock,
+	connFactory connFactory,
+	latencyRefresher *multiregionlatency.LatencyRefresher,
 ) *Sender {
 	s := &Sender{
-		stopper:     stopper,
-		st:          st,
-		clock:       clock,
-		connFactory: connFactory,
-		buf:         newUpdatesBuf(),
+		stopper:          stopper,
+		st:               st,
+		clock:            clock,
+		connFactory:      connFactory,
+		buf:              newUpdatesBuf(),
+		latencyRefresher: latencyRefresher,
 	}
 	s.trackedMu.tracked = make(map[roachpb.RangeID]trackedRange)
 	s.leaseholdersMu.leaseholders = make(map[roachpb.RangeID]leaseholder)
 	s.connsMu.conns = make(map[roachpb.NodeID]conn)
 	return s
+}
+
+func (s *Sender) getFollowerNodes() roachpb.NodeIDSlice {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	nodes := make(roachpb.NodeIDSlice, 0, len(s.connsMu.conns))
+	for nodeID := range s.connsMu.conns {
+		nodes = append(nodes, nodeID)
+	}
+	return nodes
 }
 
 // Run starts a goroutine that periodically closes new timestamps for all the
@@ -239,7 +263,14 @@ func (s *Sender) Run(ctx context.Context, nodeID roachpb.NodeID) {
 			}()
 
 			var timer timeutil.Timer
-			defer timer.Stop()
+			var timerForGlobalReadsRefresher timeutil.Timer
+			defer func() {
+				timer.Stop()
+				timerForGlobalReadsRefresher.Stop()
+			}()
+
+			intervalForGlobalReadsRefresher := 1 * time.Minute
+			timerForGlobalReadsRefresher.Reset(intervalForGlobalReadsRefresher)
 			for {
 				interval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
 				if interval > 0 {
@@ -248,6 +279,9 @@ func (s *Sender) Run(ctx context.Context, nodeID roachpb.NodeID) {
 					// Disable the side-transport.
 					timer.Stop()
 				}
+
+				// interval := closedts.AutoTune.
+				// TODO(wenyihu6): only enable refresher if auto tuning is on
 				select {
 				case <-timer.C:
 					timer.Read = true
@@ -255,6 +289,9 @@ func (s *Sender) Run(ctx context.Context, nodeID roachpb.NodeID) {
 				case <-confCh:
 					// Loop around to use the updated timer.
 					continue
+				case <-timerForGlobalReadsRefresher.C:
+					timerForGlobalReadsRefresher.Read = true
+					s.latencyRefresher.RefreshLatency(s.getFollowerNodes())
 				case <-s.stopper.ShouldQuiesce():
 					return
 				}
@@ -369,11 +406,16 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 
 	// Iterate through each leaseholder and determine whether it can be part of
 	// this update or not.
+	//autoTune := true
 	for _, lh := range leaseholders {
 		lhRangeID := lh.GetRangeID()
 		lastMsg, tracked := s.trackedMu.tracked[lhRangeID]
 
 		// Check whether the desired timestamp can be closed on this range.
+		// TODO(wenyihu6): adjust here
+		//if autoTune {
+		//	s.trackedMu.lastClosed[roachpb.LEAD_FOR_GLOBAL_READS] = closedts.TargetForPolicy()
+		//}
 		closeRes := lh.BumpSideTransportClosed(ctx, now, s.trackedMu.lastClosed)
 
 		// Ensure that we're communicating with all of the range's followers. Note

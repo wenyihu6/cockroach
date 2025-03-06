@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency"
 	"net"
 	"os"
 	"path/filepath"
@@ -661,7 +662,8 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 	)
 	nodeRegistry.AddMetricStruct(storeLivenessTransport.Metrics())
 
-	ctSender := sidetransport.NewSender(stopper, st, clock, kvNodeDialer)
+	latencyRefresher := multiregionlatency.NewLatencyRefresher(cfg.Locality, rpcContext.RemoteClocks.Latency, g.GetNodeDescriptor)
+	ctSender := sidetransport.NewSender(stopper, st, clock, kvNodeDialer, latencyRefresher)
 	ctReceiver := sidetransport.NewReceiver(nodeIDContainer, stopper, stores, nil /* testingKnobs */)
 
 	// The Executor will be further initialized later, as we create more
@@ -878,6 +880,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		LogRangeAndNodeEvents:        cfg.EventLogEnabled,
 		RangeDescriptorCache:         distSender.RangeDescriptorCache(),
 		TimeSeriesDataStore:          tsDB,
+		LatencyRefresher:             latencyRefresher,
 		ClosedTimestampSender:        ctSender,
 		ClosedTimestampReceiver:      ctReceiver,
 		ProtectedTimestampReader:     protectedTSReader,

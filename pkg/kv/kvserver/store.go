@@ -8,6 +8,7 @@ package kvserver
 import (
 	"bytes"
 	"context"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency"
 	"math"
 	"os"
 	"path/filepath"
@@ -913,6 +914,7 @@ type Store struct {
 	raftMetrics         *raft.Metrics
 	sstSnapshotStorage  SSTSnapshotStorage
 	protectedtsReader   spanconfig.ProtectedTSReader
+	latencyRefresher    *multiregionlatency.LatencyRefresher
 	ctSender            *sidetransport.Sender
 	storeGossip         *StoreGossip
 	rebalanceObjManager *RebalanceObjectiveManager
@@ -1184,6 +1186,7 @@ type StoreConfig struct {
 	RPCContext             *rpc.Context
 	RangeDescriptorCache   *rangecache.RangeCache
 
+	LatencyRefresher        *multiregionlatency.LatencyRefresher
 	ClosedTimestampSender   *sidetransport.Sender
 	ClosedTimestampReceiver sidetransportReceiver
 
@@ -1487,6 +1490,7 @@ func NewStore(
 		db:                                cfg.DB, // TODO(tschottdorf): remove redundancy.
 		nodeDesc:                          nodeDesc,
 		metrics:                           newStoreMetrics(cfg.HistogramWindowInterval),
+		latencyRefresher:                  cfg.LatencyRefresher,
 		ctSender:                          cfg.ClosedTimestampSender,
 		ioThresholds:                      &iot,
 		rangeFeedSlowClosedTimestampNudge: singleflight.NewGroup("rangfeed-ct-nudge", "range"),

@@ -51,7 +51,9 @@ func (r *Replica) BumpSideTransportClosed(
 
 	lai := r.shMu.state.LeaseAppliedIndex
 	policy := r.closedTimestampPolicyRLocked()
-	target := targetByPolicy[policy]
+
+	var target hlc.Timestamp
+	target = targetByPolicy[policy]
 	st := r.leaseStatusForRequestRLocked(ctx, now, hlc.Timestamp{} /* reqTS */)
 	// We need to own the lease but note that stasis (LeaseState_UNUSABLE) doesn't
 	// matter.
@@ -112,6 +114,8 @@ func (r *Replica) BumpSideTransportClosed(
 // this range. Note that we might not be able to ultimately close this timestamp
 // if there are requests in flight.
 func (r *Replica) closedTimestampTargetRLocked() hlc.Timestamp {
+	r.mu.AssertRHeld()
+	//networkLatency := r.store.latencyRefresher.GetLatencyByLocalityProximity(r.mu.cachedLocalityProximity)
 	return closedts.TargetForPolicy(
 		r.Clock().NowAsClockTimestamp(),
 		r.Clock().MaxOffset(),

@@ -1,0 +1,9 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "networklatency",
+    srcs = ["multi_region_latency.go"],
+    importpath = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/networklatency",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/roachpb"],
+)
