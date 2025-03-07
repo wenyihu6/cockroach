@@ -144,7 +144,7 @@ func newMockReplicaEx(id roachpb.RangeID, replicas ...roachpb.ReplicationTarget)
 }
 
 func expGroupUpdates(s *Sender, now hlc.ClockTimestamp) []ctpb.Update_GroupUpdate {
-	targetForPolicy := func(pol roachpb.RangeClosedTimestampPolicy) hlc.Timestamp {
+	targetForPolicy := func(pol ctpb.LatencyBasedRangeClosedTimestampPolicy) hlc.Timestamp {
 		return closedts.TargetForPolicy(
 			now,
 			s.clock.MaxOffset(),
@@ -155,8 +155,8 @@ func expGroupUpdates(s *Sender, now hlc.ClockTimestamp) []ctpb.Update_GroupUpdat
 		)
 	}
 	return []ctpb.Update_GroupUpdate{
-		{Policy: roachpb.LAG_BY_CLUSTER_SETTING, ClosedTimestamp: targetForPolicy(roachpb.LAG_BY_CLUSTER_SETTING)},
-		{Policy: roachpb.LEAD_FOR_GLOBAL_READS, ClosedTimestamp: targetForPolicy(roachpb.LEAD_FOR_GLOBAL_READS)},
+		{Policy: ctpb.LAG_BY_CLUSTER_SETTING, ClosedTimestamp: targetForPolicy(ctpb.LAG_BY_CLUSTER_SETTING)},
+		{Policy: ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO, ClosedTimestamp: targetForPolicy(ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO)},
 	}
 }
 
@@ -204,7 +204,7 @@ func TestSenderBasic(t *testing.T) {
 	require.Equal(t, expGroupUpdates(s, now), up.ClosedTimestamps)
 	require.Nil(t, up.Removed)
 	require.Equal(t, []ctpb.Update_RangeUpdate{
-		{RangeID: 15, LAI: 5, Policy: roachpb.LAG_BY_CLUSTER_SETTING},
+		{RangeID: 15, LAI: 5, Policy: ctpb.LAG_BY_CLUSTER_SETTING},
 	}, up.AddedOrUpdated)
 
 	c2, ok := s.connsMu.conns[2]
@@ -304,7 +304,7 @@ func TestSenderColocateReplicasOnSameNode(t *testing.T) {
 	require.Equal(t, expGroupUpdates(s, now), up.ClosedTimestamps)
 	require.Nil(t, up.Removed)
 	require.Equal(t, []ctpb.Update_RangeUpdate{
-		{RangeID: 15, LAI: 5, Policy: roachpb.LAG_BY_CLUSTER_SETTING},
+		{RangeID: 15, LAI: 5, Policy: ctpb.LAG_BY_CLUSTER_SETTING},
 	}, up.AddedOrUpdated)
 }
 

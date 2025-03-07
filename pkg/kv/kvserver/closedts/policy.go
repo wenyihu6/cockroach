@@ -8,7 +8,7 @@ package closedts
 import (
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
@@ -20,14 +20,14 @@ func TargetForPolicy(
 	lagTargetDuration time.Duration,
 	leadTargetOverride time.Duration,
 	sideTransportCloseInterval time.Duration,
-	policy roachpb.RangeClosedTimestampPolicy,
+	policy ctpb.LatencyBasedRangeClosedTimestampPolicy,
 ) hlc.Timestamp {
 	var res hlc.Timestamp
 	switch policy {
-	case roachpb.LAG_BY_CLUSTER_SETTING:
+	case ctpb.LAG_BY_CLUSTER_SETTING:
 		// Simple calculation: lag now by desired duration.
 		res = now.ToTimestamp().Add(-lagTargetDuration.Nanoseconds(), 0)
-	case roachpb.LEAD_FOR_GLOBAL_READS:
+	case ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO:
 		// The LEAD_FOR_GLOBAL_READS calculation is more complex. Instead of the
 		// policy defining an offset from the publisher's perspective, the
 		// policy defines a goal from the consumer's perspective - the goal
