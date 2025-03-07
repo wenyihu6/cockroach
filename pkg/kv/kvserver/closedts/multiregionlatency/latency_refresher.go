@@ -7,6 +7,7 @@ package multiregionlatency
 
 import (
 	"context"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
 	"sync/atomic"
 	"time"
 
@@ -15,10 +16,7 @@ import (
 )
 
 const (
-	numLocalityComparisonTypes = 4
-	defaultMaxNetworkRTT       = 150 * time.Millisecond
-	minAcceptableNetworkRTT    = 1 * time.Millisecond
-	maxAcceptableNetworkRTT    = 400 * time.Millisecond
+	numLocalityComparisonTypes = int(roachpb.LocalityComparisonType_MAX_LOCALITY_COMPARISON_TYPE)
 )
 
 // LatencyRefresher tracks and updates network latency between nodes based on
@@ -50,7 +48,7 @@ func NewLatencyRefresher(
 
 	// Initialize all locality comparison types with default latency
 	for i := 0; i < numLocalityComparisonTypes; i++ {
-		l.updateLatencyForLocalityProximity(roachpb.LocalityComparisonType(i), defaultMaxNetworkRTT)
+		l.roundTripTimes[roachpb.LocalityComparisonType(i)].Store(int64(closedts.DefaultMaxNetworkRTT))
 	}
 	return l
 }
@@ -60,25 +58,12 @@ func (l *LatencyRefresher) GetLatencyByLocalityProximity(lct roachpb.LocalityCom
 	return time.Duration(l.roundTripTimes[lct].Load())
 }
 
-// clampLatency clamps the given latency to the acceptable range.
-func clampLatency(latency time.Duration) time.Duration {
-	if latency < minAcceptableNetworkRTT {
-		return minAcceptableNetworkRTT
-	}
-	if latency > maxAcceptableNetworkRTT {
-		return maxAcceptableNetworkRTT
-	}
-	return latency
-}
-
 // updateLatencyForLocalityProximity updates the latency for the given locality comparison type.
 func (l *LatencyRefresher) updateLatencyForLocalityProximity(lct roachpb.LocalityComparisonType, updatedLatency time.Duration) {
+	if lct == roachpb.LocalityComparisonType_UNDEFINED {
+		return
+	}
 	l.roundTripTimes[lct].Store(int64(updatedLatency))
-}
-
-// isValidComparisonType checks if the locality comparison type is valid.
-func (l *LatencyRefresher) isValidComparisonType(lct roachpb.LocalityComparisonType) bool {
-	return lct != roachpb.LocalityComparisonType_UNDEFINED
 }
 
 // RefreshLatency updates latencies for all locality comparison types based on
@@ -93,17 +78,14 @@ func (l *LatencyRefresher) RefreshLatency(nodeIDs roachpb.NodeIDSlice) {
 			continue
 		}
 		comparisonResult, _, _ := l.nodeLocality.CompareWithLocality(toNodeDesc.Locality)
-		if !l.isValidComparisonType(comparisonResult) {
-			continue
-		}
 		if latency, ok := l.getLatency(nodeID); ok {
 			maxLatencies[comparisonResult] = max(maxLatencies[comparisonResult], latency)
 		}
 	}
-	for i := 0; i < numLocalityComparisonTypes; i++ {
+	for i := 1; i < numLocalityComparisonTypes; i++ {
 		// Skip if the latency is not updated.
 		if maxLatency, ok := maxLatencies[roachpb.LocalityComparisonType(i)]; ok {
-			l.updateLatencyForLocalityProximity(roachpb.LocalityComparisonType(i), clampLatency(maxLatency))
+			l.updateLatencyForLocalityProximity(roachpb.LocalityComparisonType(i), maxLatency)
 		}
 	}
 }

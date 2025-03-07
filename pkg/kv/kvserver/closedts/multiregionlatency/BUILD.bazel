@@ -2,11 +2,16 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "multiregionlatency",
-    srcs = ["latency_refresher.go"],
+    srcs = [
+        "closedts_policy.go",
+        "latency_refresher.go",
+    ],
     importpath = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/kv/kvserver/closedts",
         "//pkg/roachpb",
+        "//pkg/util/hlc",
         "//pkg/util/log",
     ],
 )

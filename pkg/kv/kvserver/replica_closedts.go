@@ -9,6 +9,7 @@ import (
 	"context"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/sidetransport"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -31,7 +32,7 @@ import (
 func (r *Replica) BumpSideTransportClosed(
 	ctx context.Context,
 	now hlc.ClockTimestamp,
-	targetByPolicy [roachpb.MAX_CLOSED_TIMESTAMP_POLICY]hlc.Timestamp,
+	lastClosed multiregionlatency.ClosedTimestamps,
 ) sidetransport.BumpSideTransportClosedResult {
 	var res sidetransport.BumpSideTransportClosedResult
 	r.mu.Lock()
@@ -50,7 +51,8 @@ func (r *Replica) BumpSideTransportClosed(
 
 	lai := r.shMu.state.LeaseAppliedIndex
 	policy := r.closedTimestampPolicyRLocked()
-	target := targetByPolicy[policy]
+	locality := r.GetLocalityProximity()
+	target := lastClosed.GetClosedTsForPolicyAndLocality(policy, locality)
 	st := r.leaseStatusForRequestRLocked(ctx, now, hlc.Timestamp{} /* reqTS */)
 	// We need to own the lease but note that stasis (LeaseState_UNUSABLE) doesn't
 	// matter.

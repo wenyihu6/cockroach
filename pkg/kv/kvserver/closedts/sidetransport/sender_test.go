@@ -8,6 +8,7 @@ package sidetransport
 import (
 	"context"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -46,6 +47,10 @@ type mockReplica struct {
 	policy         roachpb.RangeClosedTimestampPolicy
 }
 
+func (m *mockReplica) GetLocalityProximity() roachpb.LocalityComparisonType {
+
+}
+
 var _ Replica = &mockReplica{}
 
 func (m *mockReplica) StoreID() roachpb.StoreID    { return m.storeID }
@@ -82,6 +87,10 @@ func (m *mockReplica) removeReplica(nid roachpb.NodeID) {
 	panic(fmt.Sprintf("replica not found for n%d", nid))
 }
 
+type mockLatencyRefresher struct {
+	nodeDescs map[roachpb.NodeID]*roachpb.NodeDescriptor
+}
+
 // mockConnFactory is a mock implementation of the connFactory interface.
 type mockConnFactory struct{}
 
@@ -104,6 +113,7 @@ func newMockSender(connFactory connFactory) (*Sender, *stop.Stopper) {
 	stopper := stop.NewStopper()
 	st := cluster.MakeTestingClusterSettings()
 	clock := hlc.NewClockForTesting(nil)
+	latencyRefresher := multiregionlatency.LatencyRefresher{}
 	s := newSenderWithConnFactory(stopper, st, clock, connFactory)
 	s.nodeID = 1 // usually set in (*Sender).Run
 	return s, stopper

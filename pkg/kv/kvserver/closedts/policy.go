@@ -12,7 +12,23 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 )
 
-const DefaultMaxNetworkRTT = 150 * time.Millisecond
+const (
+	defaultMaxNetworkRTT    = 150 * time.Millisecond
+	minAcceptableNetworkRTT = 1 * time.Millisecond
+	maxAcceptableNetworkRTT = 400 * time.Millisecond
+	DefaultMaxNetworkRTT    = 150 * time.Millisecond
+)
+
+// clampLatency clamps the given latency to the acceptable range.
+func clampLatency(latency time.Duration) time.Duration {
+	if latency < minAcceptableNetworkRTT {
+		return minAcceptableNetworkRTT
+	}
+	if latency > maxAcceptableNetworkRTT {
+		return maxAcceptableNetworkRTT
+	}
+	return latency
+}
 
 // TargetForPolicy returns the target closed timestamp for a range with the
 // given policy.

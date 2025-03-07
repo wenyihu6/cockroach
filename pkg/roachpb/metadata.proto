@@ -445,6 +445,10 @@ enum LocalityComparisonType {
   MAX_LOCALITY_COMPARISON_TYPE = 4;
 }
 
+message LocalityComparisonWrapper {
+  required LocalityComparisonType comparison_type = 1[(gogoproto.nullable) = false];
+}
+
 message Version {
   option (gogoproto.equal) = true;
   option (gogoproto.goproto_stringer) = false;
