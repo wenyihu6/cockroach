@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	defaultMaxNetworkRTT    = 150 * time.Millisecond
+	DefaultMaxNetworkRTT    = 150 * time.Millisecond
 	minAcceptableNetworkRTT = 1 * time.Millisecond
 	maxAcceptableNetworkRTT = 400 * time.Millisecond
-	DefaultMaxNetworkRTT    = 150 * time.Millisecond
 )
 
 // clampLatency clamps the given latency to the acceptable range.

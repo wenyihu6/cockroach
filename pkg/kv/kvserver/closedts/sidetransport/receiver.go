@@ -212,7 +212,7 @@ func (r *incomingStream) GetClosedTimestamp(
 	if !ok {
 		return hlc.Timestamp{}, 0
 	}
-	return r.mu.lastClosed.GetClosedTsForPolicyAndLocality(info.policy, info.locality), info.lai
+	return r.mu.lastClosed.Get(info.policy, info.locality), info.lai
 }
 
 // processUpdate processes one update received on the stream, updating the local
@@ -247,7 +247,7 @@ func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 				log.Fatalf(ctx, "attempting to unregister a missing range: r%d", rangeID)
 			}
 			r.stores.ForwardSideTransportClosedTimestampForRange(
-				ctx, rangeID, r.mu.lastClosed.GetClosedTsForPolicyAndLocality(info.policy, info.locality), info.lai)
+				ctx, rangeID, r.mu.lastClosed.Get(info.policy, info.locality), info.lai)
 		}
 		r.mu.RUnlock()
 	}
@@ -276,7 +276,7 @@ func (r *incomingStream) processUpdate(ctx context.Context, msg *ctpb.Update) {
 		delete(r.mu.tracked, rangeID)
 	}
 	for _, update := range msg.ClosedTimestamps {
-		r.mu.lastClosed.SetLastClosedTsForPolicyAndLocality(update.Policy, update.Locality.ComparisonType, update.ClosedTimestamp)
+		r.mu.lastClosed.Set(update.Policy, update.Locality.ComparisonType, update.ClosedTimestamp)
 	}
 }
 

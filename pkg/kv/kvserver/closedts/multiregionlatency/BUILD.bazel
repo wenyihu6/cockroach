@@ -3,8 +3,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "multiregionlatency",
     srcs = [
-        "closedts_policy.go",
         "latency_refresher.go",
+        "policy_locality.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregionlatency",
     visibility = ["//visibility:public"],
@@ -20,9 +20,4 @@ go_test(
     name = "multiregionlatency_test",
     srcs = ["latency_refresher_test.go"],
     embed = [":multiregionlatency"],
-    deps = [
-        "//pkg/roachpb",
-        "//pkg/util/leaktest",
-        "@com_github_stretchr_testify//require",
-    ],
 )

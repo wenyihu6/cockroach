@@ -7,16 +7,13 @@ package multiregionlatency
 
 import (
 	"context"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
 	"sync/atomic"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
+
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-)
-
-const (
-	numLocalityComparisonTypes = int(roachpb.LocalityComparisonType_MAX_LOCALITY_COMPARISON_TYPE)
 )
 
 // LatencyRefresher tracks and updates network latency between nodes based on
@@ -24,10 +21,10 @@ const (
 // of time it takes for closed timestamp updates to propagate and determine lead
 // time for global reads.
 type LatencyRefresher struct {
-	nodeLocality   roachpb.Locality
-	getNodeDesc    func(nodeID roachpb.NodeID) (*roachpb.NodeDescriptor, error)
-	getLatency     func(roachpb.NodeID) (time.Duration, bool)
-	roundTripTimes [numLocalityComparisonTypes]atomic.Int64
+	nodeLocality roachpb.Locality
+	getNodeDesc  func(nodeID roachpb.NodeID) (*roachpb.NodeDescriptor, error)
+	getLatency   func(roachpb.NodeID) (time.Duration, bool)
+	rtt          [roachpb.LocalityComparisonType_MAX_LOCALITY_COMPARISON_TYPE]atomic.Int64
 }
 
 // NewLatencyRefresher creates a new LatencyRefresher instance.
@@ -37,7 +34,7 @@ func NewLatencyRefresher(
 	getNodeDesc func(nodeID roachpb.NodeID) (*roachpb.NodeDescriptor, error),
 ) *LatencyRefresher {
 	if getLatency == nil || getNodeDesc == nil {
-		log.Fatalf(context.Background(), "nodeLocality, getLatency and getNodeDesc must be provided")
+		log.Errorf(context.Background(), "nodeLocality, getLatency and getNodeDesc must be provided")
 	}
 
 	l := &LatencyRefresher{
@@ -46,16 +43,17 @@ func NewLatencyRefresher(
 		getNodeDesc:  getNodeDesc,
 	}
 
-	// Initialize all locality comparison types with default latency
-	for i := 0; i < numLocalityComparisonTypes; i++ {
-		l.roundTripTimes[roachpb.LocalityComparisonType(i)].Store(int64(closedts.DefaultMaxNetworkRTT))
+	// Initialize all locality comparison types with default latency.
+	// LocalityComparisonType_UNDEFINED should be left with default latency.
+	for i := 0; i < len(l.rtt); i++ {
+		l.rtt[roachpb.LocalityComparisonType(i)].Store(int64(closedts.DefaultMaxNetworkRTT))
 	}
 	return l
 }
 
 // GetLatencyByLocalityProximity returns the latency for the given locality comparison type.
 func (l *LatencyRefresher) GetLatencyByLocalityProximity(lct roachpb.LocalityComparisonType) time.Duration {
-	return time.Duration(l.roundTripTimes[lct].Load())
+	return time.Duration(l.rtt[lct].Load())
 }
 
 // updateLatencyForLocalityProximity updates the latency for the given locality comparison type.
@@ -63,7 +61,7 @@ func (l *LatencyRefresher) updateLatencyForLocalityProximity(lct roachpb.Localit
 	if lct == roachpb.LocalityComparisonType_UNDEFINED {
 		return
 	}
-	l.roundTripTimes[lct].Store(int64(updatedLatency))
+	l.rtt[lct].Store(int64(updatedLatency))
 }
 
 // RefreshLatency updates latencies for all locality comparison types based on
@@ -82,10 +80,10 @@ func (l *LatencyRefresher) RefreshLatency(nodeIDs roachpb.NodeIDSlice) {
 			maxLatencies[comparisonResult] = max(maxLatencies[comparisonResult], latency)
 		}
 	}
-	for i := 1; i < numLocalityComparisonTypes; i++ {
+	for i := roachpb.LocalityComparisonType_CROSS_REGION; i < roachpb.LocalityComparisonType_MAX_LOCALITY_COMPARISON_TYPE; i++ {
 		// Skip if the latency is not updated.
-		if maxLatency, ok := maxLatencies[roachpb.LocalityComparisonType(i)]; ok {
-			l.updateLatencyForLocalityProximity(roachpb.LocalityComparisonType(i), maxLatency)
+		if maxLatency, ok := maxLatencies[i]; ok {
+			l.updateLatencyForLocalityProximity(i, maxLatency)
 		}
 	}
 }
