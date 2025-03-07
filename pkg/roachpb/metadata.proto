@@ -427,6 +427,12 @@ message Tier {
   optional string value = 2 [(gogoproto.nullable) = false];
 }
 
+// LocalityComparisonWrapper wraps a proto2 LocalityComparisonType enum to enable
+// usage in proto3, since proto3 cannot directly use proto2 enums.
+message LocalityComparisonWrapper {
+  required LocalityComparisonType comparison_type = 1[(gogoproto.nullable) = false];
+}
+
 // LocalityComparisonType represents different types of comparison results that
 // indicate the relationship between two localities.
 enum LocalityComparisonType {
