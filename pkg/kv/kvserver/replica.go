@@ -22,6 +22,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/batcheval"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/concurrency"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/gc"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol"
@@ -498,6 +499,8 @@ type Replica struct {
 	}
 
 	mu struct {
+		cachedLocality ctpb.LatencyTunedRangeClosedTimestampPolicy
+
 		// Protects all fields in the mu struct.
 		ReplicaMutex
 		// The destroyed status of a replica indicating if it's alive, corrupt,
@@ -1231,16 +1234,39 @@ func (r *Replica) descRLocked() *roachpb.RangeDescriptor {
 	return r.shMu.state.Desc
 }
 
+func (r *Replica) closedTimestampPolicyForClient(
+	policy ctpb.LatencyTunedRangeClosedTimestampPolicy,
+) roachpb.RangeClosedTimestampPolicy {
+	switch policy {
+	case ctpb.LAG_BY_CLUSTER_SETTING:
+		return roachpb.LAG_BY_CLUSTER_SETTING
+	default:
+		return roachpb.LEAD_FOR_GLOBAL_READS
+	}
+}
+
+func (r *Replica) RefreshLatency() ctpb.LatencyTunedRangeClosedTimestampPolicy {
+	r.mu.AssertRHeld()
+	desc := r.descRLocked()
+	res := ctpb.LEAD_FOR_GLOBAL_READS_NO_LATENCY
+	for _, peer := range desc.InternalReplicas {
+		peerLocality := r.store.latencyTracker.GetLatencyByLocalityProximity(peer.NodeID)
+		res = max(res, peerLocality)
+	}
+	r.mu.cachedLocality = res
+	return res
+}
+
 // closedTimestampPolicyRLocked returns the closed timestamp policy of the
 // range, which is updated asynchronously by listening in on span configuration
 // changes.
 //
 // NOTE: an exported version of this method which does not require the replica
 // lock exists in helpers_test.go. Move here if needed.
-func (r *Replica) closedTimestampPolicyRLocked() roachpb.RangeClosedTimestampPolicy {
+func (r *Replica) closedTimestampPolicyRLocked() ctpb.LatencyTunedRangeClosedTimestampPolicy {
 	if r.mu.conf.GlobalReads {
 		if !r.shMu.state.Desc.ContainsKey(roachpb.RKey(keys.NodeLivenessPrefix)) {
-			return roachpb.LEAD_FOR_GLOBAL_READS
+			switch
 		}
 		// The node liveness range ignores zone configs and always uses a
 		// LAG_BY_CLUSTER_SETTING closed timestamp policy. If it was to begin
@@ -1248,7 +1274,7 @@ func (r *Replica) closedTimestampPolicyRLocked() roachpb.RangeClosedTimestampPol
 		// which perform a 1PC transaction with a commit trigger and can not
 		// tolerate being pushed into the future.
 	}
-	return roachpb.LAG_BY_CLUSTER_SETTING
+	return ctpb.LAG_BY_CLUSTER_SETTING
 }
 
 // NodeID returns the ID of the node this replica belongs to.
@@ -1297,6 +1323,11 @@ func (r *Replica) GetConcurrencyManager() concurrency.Manager {
 // GetRangeID returns the Range ID.
 func (r *Replica) GetRangeID() roachpb.RangeID {
 	return r.RangeID
+}
+
+func (r *Replica) RefreshPolicy() {
+	policy := r.closedTimestampPolicyRLocked()
+
 }
 
 // GetGCThreshold returns the GC threshold.
