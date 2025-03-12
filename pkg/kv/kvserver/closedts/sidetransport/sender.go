@@ -327,7 +327,7 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	leadTargetOverride := closedts.LeadForGlobalReadsOverride.Get(&s.st.SV)
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
 	for i := range s.trackedMu.lastClosed {
-		pol := ctpb.RangeClosedTimestampByPolicyLocality(i)
+		pol := ctpb.LatencyTunedRangeClosedTimestampPolicy(i)
 		target := closedts.TargetForPolicy(
 			now,
 			maxClockOffset,
@@ -423,7 +423,7 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 			msg.AddedOrUpdated = append(msg.AddedOrUpdated, ctpb.Update_RangeUpdate{
 				RangeID: lhRangeID,
 				LAI:     closeRes.LAI,
-				Policy:  ctpb.RangeClosedTimestampByPolicyLocality(closeRes.Policy),
+				Policy:  ctpb.LatencyTunedRangeClosedTimestampPolicy(closeRes.Policy),
 			})
 			s.trackedMu.tracked[lhRangeID] = trackedRange{lai: closeRes.LAI, policy: closeRes.Policy}
 		}
@@ -487,7 +487,7 @@ func (s *Sender) GetSnapshot() *ctpb.Update {
 	}
 	for pol, ts := range s.trackedMu.lastClosed {
 		msg.ClosedTimestamps[pol] = ctpb.Update_GroupUpdate{
-			Policy:          ctpb.RangeClosedTimestampByPolicyLocality(pol),
+			Policy:          ctpb.LatencyTunedRangeClosedTimestampPolicy(pol),
 			ClosedTimestamp: ts,
 		}
 	}
@@ -495,7 +495,7 @@ func (s *Sender) GetSnapshot() *ctpb.Update {
 		msg.AddedOrUpdated = append(msg.AddedOrUpdated, ctpb.Update_RangeUpdate{
 			RangeID: rid,
 			LAI:     r.lai,
-			Policy:  ctpb.RangeClosedTimestampByPolicyLocality(r.policy),
+			Policy:  ctpb.LatencyTunedRangeClosedTimestampPolicy(r.policy),
 		})
 	}
 	return msg

@@ -12,23 +12,33 @@ import "util/hlc/timestamp.proto";
 
 import "gogoproto/gogo.proto";
 
-// RangeClosedTimestampByPolicyLocality defines policies for closed timestamps 
-// based on locality.
-enum RangeClosedTimestampByPolicyLocality {
+// LatencyTunedRangeClosedTimestampPolicy represents the policy used by the leaseholder of a
+// range to establish and publish closed timestamps. The policy dictates how far
+// in the past (lag) or in the future (lead) MVCC history is closed off. With auto-tuning
+// enabled, lead policies automatically adjust based on the highest network latency to any
+// follower replica, optimizing closed timestamp management dynamically.
+enum LatencyTunedRangeClosedTimestampPolicy{
   option (gogoproto.goproto_enum_prefix) = false;
   // Uses lag specified in cluster settings
   LAG_BY_CLUSTER_SETTING = 0;
-  // Lead policy for global reads with no locality information. 
-  LEAD_FOR_GLOBAL_READS_WITH_NO_LOCALITY = 1;
-  // Lead policy for cross-region ranges with global reads policy.
-  LEAD_FOR_GLOBAL_READS_WITH_CROSS_REGION = 2;
-  // Lead policy for cross-zone ranges with global reads policy. 
-  LEAD_FOR_GLOBAL_READS_WITH_CROSS_ZONE = 3;
-  // Lead policy for same-region, same-zone ranges with global reads policy. 
-  LEAD_FOR_GLOBAL_READS_WITH_SAME_ZONE = 4;
-  // Keep this sentinel value higher than the rest. It is used to determine the
-  // fixed length of the slice needed to store all policies.
-  MAX_CLOSED_TIMESTAMP_POLICY = 5;
+  LEAD_FOR_GLOBAL_READS_NO_LATENCY = 1;
+  LEAD_FOR_GLOBAL_READS_LATENCY_LESS_THAN_20 = 2;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_20_AND_40 = 3;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_40_AND_60 = 4;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_60_AND_80 = 5;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_80_AND_100 = 6;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_100_AND_120 = 7;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_120_AND_140 = 8;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_140_AND_160 = 9;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_160_AND_180 = 10;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_180_AND_200 = 11;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_200_AND_220 = 12;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_220_AND_240 = 13;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_240_AND_260 = 14;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_260_AND_280 = 15;
+  LEAD_FOR_GLOBAL_READS_LATENCY_BETWEEN_280_AND_300 = 16;
+  LEAD_FOR_GLOBAL_READS_LATENCY_GREATER_THAN_300 = 17;
+  MAX_CLOSED_TIMESTAMP_POLICY = 18;
 }
 
 // Update contains information about (the advancement of) closed timestamps for
@@ -76,7 +86,7 @@ message Update {
   // and the regular Raft transport are possible, as are races between two
   // side-transport streams for an outgoing and incoming leaseholder.
   message GroupUpdate {
-    RangeClosedTimestampByPolicyLocality policy = 1;
+    LatencyTunedRangeClosedTimestampPolicy policy = 1;
     util.hlc.Timestamp closed_timestamp = 2 [(gogoproto.nullable) = false];
   }
   repeated GroupUpdate closed_timestamps = 4 [(gogoproto.nullable) = false];
@@ -99,7 +109,7 @@ message Update {
   message RangeUpdate {
     uint64 range_id = 1 [(gogoproto.customname) = "RangeID", (gogoproto.casttype) = "github.com/cockroachdb/cockroach/pkg/roachpb.RangeID"];
     uint64 lai = 2 [(gogoproto.customname) = "LAI", (gogoproto.casttype) = "github.com/cockroachdb/cockroach/pkg/kv/kvpb.LeaseAppliedIndex"];
-    RangeClosedTimestampByPolicyLocality policy = 3;
+    LatencyTunedRangeClosedTimestampPolicy policy = 3;
   }
   repeated RangeUpdate added_or_updated = 6 [(gogoproto.nullable) = false];
 }
