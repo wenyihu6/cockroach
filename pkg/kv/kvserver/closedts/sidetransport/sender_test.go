@@ -190,7 +190,7 @@ func TestSenderBasic(t *testing.T) {
 	now = s.publish(ctx)
 	require.Len(t, s.trackedMu.tracked, 1)
 	require.Equal(t, map[roachpb.RangeID]trackedRange{
-		15: {lai: 5, policy: roachpb.LAG_BY_CLUSTER_SETTING},
+		15: {lai: 5, policy: ctpb.LAG_BY_CLUSTER_SETTING},
 	}, s.trackedMu.tracked)
 	require.Len(t, s.leaseholdersMu.leaseholders, 1)
 	require.Len(t, s.connsMu.conns, 2)
