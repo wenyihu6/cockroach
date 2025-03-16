@@ -164,17 +164,17 @@ type topLevelServer struct {
 	promRuleExporter *metric.PrometheusRuleExporter
 	updates          *diagnostics.UpdateChecker
 	ctSender         *sidetransport.Sender
-
-	http            *httpServer
-	adminAuthzCheck privchecker.CheckerForRPCHandlers
-	admin           *systemAdminServer
-	status          *systemStatusServer
-	drain           *drainServer
-	decomNodeMap    *decommissioningNodeMap
-	authentication  authserver.Server
-	migrationServer *migrationServer
-	tsDB            *ts.DB
-	tsServer        *ts.Server
+	policyRefresher  *multiregion.PolicyRefresher
+	http             *httpServer
+	adminAuthzCheck  privchecker.CheckerForRPCHandlers
+	admin            *systemAdminServer
+	status           *systemStatusServer
+	drain            *drainServer
+	decomNodeMap     *decommissioningNodeMap
+	authentication   authserver.Server
+	migrationServer  *migrationServer
+	tsDB             *ts.DB
+	tsServer         *ts.Server
 
 	// keyVisualizerServer implements `keyvispb.KeyVisualizerServer`
 	keyVisualizerServer *KeyVisualizerServer
