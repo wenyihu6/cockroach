@@ -48,10 +48,11 @@ type mockReplica struct {
 
 var _ Replica = &mockReplica{}
 
-func (m *mockReplica) StoreID() roachpb.StoreID    { return m.storeID }
-func (m *mockReplica) GetRangeID() roachpb.RangeID { return m.rangeID }
+func (m *mockReplica) StoreID() roachpb.StoreID                                    { return m.storeID }
+func (m *mockReplica) GetRangeID() roachpb.RangeID                                 { return m.rangeID }
+func (m *mockReplica) RefreshLatency(latencyInfo map[roachpb.NodeID]time.Duration) {}
 func (m *mockReplica) BumpSideTransportClosed(
-	_ context.Context, _ hlc.ClockTimestamp, _ [roachpb.MAX_CLOSED_TIMESTAMP_POLICY]hlc.Timestamp,
+	_ context.Context, _ hlc.ClockTimestamp, _ map[ctpb.LatencyBasedRangeClosedTimestampPolicy]hlc.Timestamp,
 ) BumpSideTransportClosedResult {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -64,7 +65,7 @@ func (m *mockReplica) BumpSideTransportClosed(
 		FailReason: reason,
 		Desc:       &m.mu.desc,
 		LAI:        m.lai,
-		Policy:     m.policy,
+		Policy:     ctpb.LatencyBasedRangeClosedTimestampPolicy(m.policy),
 	}
 }
 
@@ -287,7 +288,7 @@ func TestSenderColocateReplicasOnSameNode(t *testing.T) {
 	now := s.publish(ctx)
 	require.Len(t, s.trackedMu.tracked, 1)
 	require.Equal(t, map[roachpb.RangeID]trackedRange{
-		15: {lai: 5, policy: roachpb.LAG_BY_CLUSTER_SETTING},
+		15: {lai: 5, policy: ctpb.LAG_BY_CLUSTER_SETTING},
 	}, s.trackedMu.tracked)
 	require.Len(t, s.leaseholdersMu.leaseholders, 1)
 	// Ensure that we have two connections, one for remote node and one for local.

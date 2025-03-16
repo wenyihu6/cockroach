@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	defaultMaxNetworkRTT = 150 * time.Millisecond
+	defaultMaxNetworkRTT                 = 150 * time.Millisecond
+	ClosedTimestampPolicyLatencyInterval = 20 * time.Millisecond
 )
 
 // computeLeadTimeForGlobalReads calculates how far ahead of the current time a node should
@@ -106,23 +107,25 @@ func TargetForPolicy(
 	sideTransportCloseInterval time.Duration,
 	policy ctpb.LatencyBasedRangeClosedTimestampPolicy,
 ) hlc.Timestamp {
-	var res hlc.Timestamp
-	switch policy {
-	case ctpb.LAG_BY_CLUSTER_SETTING:
+	var leadTimeAtSender time.Duration
+	switch {
+	case policy == ctpb.LAG_BY_CLUSTER_SETTING:
 		// Simple calculation: lag now by desired duration.
-		res = now.ToTimestamp().Add(-lagTargetDuration.Nanoseconds(), 0)
-	case ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO:
+		leadTimeAtSender = -lagTargetDuration
+	case policy >= ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO &&
+		policy <= ctpb.LEAD_FOR_GLOBAL_READS_LATENCY_GREATER_THAN_300MS:
 		// Override entirely with cluster setting, if necessary.
 		if leadTargetOverride != 0 {
-			res = now.ToTimestamp().Add(leadTargetOverride.Nanoseconds(), 0)
+			leadTimeAtSender = leadTargetOverride
 			break
 		}
-		leadTimeAtSender := computeLeadTimeForGlobalReads(defaultMaxNetworkRTT,
+		leadTimeAtSender = computeLeadTimeForGlobalReads(defaultMaxNetworkRTT,
 			maxClockOffset, sideTransportCloseInterval)
-		res = now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
 	default:
 		panic("unexpected RangeClosedTimestampPolicy")
 	}
+
+	res := now.ToTimestamp().Add(leadTimeAtSender.Nanoseconds(), 0)
 	// We truncate the logical part in order to save a few bytes over the network,
 	// and also because arithmetic with logical timestamp doesn't make much sense.
 	res.Logical = 0

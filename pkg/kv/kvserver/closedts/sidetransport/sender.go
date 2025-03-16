@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/multiregion"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb"
@@ -99,7 +101,7 @@ type streamState struct {
 	lastSeqNum ctpb.SeqNum
 	// lastClosed is the closed timestamp published for each policy in the
 	// last message.
-	lastClosed [roachpb.MAX_CLOSED_TIMESTAMP_POLICY]hlc.Timestamp
+	lastClosed map[ctpb.LatencyBasedRangeClosedTimestampPolicy]hlc.Timestamp
 	// tracked maintains the information that was communicated to connections in
 	// the last sent message (implicitly or explicitly). A range enters this
 	// structure as soon as it's included in a message, and exits it when it's
@@ -129,6 +131,7 @@ type leaseholder struct {
 // Replica represents a *Replica object, but with only the capabilities needed
 // by the closed timestamp side transport to accomplish its job.
 type Replica interface {
+	multiregion.Replica
 	// Accessors.
 	StoreID() roachpb.StoreID
 	GetRangeID() roachpb.RangeID
@@ -151,7 +154,7 @@ type Replica interface {
 	BumpSideTransportClosed(
 		ctx context.Context,
 		now hlc.ClockTimestamp,
-		targetByPolicy [roachpb.MAX_CLOSED_TIMESTAMP_POLICY]hlc.Timestamp,
+		targetByPolicy map[ctpb.LatencyBasedRangeClosedTimestampPolicy]hlc.Timestamp,
 	) BumpSideTransportClosedResult
 }
 
@@ -287,6 +290,16 @@ func (s *Sender) RegisterLeaseholder(
 	}
 }
 
+func (s *Sender) GetLeaseholders() []multiregion.Replica {
+	s.leaseholdersMu.Lock()
+	defer s.leaseholdersMu.Unlock()
+	leaseholders := make([]multiregion.Replica, 0, len(s.leaseholdersMu.leaseholders))
+	for _, lh := range s.leaseholdersMu.leaseholders {
+		leaseholders = append(leaseholders, lh.Replica)
+	}
+	return leaseholders
+}
+
 // UnregisterLeaseholder removes a replica from the leaseholders collection, if
 // the replica is currently tracked.
 func (s *Sender) UnregisterLeaseholder(
@@ -326,19 +339,18 @@ func (s *Sender) publish(ctx context.Context) hlc.ClockTimestamp {
 	lagTargetDuration := closedts.TargetDuration.Get(&s.st.SV)
 	leadTargetOverride := closedts.LeadForGlobalReadsOverride.Get(&s.st.SV)
 	sideTransportCloseInterval := closedts.SideTransportCloseInterval.Get(&s.st.SV)
-	for i := range s.trackedMu.lastClosed {
-		pol := ctpb.LatencyBasedRangeClosedTimestampPolicy(i)
+	for policy, _ := range s.trackedMu.lastClosed {
 		target := closedts.TargetForPolicy(
 			now,
 			maxClockOffset,
 			lagTargetDuration,
 			leadTargetOverride,
 			sideTransportCloseInterval,
-			pol,
+			policy,
 		)
-		s.trackedMu.lastClosed[pol] = target
-		msg.ClosedTimestamps[pol] = ctpb.Update_GroupUpdate{
-			Policy:          pol,
+		s.trackedMu.lastClosed[policy] = target
+		msg.ClosedTimestamps[policy] = ctpb.Update_GroupUpdate{
+			Policy:          policy,
 			ClosedTimestamp: target,
 		}
 	}
@@ -487,7 +499,7 @@ func (s *Sender) GetSnapshot() *ctpb.Update {
 	}
 	for pol, ts := range s.trackedMu.lastClosed {
 		msg.ClosedTimestamps[pol] = ctpb.Update_GroupUpdate{
-			Policy:          ctpb.LatencyBasedRangeClosedTimestampPolicy(pol),
+			Policy:          pol,
 			ClosedTimestamp: ts,
 		}
 	}

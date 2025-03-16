@@ -1002,6 +1002,9 @@ type Replica struct {
 		// lastTickTimestamp records the timestamp captured before the last tick of
 		// this replica.
 		lastTickTimestamp hlc.ClockTimestamp
+
+		//
+		cachedLocality ctpb.LatencyBasedRangeClosedTimestampPolicy
 	}
 
 	// LeaderlessWatcher is used to signal when a replica is leaderless for a long
