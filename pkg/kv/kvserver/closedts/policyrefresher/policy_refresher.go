@@ -7,7 +7,6 @@ package policyrefresher
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/clusterversion"
@@ -16,6 +15,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
+	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
@@ -45,13 +45,13 @@ type PolicyRefresher struct {
 
 	// latencyCache protects access to the cached latency information.
 	mu struct {
-		sync.RWMutex
+		syncutil.RWMutex
 		latencyCache map[roachpb.NodeID]time.Duration
 	}
 
 	// rMu protects access to the list of replicas needing policy refresh.
 	rMu struct {
-		sync.Mutex
+		syncutil.Mutex
 		pendingReplicas []Replica
 	}
 }

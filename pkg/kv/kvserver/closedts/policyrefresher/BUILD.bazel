@@ -12,6 +12,7 @@ go_library(
         "//pkg/settings/cluster",
         "//pkg/util/log",
         "//pkg/util/stop",
+        "//pkg/util/syncutil",
         "//pkg/util/timeutil",
     ],
 )
@@ -27,6 +28,7 @@ go_test(
         "//pkg/testutils",
         "//pkg/util/leaktest",
         "//pkg/util/stop",
+        "//pkg/util/syncutil",
         "@com_github_cockroachdb_errors//:errors",
         "@com_github_stretchr_testify//require",
     ],

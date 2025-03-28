@@ -1083,6 +1083,13 @@ type Replica struct {
 		// GC threshold for the range.
 		pendingGCThreshold hlc.Timestamp
 	}
+
+	// cachedLocalityProximity is the cached result of the locality comparison
+	// result between the local node and other replicas. It is only updated and
+	// used for leaseholder replicas. It is used to estimate network latency and
+	// time it takes to propagate closed timestamp from leaseholder replicas to
+	// follower replicas.
+	cachedClosedTimestampPolicy atomic.Int32
 }
 
 // String returns the string representation of the replica using an
@@ -1174,6 +1181,7 @@ func (r *Replica) SetSpanConfig(conf roachpb.SpanConfig, sp roachpb.Span) bool {
 	r.mu.conf = conf
 	r.mu.spanConfigExplicitlySet = true
 	r.mu.confSpan = sp
+	r.store.policyRefresher.EnqueueReplicaForRefresh(r)
 	return oldConf.HasConfigurationChange(conf)
 }
 
@@ -1320,17 +1328,30 @@ func toClientClosedTsPolicy(
 // NOTE: an exported version of this method which does not require the replica
 // lock exists in helpers_test.go. Move here if needed.
 func (r *Replica) closedTimestampPolicyRLocked() ctpb.RangeClosedTimestampPolicy {
-	if r.mu.conf.GlobalReads {
-		if !r.shMu.state.Desc.ContainsKey(roachpb.RKey(keys.NodeLivenessPrefix)) {
-			return ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO
-		}
+	if r.shMu.state.Desc.ContainsKey(roachpb.RKey(keys.NodeLivenessPrefix)) {
+		return ctpb.LAG_BY_CLUSTER_SETTING
+	}
+	return ctpb.RangeClosedTimestampPolicy(r.cachedClosedTimestampPolicy.Load())
+}
+
+// RefreshPolicy updates the replica's cached closed timestamp policy based on
+// the provided latency information for each node.
+func (r *Replica) RefreshPolicy(_ map[roachpb.NodeID]time.Duration) {
+	if r.shMu.state.Desc.ContainsKey(roachpb.RKey(keys.NodeLivenessPrefix)) {
+		r.cachedClosedTimestampPolicy.Store(int32(ctpb.LAG_BY_CLUSTER_SETTING))
+		return
+	}
+	conf, _ := r.LoadSpanConfig(context.Background())
+	if !conf.GlobalReads {
 		// The node liveness range ignores zone configs and always uses a
 		// LAG_BY_CLUSTER_SETTING closed timestamp policy. If it was to begin
 		// closing timestamps in the future, it would break liveness updates,
 		// which perform a 1PC transaction with a commit trigger and can not
 		// tolerate being pushed into the future.
+		r.cachedClosedTimestampPolicy.Store(int32(ctpb.LAG_BY_CLUSTER_SETTING))
+		return
 	}
-	return ctpb.LAG_BY_CLUSTER_SETTING
+	r.cachedClosedTimestampPolicy.Store(int32(ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO))
 }
 
 // NodeID returns the ID of the node this replica belongs to.
