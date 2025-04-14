@@ -1095,17 +1095,15 @@ func enableTenantMultiRegion(l *logger.Logger, r *rand.Rand, h *mixedversion.Hel
 
 // enableClosedTsAutoTune metamorphically enables closed timestamp auto-tuning.
 func enableClosedTsAutoTune(ctx context.Context, rng *rand.Rand, db *gosql.DB, t test.Test) error {
-	if rng.Intn(2) == 0 {
-		for _, cmd := range []string{
-			`SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled = 'true';`,
-			`SET CLUSTER SETTING kv.closed_timestamp.policy_refresh_interval = '5s';`,
-			`SET CLUSTER SETTING kv.closed_timestamp.policy_latency_refresh_interval = '4s';`,
-		} {
-			if _, err := db.ExecContext(ctx, cmd); err != nil {
-				return err
-			}
+	for _, cmd := range []string{
+		`SET CLUSTER SETTING kv.closed_timestamp.lead_for_global_reads_auto_tune.enabled = 'true';`,
+		`SET CLUSTER SETTING kv.closed_timestamp.policy_refresh_interval = '5s';`,
+		`SET CLUSTER SETTING kv.closed_timestamp.policy_latency_refresh_interval = '4s';`,
+	} {
+		if _, err := db.ExecContext(ctx, cmd); err != nil {
+			return err
 		}
-		t.L().Printf("metamorphically enabled closed timestamp auto-tuning")
 	}
+	t.L().Printf("metamorphically enabled closed timestamp auto-tuning")
 	return nil
 }
