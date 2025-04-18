@@ -212,11 +212,22 @@ func (s dbSplitAndScatterer) scatter(
 			// throughput.
 			log.Errorf(ctx, "failed to scatter span [%s,%s): %+v",
 				newScatterKey, newScatterKey.Next(), pErr.GoError())
+		} else {
+			// Log at INFO level when scatter request is rejected because the range is
+			// non-empty (range size exceeds req.MaxSize). This is expected during
+			// RESTORE resume.
+			log.Infof(ctx, "failed to scatter span [%s,%s): %+v",
+				newScatterKey, newScatterKey.Next(), pErr.GoError())
 		}
 		return 0, nil
 	}
 
-	return s.findDestination(res.(*kvpb.AdminScatterResponse)), nil
+	scatterResp := res.(*kvpb.AdminScatterResponse)
+	scatterResp.ReplicasScatteredBytes
+	if scatterResp.NoReplicasMoved {
+		log.Errorf(ctx, "scatter failed to move any replicas for span [%s,%s)", newScatterKey, newScatterKey.Next())
+	}
+	return s.findDestination(scatterResp), nil
 }
 
 // findDestination returns the node ID of the node of the destination of the
@@ -598,7 +609,7 @@ func runGenerativeSplitAndScatter(
 					}
 
 					if _, ok := flowCtx.NodeID.OptionalNodeID(); !ok {
-						// If a seperate process tenant is running restore, the nodeID
+						// If aadminscatter seperate process tenant is running restore, the nodeID
 						// returned by scatter does not map identically to a sqlInstanceID;
 						// thus, the processor must randomly choose a sqlInstanceID to route
 						// the chunk to.
