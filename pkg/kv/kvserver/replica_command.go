@@ -4201,7 +4201,7 @@ func (r *Replica) adminScatter(
 	var lastRetriableErr error
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
 		if currentAttempt == maxAttempts {
-			terminatingErr = benignerror.New(errors.Wrapf(terminatingErr, "stopped scattering for replica %v after %d attempts", r, maxAttempts))
+			terminatingErr = benignerror.New(errors.Wrapf(lastRetriableErr, "stopped scattering for replica %v after %d attempts", r, maxAttempts))
 			log.Eventf(ctx, "stopped scattering for replica %v after %d attempts", r, maxAttempts)
 			break
 		}
@@ -4209,7 +4209,7 @@ func (r *Replica) adminScatter(
 		_, err := rq.replicaCanBeProcessed(ctx, r, false /* acquireLeaseIfNeeded */)
 		if err != nil {
 			// The replica can not be processed, so skip it.
-			log.Eventf(ctx, "unable to process replica %v for scatter: %v", r, err)
+			terminatingErr = errors.Wrapf(err, "replica %v can not be processed", r)
 			break
 		}
 		_, err = rq.processOneChange(
@@ -4225,14 +4225,18 @@ func (r *Replica) adminScatter(
 				lastRetriableErr = err
 				continue
 			}
-			log.Eventf(ctx, "failed to scatter for replica %v due to error: %v", r, err)
+			terminatingErr = err
+			terminatingErr = errors.Wrapf(err, "replica %v failed to scatter", r)
 			break
 		}
 		log.Eventf(ctx, "no error occured but continue scattering for replica %v until max attempts reached", r)
-		lastRetriableErr = errors.Newf("continuing scatter attempts until max attempts reached")
+		lastRetriableErr = errors.Newf("continue scattering until max attempts reached")
 		currentAttempt++
 		re.Reset()
 	}
+
+	log.Eventf(ctx, "stopped scattering for replica %v after %d attempts due to %v (last retriable error was: %v)",
+		r, currentAttempt, terminatingErr, lastRetriableErr)
 
 	// If we've been asked to randomize the leases beyond what the replicate
 	// queue would do on its own (#17341), do so after the replicate queue is
