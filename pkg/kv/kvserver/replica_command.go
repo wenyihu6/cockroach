@@ -4197,11 +4197,11 @@ func (r *Replica) adminScatter(
 	// 4. check verbosity on the logs we added
 
 	// Loop until we hit an error or until we hit `maxAttempts` for the range.
-	var terminatingErr error
-	var lastRetriableErr error
+	var terminatingReason error
+	var lastRetriableReason error
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
 		if currentAttempt == maxAttempts {
-			terminatingErr = benignerror.New(errors.Wrapf(lastRetriableErr, "stopped scattering for replica %v after %d attempts", r, maxAttempts))
+			terminatingReason = benignerror.New(errors.Wrapf(lastRetriableReason, "stopped scattering for replica %v after %d attempts", r, maxAttempts))
 			log.Eventf(ctx, "stopped scattering for replica %v after %d attempts", r, maxAttempts)
 			break
 		}
@@ -4209,7 +4209,7 @@ func (r *Replica) adminScatter(
 		_, err := rq.replicaCanBeProcessed(ctx, r, false /* acquireLeaseIfNeeded */)
 		if err != nil {
 			// The replica can not be processed, so skip it.
-			terminatingErr = errors.Wrapf(err, "replica %v can not be processed", r)
+			terminatingReason = errors.Wrapf(err, "replica %v can not be processed", r)
 			break
 		}
 		_, err = rq.processOneChange(
@@ -4222,21 +4222,21 @@ func (r *Replica) adminScatter(
 			// updating the descriptor while processing.
 			if IsRetriableReplicationChangeError(err) {
 				log.Eventf(ctx, "retrying scatter process for replica %v after retryable error: %v", r, err)
-				lastRetriableErr = err
+				lastRetriableReason = err
 				continue
 			}
-			terminatingErr = err
-			terminatingErr = errors.Wrapf(err, "replica %v failed to scatter", r)
+			terminatingReason = err
+			terminatingReason = errors.Wrapf(err, "replica %v failed to scatter", r)
 			break
 		}
 		log.Eventf(ctx, "no error occured but continue scattering for replica %v until max attempts reached", r)
-		lastRetriableErr = errors.Newf("continue scattering until max attempts reached")
+		lastRetriableReason = errors.Newf("continue scattering until max attempts reached")
 		currentAttempt++
 		re.Reset()
 	}
 
 	log.Eventf(ctx, "stopped scattering for replica %v after %d attempts due to %v (last retriable error was: %v)",
-		r, currentAttempt, terminatingErr, lastRetriableErr)
+		r, currentAttempt, terminatingReason, lastRetriableReason)
 
 	// If we've been asked to randomize the leases beyond what the replicate
 	// queue would do on its own (#17341), do so after the replicate queue is
@@ -4279,6 +4279,10 @@ func (r *Replica) adminScatter(
 	return kvpb.AdminScatterResponse{
 		RangeInfos: []roachpb.RangeInfo{ri},
 		MVCCStats:  stats,
+		ScatterFailureReason: &kvpb.AdminScatterResponse_ScatterFailureReason{
+			NumReplicasMoved: int64(numReplicasMoved),
+			Error:            kvpb.NewError(terminatingReason),
+		},
 		// Note, we use this replica's MVCCStats to estimate the size of the replicas
 		// that were moved so the value may not be entirely accurate, but it is
 		// adequate.
