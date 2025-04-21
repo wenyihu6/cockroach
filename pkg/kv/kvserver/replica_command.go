@@ -4197,8 +4197,11 @@ func (r *Replica) adminScatter(
 	// 4. check verbosity on the logs we added
 
 	// Loop until we hit an error or until we hit `maxAttempts` for the range.
+	var terminatingErr error
+	var lastRetriableErr error
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
 		if currentAttempt == maxAttempts {
+			terminatingErr = benignerror.New(errors.Wrapf(terminatingErr, "stopped scattering for replica %v after %d attempts", r, maxAttempts))
 			log.Eventf(ctx, "stopped scattering for replica %v after %d attempts", r, maxAttempts)
 			break
 		}
@@ -4219,12 +4222,14 @@ func (r *Replica) adminScatter(
 			// updating the descriptor while processing.
 			if IsRetriableReplicationChangeError(err) {
 				log.Eventf(ctx, "retrying scatter process for replica %v after retryable error: %v", r, err)
+				lastRetriableErr = err
 				continue
 			}
 			log.Eventf(ctx, "failed to scatter for replica %v due to error: %v", r, err)
 			break
 		}
 		log.Eventf(ctx, "no error occured but continue scattering for replica %v until max attempts reached", r)
+		lastRetriableErr = errors.Newf("continuing scatter attempts until max attempts reached")
 		currentAttempt++
 		re.Reset()
 	}
