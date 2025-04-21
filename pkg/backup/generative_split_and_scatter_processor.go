@@ -212,6 +212,12 @@ func (s dbSplitAndScatterer) scatter(
 			// throughput.
 			log.Errorf(ctx, "failed to scatter span [%s,%s): %+v",
 				newScatterKey, newScatterKey.Next(), pErr.GoError())
+		} else {
+			// Log at INFO level when scatter request is rejected because the range is
+			// non-empty (range size exceeds req.MaxSize). This is expected during
+			// RESTORE resume.
+			log.Infof(ctx, "failed to scatter span [%s,%s): %+v",
+				newScatterKey, newScatterKey.Next(), pErr.GoError())
 		}
 		return 0, nil
 	}
