@@ -20,7 +20,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/keys"
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/benignerror"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog/catenumpb"
@@ -203,19 +202,9 @@ func (s dbSplitAndScatterer) scatter(
 	}
 
 	res, pErr := kv.SendWrapped(ctx, s.db.NonTransactionalSender(), req)
-	if scatteredResp := res.(*kvpb.AdminScatterResponse); scatteredResp != nil {
-		log.Infof(ctx, "scattered response %+v", scatteredResp)
-	}
 	if pErr != nil {
-		// TODO(wenyihu6): write unit tests to make sure benignerror is encoded
-		// correctly across the wire
-		if benignerror.IsBenign(pErr.GoError()) || strings.Contains(pErr.String(), "existing range size") {
-			// Log at INFO level when scatter request is rejected because the range is
-			// non-empty (range size exceeds req.MaxSize). This is expected during
-			// RESTORE resume.
-			log.Infof(ctx, "failed to scatter span [%s,%s): %+v",
-				newScatterKey, newScatterKey.Next(), pErr.GoError())
-		} else {
+		// TODO(dt): typed error.
+		if !strings.Contains(pErr.String(), "existing range size") {
 			// TODO(pbardea): Unfortunately, Scatter is still too unreliable to
 			// fail the RESTORE when Scatter fails. I'm uncomfortable that
 			// this could break entirely and not start failing the tests,
@@ -223,8 +212,20 @@ func (s dbSplitAndScatterer) scatter(
 			// throughput.
 			log.Errorf(ctx, "failed to scatter span [%s,%s): %+v",
 				newScatterKey, newScatterKey.Next(), pErr.GoError())
+		} else {
+			// Log at INFO level when scatter request is rejected because the range is
+			// non-empty (range size exceeds req.MaxSize). This is expected during
+			// RESTORE resume.
+			log.Infof(ctx, "failed to scatter span [%s,%s): %+v",
+				newScatterKey, newScatterKey.Next(), pErr.GoError())
 		}
 		return 0, nil
+	}
+
+	if scatterResp := res.(*kvpb.AdminScatterResponse); scatterResp.ScatterFailureReason != nil {
+		log.Errorf(ctx, "scatter for span [%s,%s) terminated due to %+v: moved %d replicas and scattered %d bytes",
+			newScatterKey, newScatterKey.Next(), scatterResp.ScatterFailureReason.Error,
+			scatterResp.ScatterFailureReason.NumReplicasMoved, scatterResp.ReplicasScatteredBytes)
 	}
 	return s.findDestination(res.(*kvpb.AdminScatterResponse)), nil
 }
