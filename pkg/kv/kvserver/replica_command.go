@@ -4148,18 +4148,39 @@ func intersectTargets(
 	return intersection
 }
 
-// scatterRange attempts to move replicas of a range using the replicate queue
-// to perform changes upon a range until we hit `maxAttempts` for the range.
-// scatterRange is best-effort. Ranges that cannot be moved or fail to acquire
-// the allocator token will just return early and not return an error or fail
-// the request.
-func (r *Replica) scatterRange(ctx context.Context) {
-	rq := r.store.replicateQueue
-	retryOpts := retry.Options{
-		InitialBackoff: 50 * time.Millisecond,
-		MaxBackoff:     1 * time.Second,
-		Multiplier:     2,
-		MaxRetries:     5,
+// ValidLeaseTargets returns a set of candidate stores that are suitable to be
+// transferred a lease for the given range.
+randomly transfers the LeaderLease to a replica.
+
+
+// scatterRangeAndRandomizeLeases does two things:
+// 1. attempts to move replicas of a range using the
+// replicate queue to perform changes upon a range until we hit `maxAttempts`
+// for the range.
+// 2. attempts to transfer lease to a randomly chosen suitable
+//scatterRangeAndRandomizeLeases is best-effort. Return number
+// of replicas moved based on comparing the state before and after the scatter
+// operation. Ranges that cannot be moved or fail to acquire the allocator token
+// will just return 0 and not fail the request.
+func (r *Replica) scatterRangeAndRandomizeLeases(ctx context.Context, randomizeLeases bool) int {
+	// Acquire the allocator token explicitly, since rq.processOneChange bypasses
+	// replicateQueue.process, where the token is normally acquired. The allocator
+	// token is shared by the store rebalancer, replicate queue, and lease queue
+	// to coordinate replication changes on the same range. Do no retry if token
+	// acquisition failed and rely on client to retry (similar to the replicate
+	// queue and r.AdminTransferLease which happens later during r.adminScatter).
+	if tokenErr := r.allocatorToken.TryAcquire(ctx, "admin scatter"); tokenErr != nil {
+		log.Warningf(ctx, "failed to scatter range unable to acquire allocator token to process range: %v", tokenErr)
+		return 0
+	}
+	defer r.allocatorToken.Release(ctx)
+
+	// Construct a mapping to store the replica IDs before we attempt to scatter
+	// them. This is used to below to check which replicas were actually moved by
+	// the replicate queue .
+	preScatterReplicaIDs := make(map[roachpb.ReplicaID]struct{})
+	for _, rd := range r.Desc().Replicas().Descriptors() {
+		preScatterReplicaIDs[rd.ReplicaID] = struct{}{}
 	}
 
 	// On every `processOneChange` call with the `scatter` option set, stores in
@@ -4174,17 +4195,13 @@ func (r *Replica) scatterRange(ctx context.Context) {
 	maxAttempts := len(r.Desc().Replicas().Descriptors())
 	currentAttempt := 0
 
-	// Acquire the allocator token explicitly, since rq.processOneChange bypasses
-	// replicateQueue.process, where the token is normally acquired. The allocator
-	// token is shared by the store rebalancer, replicate queue, and lease queue
-	// to coordinate replication changes on the same range. Do no retry if token
-	// acquisition failed and rely on client to retry (similar to the replicate
-	// queue and r.AdminTransferLease which happens later during r.adminScatter).
-	if tokenErr := r.allocatorToken.TryAcquire(ctx, rq.name); tokenErr != nil {
-		log.Warningf(ctx, "failed to scatter range unable to acquire allocator token to process range: %v", tokenErr)
-		return
+	rq := r.store.replicateQueue
+	retryOpts := retry.Options{
+		InitialBackoff: 50 * time.Millisecond,
+		MaxBackoff:     1 * time.Second,
+		Multiplier:     2,
+		MaxRetries:     5,
 	}
-	defer r.allocatorToken.Release(ctx)
 
 	// Loop until we hit an error or until we hit `maxAttempts` for the range.
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
@@ -4220,6 +4237,39 @@ func (r *Replica) scatterRange(ctx context.Context) {
 		currentAttempt++
 		re.Reset()
 	}
+
+	// If we've been asked to randomize the leases beyond what the replicate
+	// queue would do on its own (#17341), do so after the replicate queue is
+	// done by transferring the lease to any of the given N replicas with
+	// probability 1/N of choosing each.
+	if randomizeLeases && r.OwnsValidLease(ctx, r.store.Clock().NowAsClockTimestamp()) {
+		desc, conf := r.DescAndSpanConfig()
+		potentialLeaseTargets := r.store.allocator.ValidLeaseTargets(
+			ctx, r.store.cfg.StorePool, desc, conf, desc.Replicas().VoterDescriptors(), r, allocator.TransferLeaseOptions{})
+		if len(potentialLeaseTargets) > 0 {
+			newLeaseholderIdx := rand.Intn(len(potentialLeaseTargets))
+			targetStoreID := potentialLeaseTargets[newLeaseholderIdx].StoreID
+			if targetStoreID != r.store.StoreID() {
+				log.VEventf(ctx, 2, "randomly transferring lease to s%d", targetStoreID)
+				if err := r.AdminTransferLease(ctx, targetStoreID, false /* bypassSafetyChecks */); err != nil {
+					log.Warningf(ctx, "failed to scatter lease to s%d: %+v; possible candidates(%v)", targetStoreID, err, potentialLeaseTargets)
+				}
+			}
+		}
+	}
+
+	// Replica IDs are monotonically increasing as they are rebalanced, so the
+	// absence of a replica ID in our mapping implies the replica has been
+	// scattered.
+	var numReplicasMoved int
+	for _, rd := range r.Desc().Replicas().Descriptors() {
+		_, ok := preScatterReplicaIDs[rd.ReplicaID]
+		if !ok {
+			numReplicasMoved++
+		}
+	}
+
+	return numReplicasMoved
 }
 
 // adminScatter moves replicas and leaseholders for a selection of ranges. It is
@@ -4237,51 +4287,7 @@ func (r *Replica) adminScatter(
 		}
 	}
 
-	// Construct a mapping to store the replica IDs before we attempt to scatter
-	// them. This is used to below to check which replicas were actually moved by
-	// the replicate queue .
-	preScatterReplicaIDs := make(map[roachpb.ReplicaID]struct{})
-	for _, rd := range r.Desc().Replicas().Descriptors() {
-		preScatterReplicaIDs[rd.ReplicaID] = struct{}{}
-	}
-
-	r.scatterRange(ctx)
-
-	// If we've been asked to randomize the leases beyond what the replicate
-	// queue would do on its own (#17341), do so after the replicate queue is
-	// done by transferring the lease to any of the given N replicas with
-	// probability 1/N of choosing each.
-	if args.RandomizeLeases && r.OwnsValidLease(ctx, r.store.Clock().NowAsClockTimestamp()) {
-		desc, conf := r.DescAndSpanConfig()
-		potentialLeaseTargets := r.store.allocator.ValidLeaseTargets(
-			ctx, r.store.cfg.StorePool, desc, conf, desc.Replicas().VoterDescriptors(), r, allocator.TransferLeaseOptions{})
-		if len(potentialLeaseTargets) > 0 {
-			newLeaseholderIdx := rand.Intn(len(potentialLeaseTargets))
-			targetStoreID := potentialLeaseTargets[newLeaseholderIdx].StoreID
-			if targetStoreID != r.store.StoreID() {
-				if tokenErr := r.allocatorToken.TryAcquire(ctx, "scatter"); tokenErr != nil {
-					log.Warningf(ctx, "failed to scatter lease to s%d: %+v", targetStoreID, tokenErr)
-				} else {
-					defer r.allocatorToken.Release(ctx)
-					log.VEventf(ctx, 2, "randomly transferring lease to s%d", targetStoreID)
-					if err := r.AdminTransferLease(ctx, targetStoreID, false /* bypassSafetyChecks */); err != nil {
-						log.Warningf(ctx, "failed to scatter lease to s%d: %+v", targetStoreID, err)
-					}
-				}
-			}
-		}
-	}
-
-	// Replica IDs are monotonically increasing as they are rebalanced, so the
-	// absence of a replica ID in our mapping implies the replica has been
-	// scattered.
-	var numReplicasMoved int
-	for _, rd := range r.Desc().Replicas().Descriptors() {
-		_, ok := preScatterReplicaIDs[rd.ReplicaID]
-		if !ok {
-			numReplicasMoved++
-		}
-	}
+	numReplicasMoved := r.scatterRangeAndRandomizeLeases(ctx, args.RandomizeLeases)
 
 	ri := r.GetRangeInfo(ctx)
 	stats := r.GetMVCCStats()
