@@ -1446,6 +1446,7 @@ func (r *Replica) RefreshPolicy(latencies map[roachpb.NodeID]time.Duration) {
 		if replicaLatencyInfoMissing {
 			r.store.metrics.ClosedTimestampLatencyInfoMissing.Inc(1)
 		}
+		log.Infof(context.Background(), "max latency: %s, replica latency info missing: %t", maxLatency, replicaLatencyInfoMissing)
 		newPolicy, dampened := closedts.FindBucketBasedOnNetworkRTTWithDampening(
 			oldPolicy,
 			maxLatency,

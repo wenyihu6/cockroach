@@ -56,18 +56,22 @@ func FindBucketBasedOnNetworkRTT(networkRTT time.Duration) ctpb.RangeClosedTimes
 func FindBucketBasedOnNetworkRTTWithDampening(
 	oldPolicy ctpb.RangeClosedTimestampPolicy, networkRTT time.Duration, boundaryPercent float64,
 ) (ctpb.RangeClosedTimestampPolicy, bool) {
+	// Helper function to check if a policy is a newly introduced latency-based policy.
+	isLatencyBasedPolicy := func(policy ctpb.RangeClosedTimestampPolicy) bool {
+		return policy >= ctpb.LEAD_FOR_GLOBAL_READS_LATENCY_LESS_THAN_20MS &&
+			policy <= ctpb.LEAD_FOR_GLOBAL_READS_LATENCY_EQUAL_OR_GREATER_THAN_300MS
+	}
+
 	// Calculate the new policy based on network RTT.
 	newPolicy := findBucketBasedOnNetworkRTT(networkRTT)
 
-	if newPolicy == ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO ||
-		oldPolicy == ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO || boundaryPercent == 0 ||
-		oldPolicy == ctpb.LAG_BY_CLUSTER_SETTING {
+	if !isLatencyBasedPolicy(newPolicy) || !isLatencyBasedPolicy(oldPolicy) {
 		return newPolicy, false
 	}
 
 	// Apply the new policy if policy is unchanged, or if there's a non-adjacent
 	// bucket jump.
-	if newPolicy == oldPolicy || math.Abs(float64(newPolicy-oldPolicy)) > 1 {
+	if newPolicy == oldPolicy || boundaryPercent == 0 || math.Abs(float64(newPolicy-oldPolicy)) > 1 {
 		return newPolicy, false
 	}
 
