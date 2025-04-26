@@ -1246,6 +1246,7 @@ func (r *Replica) SetSpanConfig(conf roachpb.SpanConfig, sp roachpb.Span) bool {
 	r.mu.spanConfigExplicitlySet = true
 	r.mu.confSpan = sp
 	r.store.policyRefresher.EnqueueReplicaForRefresh(r)
+	log.Infof(context.Background(), "EnqueueReplicaForRefresh set span config %v for range %s", conf, r)
 	return oldConf.HasConfigurationChange(conf)
 }
 
@@ -1399,7 +1400,12 @@ func (r *Replica) closedTimestampPolicyRLocked() ctpb.RangeClosedTimestampPolicy
 	if r.shMu.state.Desc.ContainsKey(roachpb.RKey(keys.NodeLivenessPrefix)) {
 		return ctpb.LAG_BY_CLUSTER_SETTING
 	}
-	return ctpb.RangeClosedTimestampPolicy(r.cachedClosedTimestampPolicy.Load())
+
+	policy := ctpb.RangeClosedTimestampPolicy(r.cachedClosedTimestampPolicy.Load())
+	if r.mu.conf.GlobalReads && policy == ctpb.LAG_BY_CLUSTER_SETTING {
+		r.store.metrics.ClosedTimestampPolicyWrong.Inc(1)
+	}
+	return policy
 }
 
 // RefreshPolicy updates the replica's cached closed timestamp policy based on
