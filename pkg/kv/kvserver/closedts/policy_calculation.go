@@ -6,11 +6,13 @@
 package closedts
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
 // FindBucketBasedOnNetworkRTT maps a network RTT to a closed timestamp policy
@@ -66,12 +68,14 @@ func FindBucketBasedOnNetworkRTTWithDampening(
 	newPolicy := findBucketBasedOnNetworkRTT(networkRTT)
 
 	if !isLatencyBasedPolicy(newPolicy) || !isLatencyBasedPolicy(oldPolicy) {
+		log.Infof(context.Background(), "new policy %s, old policy %s, no dampening", newPolicy, oldPolicy)
 		return newPolicy, false
 	}
 
 	// Apply the new policy if policy is unchanged, or if there's a non-adjacent
 	// bucket jump.
 	if newPolicy == oldPolicy || boundaryPercent == 0 || math.Abs(float64(newPolicy-oldPolicy)) > 1 {
+		log.Infof(context.Background(), "new policy %s, old policy %s, no dampening", newPolicy, oldPolicy)
 		return newPolicy, false
 	}
 
