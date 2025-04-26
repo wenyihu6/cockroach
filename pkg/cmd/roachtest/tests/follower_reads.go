@@ -1106,6 +1106,8 @@ func enableClosedTsAutoTune(ctx context.Context, rng *rand.Rand, db *gosql.DB, t
 			}
 		}
 		t.L().Printf("metamorphically enabled closed timestamp auto-tuning")
+	} else {
+		t.L().Printf("metamorphically disabled closed timestamp auto-tuning")
 	}
 	return nil
 }

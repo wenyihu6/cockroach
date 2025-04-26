@@ -1413,15 +1413,18 @@ func (r *Replica) RefreshPolicy(latencies map[roachpb.NodeID]time.Duration) {
 		// which perform a 1PC transaction with a commit trigger and can not
 		// tolerate being pushed into the future.
 		if desc.ContainsKey(roachpb.RKey(keys.NodeLivenessPrefix)) {
+			log.Eventf(context.Background(), "node liveness range, using LAG_BY_CLUSTER_SETTING: %s", desc)
 			return ctpb.LAG_BY_CLUSTER_SETTING
 		}
 		if !conf.GlobalReads {
+			log.Eventf(context.Background(), "range does not serve global reads, using LAG_BY_CLUSTER_SETTING: %s", desc)
 			return ctpb.LAG_BY_CLUSTER_SETTING
 		}
 		// If the provided map is nil, the policy will be
 		// LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO. The latency will be hardcoded
 		// to closedts.DefaultMaxNetworkRTT in closed timestamp calculation.
 		if latencies == nil {
+			log.Eventf(context.Background(), "no latencies provided, using LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO: %s", desc)
 			return ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO
 		}
 
@@ -1443,17 +1446,22 @@ func (r *Replica) RefreshPolicy(latencies map[roachpb.NodeID]time.Duration) {
 		if replicaLatencyInfoMissing {
 			r.store.metrics.ClosedTimestampLatencyInfoMissing.Inc(1)
 		}
-		return closedts.FindBucketBasedOnNetworkRTTWithDampening(
+		newPolicy, dampened := closedts.FindBucketBasedOnNetworkRTTWithDampening(
 			oldPolicy,
 			maxLatency,
 			closedts.PolicySwitchWhenLatencyExceedsBucketFraction.Get(&r.store.GetStoreConfig().Settings.SV),
 		)
+		if dampened {
+			r.store.metrics.ClosedTimestampPolicyDampened.Inc(1)
+		}
+		return newPolicy
 	}
 	oldPolicy := ctpb.RangeClosedTimestampPolicy(r.cachedClosedTimestampPolicy.Load())
 	newPolicy := computeNewPolicy(oldPolicy)
 	if newPolicy != oldPolicy {
 		r.store.metrics.ClosedTimestampPolicyChange.Inc(1)
 		r.cachedClosedTimestampPolicy.Store(int32(newPolicy))
+		log.Eventf(context.Background(), "new policy: %s, old policy: %s", newPolicy, oldPolicy)
 	}
 }
 

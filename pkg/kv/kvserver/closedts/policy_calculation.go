@@ -16,7 +16,8 @@ import (
 // FindBucketBasedOnNetworkRTT maps a network RTT to a closed timestamp policy
 // with zero dampening.
 func FindBucketBasedOnNetworkRTT(networkRTT time.Duration) ctpb.RangeClosedTimestampPolicy {
-	return FindBucketBasedOnNetworkRTTWithDampening(ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO, networkRTT, 0)
+	newPolicy, _ := FindBucketBasedOnNetworkRTTWithDampening(ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO, networkRTT, 0)
+	return newPolicy
 }
 
 // FindBucketBasedOnNetworkRTTWithDampening calculates a new closed timestamp policy
@@ -54,19 +55,20 @@ func FindBucketBasedOnNetworkRTT(networkRTT time.Duration) ctpb.RangeClosedTimes
 //	   to move to <20ms bucket |
 func FindBucketBasedOnNetworkRTTWithDampening(
 	oldPolicy ctpb.RangeClosedTimestampPolicy, networkRTT time.Duration, boundaryPercent float64,
-) ctpb.RangeClosedTimestampPolicy {
+) (ctpb.RangeClosedTimestampPolicy, bool) {
 	// Calculate the new policy based on network RTT.
 	newPolicy := findBucketBasedOnNetworkRTT(networkRTT)
 
 	if newPolicy == ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO ||
-		oldPolicy == ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO || boundaryPercent == 0 {
-		return newPolicy
+		oldPolicy == ctpb.LEAD_FOR_GLOBAL_READS_WITH_NO_LATENCY_INFO || boundaryPercent == 0 ||
+		oldPolicy == ctpb.LAG_BY_CLUSTER_SETTING {
+		return newPolicy, false
 	}
 
 	// Apply the new policy if policy is unchanged, or if there's a non-adjacent
 	// bucket jump.
 	if newPolicy == oldPolicy || math.Abs(float64(newPolicy-oldPolicy)) > 1 {
-		return newPolicy
+		return newPolicy, false
 	}
 
 	// Calculate bucket number by subtracting base policy and adjusting for
@@ -79,17 +81,17 @@ func FindBucketBasedOnNetworkRTTWithDampening(
 		// higher latency bucket if the RTT exceeds the bucket boundary.
 		higherLatencyBucketThreshold := time.Duration((float64(bucket) + boundaryPercent) * intervalNanos)
 		if networkRTT >= higherLatencyBucketThreshold {
-			return newPolicy
+			return newPolicy, false
 		}
-		return oldPolicy
+		return oldPolicy, true
 	case oldPolicy > newPolicy:
 		// The new policy has a lower latency threshold. Only switch to the lower
 		// latency bucket if the RTT is below the bucket boundary.
 		lowerLatencyBucketThreshold := time.Duration((float64(bucket) + 1 - boundaryPercent) * intervalNanos)
 		if networkRTT < lowerLatencyBucketThreshold {
-			return newPolicy
+			return newPolicy, false
 		}
-		return oldPolicy
+		return oldPolicy, true
 	default:
 		panic("unexpected condition")
 	}

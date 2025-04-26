@@ -149,6 +149,7 @@ func (pr *PolicyRefresher) getCurrentLatencies() map[roachpb.NodeID]time.Duratio
 // leaseholders based on current latency information. This can be called from
 // the store or from pr.Run.
 func (pr *PolicyRefresher) refreshPolicies(leaseholders []Replica) {
+	log.Infof(context.Background(), "refreshing policy refresher for %d replicas", len(leaseholders))
 	latencies := pr.getCurrentLatencies()
 	for _, leaseholder := range leaseholders {
 		leaseholder.RefreshPolicy(latencies)
