@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	multiStoreNodes              = 3
-	multiStoreStoresPerNode      = 2
+	multiStoreNodes              = 30
+	multiStoreStoresPerNode      = 16
 	largeMultiStoreStoresPerNode = 4
 )
 

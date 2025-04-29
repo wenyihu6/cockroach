@@ -444,7 +444,7 @@ func registerRestore(r registry.Registry) {
 			CompatibleClouds: registry.OnlyGCE,
 			Suites:           sp.suites,
 			Skip:             sp.skip,
-			PostProcessPerfMetrics:    restoreAggregateFunction,
+			//PostProcessPerfMetrics: restoreAggregateFunction,
 			Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 
 				rd := makeRestoreDriver(t, c, sp)
@@ -480,11 +480,11 @@ func registerRestore(r registry.Registry) {
 					}
 
 					t.Status(`running restore`)
-					metricCollector := rd.initRestorePerfMetrics(ctx, durationGauge)
+					//metricCollector := rd.initRestorePerfMetrics(ctx, durationGauge)
 					if err := rd.run(ctx, ""); err != nil {
 						return err
 					}
-					metricCollector()
+					//metricCollector()
 					rd.checkFingerprint(ctx)
 					return nil
 				})
