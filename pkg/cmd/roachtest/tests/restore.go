@@ -300,21 +300,21 @@ func registerRestore(r registry.Registry) {
 		{
 			// Note that the default specs in makeHardwareSpecs() spin up restore tests in aws,
 			// by default.
-			hardware:               makeHardwareSpecs(hardwareSpecs{storesPerNode: 2}),
+			hardware:               makeHardwareSpecs(hardwareSpecs{}),
 			backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
 			timeout:                1 * time.Hour,
 			suites:                 registry.Suites(registry.Nightly),
 			restoreUptoIncremental: defaultRestoreUptoIncremental,
 		},
-		{
-			// Benchmarks using a low memory per core ratio - we don't expect ideal
-			// performance but nodes should not OOM.
-			hardware:               makeHardwareSpecs(hardwareSpecs{mem: spec.Low}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
+		//{
+		//	// Benchmarks using a low memory per core ratio - we don't expect ideal
+		//	// performance but nodes should not OOM.
+		//	hardware:               makeHardwareSpecs(hardwareSpecs{mem: spec.Low}),
+		//	backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
+		//	timeout:                1 * time.Hour,
+		//	suites:                 registry.Suites(registry.Nightly),
+		//	restoreUptoIncremental: defaultRestoreUptoIncremental,
+		//},
 		{
 			// Benchmarks if per node throughput remains constant if the number of
 			// nodes doubles relative to default.
