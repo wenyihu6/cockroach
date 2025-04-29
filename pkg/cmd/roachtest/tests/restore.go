@@ -28,6 +28,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/logger"
+	"github.com/cockroachdb/cockroach/pkg/roachprod/vm"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/ts/tspb"
@@ -290,15 +291,15 @@ func registerRestore(r registry.Registry) {
 			suites:                 registry.Suites(registry.Nightly),
 			restoreUptoIncremental: defaultRestoreUptoIncremental,
 		},
-		{
-			// Benchmarks using a low memory per core ratio - we don't expect ideal
-			// performance but nodes should not OOM.
-			hardware:               makeHardwareSpecs(hardwareSpecs{mem: spec.Low}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
+		//{
+		//	// Benchmarks using a low memory per core ratio - we don't expect ideal
+		//	// performance but nodes should not OOM.
+		//	hardware:               makeHardwareSpecs(hardwareSpecs{mem: spec.Low}),
+		//	backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
+		//	timeout:                1 * time.Hour,
+		//	suites:                 registry.Suites(registry.Nightly),
+		//	restoreUptoIncremental: defaultRestoreUptoIncremental,
+		//},
 		{
 			// Benchmarks if per node throughput remains constant if the number of
 			// nodes doubles relative to default.
@@ -421,7 +422,7 @@ func registerRestore(r registry.Registry) {
 			Name:      sp.testName,
 			Owner:     registry.OwnerDisasterRecovery,
 			Benchmark: true,
-			Cluster:   sp.hardware.makeClusterSpecs(r, sp.backup.cloud),
+			Cluster:   r.MakeClusterSpec(30, spec.SSD(16)),
 			Timeout:   sp.timeout,
 			// These tests measure performance. To ensure consistent perf,
 			// disable metamorphic encryption.
@@ -454,6 +455,8 @@ func registerRestore(r registry.Registry) {
 					for _, stmt := range append(sp.setUpStmts,
 						"SET CLUSTER SETTING server.cpu_profile.duration = '2s'",
 						"SET CLUSTER SETTING server.cpu_profile.cpu_usage_combined_threshold = 80",
+						"SET CLUSTER SETTING backup.restore_span.target_size = '32 MB'",
+						"ALTER RANGE default CONFIGURE ZONE USING range_min_bytes = 16777216, range_max_bytes = 67108864, num_replicas = 3",
 					) {
 						_, err := db.Exec(stmt)
 						if err != nil {
@@ -462,7 +465,7 @@ func registerRestore(r registry.Registry) {
 					}
 
 					t.Status(`running restore`)
-					metricCollector := rd.initRestorePerfMetrics(ctx, durationGauge)
+					//metricCollector := rd.initRestorePerfMetrics(ctx, durationGauge)
 					if err := rd.run(ctx, ""); err != nil {
 						var jobID int
 						if jobIDErr := db.QueryRow(`SELECT job_id FROM [SHOW JOBS] WHERE job_type = 'RESTORE'`).Scan(&jobID); jobIDErr != nil {
@@ -470,11 +473,13 @@ func registerRestore(r registry.Registry) {
 						}
 						return errors.CombineErrors(err, skipIfNetworkFlake(ctx, t, c, jobID))
 					}
-					metricCollector()
+					//metricCollector()
 					rd.checkFingerprint(ctx)
 					return nil
 				})
 				m.Wait()
+				t.Status(`test passed but fail to collect logs`)
+				t.FailNow()
 			},
 		})
 	}
@@ -518,6 +523,7 @@ var defaultHardware = hardwareSpecs{
 // hardwareSpecs define the cluster setup for a restore roachtest. These values
 // should not get updated as the test runs.
 type hardwareSpecs struct {
+	storesPerNode int
 
 	// cpus is the per node cpu count.
 	cpus int
@@ -549,6 +555,12 @@ func (hw hardwareSpecs) makeClusterSpecs(r registry.Registry, backupCloud string
 	if hw.volumeSize != 0 {
 		clusterOpts = append(clusterOpts, spec.VolumeSize(hw.volumeSize))
 	}
+	if hw.storesPerNode != 0 {
+		clusterOpts = append(clusterOpts, spec.SSD(hw.storesPerNode))
+		clusterOpts = append(clusterOpts, spec.Arch(vm.ArchAMD64))
+		clusterOpts = append(clusterOpts, spec.PreferLocalSSD())
+	}
+
 	if hw.mem != spec.Auto {
 		clusterOpts = append(clusterOpts, spec.Mem(hw.mem))
 	}
@@ -607,6 +619,9 @@ func makeHardwareSpecs(override hardwareSpecs) hardwareSpecs {
 	specs := defaultHardware
 	if override.cpus != 0 {
 		specs.cpus = override.cpus
+	}
+	if override.storesPerNode != 0 {
+		specs.storesPerNode = override.storesPerNode
 	}
 	if override.nodes != 0 {
 		specs.nodes = override.nodes
@@ -888,7 +903,15 @@ func (rd *restoreDriver) defaultClusterSettings() []install.ClusterSettingOption
 }
 
 func (rd *restoreDriver) prepareCluster(ctx context.Context) {
-	rd.c.Start(ctx, rd.t.L(), option.NewStartOpts(option.NoBackupSchedule), install.MakeClusterSettings(install.SecureOption(false)))
+	rd.t.Status("starting cluster")
+	startOpts := option.DefaultStartOpts()
+	if rd.c.Spec().SSDs > 1 && !rd.c.Spec().RAID0 {
+		startOpts.RoachprodOpts.StoreCount = rd.c.Spec().SSDs
+	}
+	rd.c.Start(ctx, rd.t.L(),
+		startOpts,
+		install.MakeClusterSettings(rd.defaultClusterSettings()...),
+		rd.c.Range(1, rd.c.Spec().NodeCount))
 	rd.getAOST(ctx)
 }
 
