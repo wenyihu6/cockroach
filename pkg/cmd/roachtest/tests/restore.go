@@ -489,6 +489,8 @@ func registerRestore(r registry.Registry) {
 					return nil
 				})
 				m.Wait()
+				t.Status(`test passed but fail to collect logs`)
+				t.FailNow()
 			},
 		})
 	}
