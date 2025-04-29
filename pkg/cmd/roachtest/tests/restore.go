@@ -436,18 +436,14 @@ func registerRestore(r registry.Registry) {
 		sp.initTestName()
 
 		r.Add(registry.TestSpec{
-			Name:      sp.testName,
-			Owner:     registry.OwnerDisasterRecovery,
-			Benchmark: true,
-			Cluster:   sp.hardware.makeClusterSpecs(r),
-			Timeout:   sp.timeout,
-			// These tests measure performance. To ensure consistent perf,
-			// disable metamorphic encryption.
-			EncryptionSupport:         registry.EncryptionAlwaysDisabled,
-			CompatibleClouds:          sp.backup.CompatibleClouds(),
-			Suites:                    sp.suites,
-			TestSelectionOptOutSuites: sp.suites,
-			Skip:                      sp.skip,
+			Name:             sp.testName,
+			Owner:            registry.OwnerDisasterRecovery,
+			Benchmark:        true,
+			Cluster:          r.MakeClusterSpec(multiStoreNodes, spec.SSD(multiStoreStoresPerNode)),
+			Timeout:          sp.timeout,
+			CompatibleClouds: registry.OnlyGCE,
+			Suites:           sp.suites,
+			Skip:             sp.skip,
 			PostProcessPerfMetrics:    restoreAggregateFunction,
 			Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 
@@ -1026,7 +1022,7 @@ func (rd *restoreDriver) roachprodOpts() option.StartOpts {
 
 func (rd *restoreDriver) prepareCluster(ctx context.Context) {
 	rd.t.Status("starting cluster")
-	startOpts := option.NewStartOpts(option.NoBackupSchedule)
+	startOpts := option.DefaultStartOpts()
 	if rd.c.Spec().SSDs > 1 && !rd.c.Spec().RAID0 {
 		startOpts.RoachprodOpts.StoreCount = rd.c.Spec().SSDs
 	}
