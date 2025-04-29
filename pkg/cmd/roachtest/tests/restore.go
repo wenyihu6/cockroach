@@ -473,6 +473,8 @@ func registerRestore(r registry.Registry) {
 					for _, stmt := range append(sp.setUpStmts,
 						"SET CLUSTER SETTING server.cpu_profile.duration = '2s'",
 						"SET CLUSTER SETTING server.cpu_profile.cpu_usage_combined_threshold = 80",
+						"SET CLUSTER SETTING backup.restore_span.target_size = '32 MB'",
+						"SET CLUSTER SETTING kv.range_size.default = '52'",
 					) {
 						_, err := db.Exec(stmt)
 						if err != nil {
@@ -538,6 +540,7 @@ func (hw hardwareSpecs) makeClusterSpecs(r registry.Registry) spec.ClusterSpec {
 	if hw.mem != spec.Auto {
 		clusterOpts = append(clusterOpts, spec.Mem(hw.mem))
 	}
+	clusterOpts = append(clusterOpts, spec.SSD(12))
 	addWorkloadNode := 0
 	if hw.workloadNode {
 		addWorkloadNode++
@@ -1012,8 +1015,11 @@ func (rd *restoreDriver) roachprodOpts() option.StartOpts {
 }
 
 func (rd *restoreDriver) prepareCluster(ctx context.Context) {
+	startOpts := rd.roachprodOpts()
+	startOpts.RoachprodOpts.StoreCount = 12
+	startOpts.RoachprodOpts.WALFailover = ""
 	rd.c.Start(ctx, rd.t.L(),
-		rd.roachprodOpts(),
+		startOpts,
 		install.MakeClusterSettings(rd.defaultClusterSettings()...),
 		rd.sp.hardware.getCRDBNodes())
 	rd.getAOST(ctx)
