@@ -299,7 +299,7 @@ func registerRestore(r registry.Registry) {
 		{
 			// Note that the default specs in makeHardwareSpecs() spin up restore tests in aws,
 			// by default.
-			hardware:               makeHardwareSpecs(hardwareSpecs{}),
+			hardware:               makeHardwareSpecs(hardwareSpecs{storesPerNode: 2}),
 			backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
 			timeout:                1 * time.Hour,
 			suites:                 registry.Suites(registry.Nightly),
@@ -1030,7 +1030,7 @@ func (rd *restoreDriver) prepareCluster(ctx context.Context) {
 	rd.c.Start(ctx, rd.t.L(),
 		startOpts,
 		install.MakeClusterSettings(rd.defaultClusterSettings()...),
-		rd.sp.hardware.getCRDBNodes())
+		rd.c.CRDBNodes())
 	rd.getAOST(ctx)
 }
 
