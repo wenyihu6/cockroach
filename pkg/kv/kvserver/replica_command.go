@@ -4186,6 +4186,8 @@ func (r *Replica) adminScatter(
 		preScatterReplicaIDs[rd.ReplicaID] = struct{}{}
 	}
 
+	requeue := true
+	terminatingErr := false
 	// Loop until we hit an error or until we hit `maxAttempts` for the range.
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
 		if currentAttempt == maxAttempts {
@@ -4197,11 +4199,12 @@ func (r *Replica) adminScatter(
 		if err != nil {
 			// The replica can not be processed, so skip it.
 			log.Warningf(ctx,
-				"failed to scatter range (%v) at %dth attempt: cannot process replica due to %v",
-				desc, currentAttempt+1, err)
+				"terminating error happened replicaCanBeProcessed at (%d/%d)th attempt: cannot process replica due to %v for replica %v, requeue %t",
+				currentAttempt+1, maxAttempts, err, desc, requeue)
+			terminatingErr = true
 			break
 		}
-		_, err = rq.processOneChange(
+		requeue, err = rq.processOneChange(
 			ctx, r, desc, conf, true /* scatter */, false, /* dryRun */
 		)
 		if err != nil {
@@ -4213,10 +4216,12 @@ func (r *Replica) adminScatter(
 				log.Errorf(ctx, "retrying scatter process for range %v after retryable error: %v", desc, err)
 				continue
 			}
-			log.Warningf(ctx, "failed to scatter range (%v) at %dth attempt due to %v",
-				desc, currentAttempt+1, err)
+			log.Warningf(ctx, "terminating error happened processOneChange at (%d/%d)th attempt: failed to scatter range due to %v for range %v, requeue %t",
+				currentAttempt+1, maxAttempts, err, desc, requeue)
+			terminatingErr = true
 			break
 		}
+		log.Eventf(ctx, "processOneChange succeeded but retry until we hit the max attempts: currently %d/%d", currentAttempt, maxAttempts)
 		currentAttempt++
 		re.Reset()
 	}
@@ -4257,8 +4262,13 @@ func (r *Replica) adminScatter(
 		}
 	}
 
+	if terminatingErr && numReplicasMoved != 0 {
+		log.Errorf(ctx, "terminating error happened but number of replicas is not zero: %v", numReplicasMoved)
+	}
+
 	ri := r.GetRangeInfo(ctx)
 	stats := r.GetMVCCStats()
+	log.Errorf(ctx, "terminatingErr %t, number of replicas moved %d, stats %d", terminatingErr, numReplicasMoved, stats.Total())
 	return kvpb.AdminScatterResponse{
 		RangeInfos: []roachpb.RangeInfo{ri},
 		MVCCStats:  stats,
