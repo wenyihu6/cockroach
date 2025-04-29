@@ -21,8 +21,9 @@ import (
 )
 
 const (
-	multiStoreNodes         = 3
-	multiStoreStoresPerNode = 2
+	multiStoreNodes              = 3
+	multiStoreStoresPerNode      = 2
+	largeMultiStoreStoresPerNode = 4
 )
 
 func registerMultiStoreRemove(r registry.Registry) {

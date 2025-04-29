@@ -474,7 +474,7 @@ func registerRestore(r registry.Registry) {
 						"SET CLUSTER SETTING server.cpu_profile.duration = '2s'",
 						"SET CLUSTER SETTING server.cpu_profile.cpu_usage_combined_threshold = 80",
 						"SET CLUSTER SETTING backup.restore_span.target_size = '32 MB'",
-						"ALTER RANGE default CONFIGURE ZONE USING range_min_bytes = 67108864, range_max_bytes = 67108864, num_replicas = 3",
+						"ALTER RANGE default CONFIGURE ZONE USING range_min_bytes = 16777216, range_max_bytes = 67108864, num_replicas = 3",
 					) {
 						_, err := db.Exec(stmt)
 						if err != nil {
@@ -506,6 +506,7 @@ var defaultHardware = hardwareSpecs{
 // hardwareSpecs define the cluster setup for a restore roachtest. These values
 // should not get updated as the test runs.
 type hardwareSpecs struct {
+	storesPerNode int
 
 	// cpus is the per node cpu count.
 	cpus int
@@ -537,6 +538,10 @@ func (hw hardwareSpecs) makeClusterSpecs(r registry.Registry) spec.ClusterSpec {
 	if hw.volumeSize != 0 {
 		clusterOpts = append(clusterOpts, spec.VolumeSize(hw.volumeSize))
 	}
+	if hw.storesPerNode != 0 {
+		clusterOpts = append(clusterOpts, spec.SSD(hw.storesPerNode))
+	}
+
 	if hw.mem != spec.Auto {
 		clusterOpts = append(clusterOpts, spec.Mem(hw.mem))
 	}
@@ -600,6 +605,9 @@ func makeHardwareSpecs(override hardwareSpecs) hardwareSpecs {
 	specs := defaultHardware
 	if override.cpus != 0 {
 		specs.cpus = override.cpus
+	}
+	if override.storesPerNode != 0 {
+		specs.storesPerNode = override.storesPerNode
 	}
 	if override.nodes != 0 {
 		specs.nodes = override.nodes
@@ -1014,8 +1022,13 @@ func (rd *restoreDriver) roachprodOpts() option.StartOpts {
 }
 
 func (rd *restoreDriver) prepareCluster(ctx context.Context) {
+	rd.t.Status("starting cluster")
+	startOpts := option.NewStartOpts(option.NoBackupSchedule)
+	if rd.c.Spec().SSDs > 1 && !rd.c.Spec().RAID0 {
+		startOpts.RoachprodOpts.StoreCount = rd.c.Spec().SSDs
+	}
 	rd.c.Start(ctx, rd.t.L(),
-		rd.roachprodOpts(),
+		startOpts,
 		install.MakeClusterSettings(rd.defaultClusterSettings()...),
 		rd.sp.hardware.getCRDBNodes())
 	rd.getAOST(ctx)
