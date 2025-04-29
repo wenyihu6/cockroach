@@ -290,13 +290,6 @@ func registerRestore(r registry.Registry) {
 
 	for _, sp := range []restoreSpecs{
 		{
-			hardware:               makeHardwareSpecs(hardwareSpecs{ebsThroughput: 250 /* MB/s */}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
 			// Note that the default specs in makeHardwareSpecs() spin up restore tests in aws,
 			// by default.
 			hardware:               makeHardwareSpecs(hardwareSpecs{}),
@@ -305,141 +298,32 @@ func registerRestore(r registry.Registry) {
 			suites:                 registry.Suites(registry.Nightly),
 			restoreUptoIncremental: defaultRestoreUptoIncremental,
 		},
-		{
-			// Benchmarks using a low memory per core ratio - we don't expect ideal
-			// performance but nodes should not OOM.
-			hardware:               makeHardwareSpecs(hardwareSpecs{mem: spec.Low}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{cloud: spec.GCE}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
-			// Benchmarks if per node throughput remains constant if the number of
-			// nodes doubles relative to default.
-			hardware:               makeHardwareSpecs(hardwareSpecs{nodes: 8, ebsThroughput: 250 /* MB/s */}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
-			// Benchmarks if per node throughput remains constant if the cluster
-			// is multi-region.
-			hardware: makeHardwareSpecs(hardwareSpecs{
-				nodes: 9, ebsThroughput: 250, /* MB/s */
-				zones: []string{"us-east-2b", "us-west-2b", "eu-west-1b"}}), // These zones are AWS-specific.
-			backup:                 makeRestoringBackupSpecs(backupSpecs{}),
-			timeout:                90 * time.Minute,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
-			// Benchmarks if per node throughput doubles if the vcpu count doubles
-			// relative to default.
-			hardware:               makeHardwareSpecs(hardwareSpecs{cpus: 16, ebsThroughput: 250 /* MB/s */}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
-			// Ensures we can restore a 48 length incremental chain.
-			// Also benchmarks per node throughput for a long chain.
-			hardware:               makeHardwareSpecs(hardwareSpecs{ebsThroughput: 250 /* MB/s */}),
-			backup:                 makeRestoringBackupSpecs(backupSpecs{}),
-			timeout:                1 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: 48,
-		},
-		{
-			// The nightly 8TB Restore test.
-			// NB: bump disk throughput because this load saturates the default 125
-			// MB/s. See https://github.com/cockroachdb/cockroach/issues/107609.
-			hardware: makeHardwareSpecs(hardwareSpecs{nodes: 10, volumeSize: 2000,
-				ebsThroughput: 250 /* MB/s */}),
-			backup: makeRestoringBackupSpecs(backupSpecs{
-				version:  "v22.2.1",
-				workload: tpceRestore{customers: 500000}}),
-			timeout:                5 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
-			// The weekly 32TB Restore test.
-			hardware: makeHardwareSpecs(hardwareSpecs{nodes: 15, cpus: 16, volumeSize: 5000,
-				ebsThroughput: 250 /* MB/s */}),
-			backup: makeRestoringBackupSpecs(backupSpecs{
-				version:  "v22.2.1",
-				workload: tpceRestore{customers: 2000000}}),
-			timeout:                24 * time.Hour,
-			suites:                 registry.Suites(registry.Weekly),
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		{
-			// The weekly 32TB, 400 incremental layer Restore test on AWS.
-			//
-			// NB: Prior to 23.1, restore would OOM on backups that had many
-			// incremental layers and many import spans. Together with having a 400
-			// incremental chain, this regression tests against the OOMs that we've
-			// seen in previous versions.
-			//
-			// NB 2: This test sets backup.restore_span.max_file_count to allow for
-			// restore span entries to extend. As of #119840, restore limits the
-			// number of files per restore span entry. When this file cap is less than
-			// the number of inc layers, restore slows signficantly, as the restore
-			// span entries become much smaller.
-			hardware: makeHardwareSpecs(hardwareSpecs{nodes: 15, cpus: 16, volumeSize: 5000,
-				ebsThroughput: 250 /* MB/s */}),
-			backup: makeRestoringBackupSpecs(backupSpecs{
-				version:           "v22.2.4",
-				workload:          tpceRestore{customers: 2000000},
-				numBackupsInChain: 400,
-			}),
-			setUpStmts:             []string{"SET CLUSTER SETTING backup.restore_span.max_file_count = 800"},
-			timeout:                30 * time.Hour,
-			suites:                 registry.Suites(registry.Weekly),
-			restoreUptoIncremental: 400,
-		},
-		{
-			// The weekly 32TB, 400 incremental layer Restore test on GCP.
-			hardware: makeHardwareSpecs(hardwareSpecs{nodes: 15, cpus: 16, volumeSize: 5000}),
-			backup: makeRestoringBackupSpecs(backupSpecs{
-				version:           "v22.2.4",
-				workload:          tpceRestore{customers: 2000000},
-				cloud:             spec.GCE,
-				numBackupsInChain: 400,
-			}),
-			timeout:                30 * time.Hour,
-			suites:                 registry.Suites(registry.Weekly),
-			restoreUptoIncremental: 400,
-			skip:                   "a recent gcp pricing policy makes this test very expensive. unskip after #111371 is addressed",
-		},
-		{
-			// A teeny weeny 15GB restore that could be used to bisect scale agnostic perf regressions.
-			hardware: makeHardwareSpecs(hardwareSpecs{ebsThroughput: 250 /* MB/s */}),
-			backup: makeRestoringBackupSpecs(
-				backupSpecs{workload: tpceRestore{customers: 1000},
-					version: "v22.2.1"}),
-			timeout:                3 * time.Hour,
-			suites:                 registry.Suites(registry.Nightly),
-			fingerprint:            8445446819555404274,
-			restoreUptoIncremental: defaultRestoreUptoIncremental,
-		},
-		// TODO(msbutler): add the following tests once roachperf/grafana is hooked up and old tests are
-		// removed:
-		// - restore/tpce/400GB/nodes=30
-		// - restore/tpce/400GB/encryption
+		//{
+		//	// Note that the default specs in makeHardwareSpecs() spin up restore tests in aws,
+		//	// by default.
+		//	hardware: makeHardwareSpecs(hardwareSpecs{
+		//		storesPerNode: largeMultiStoreStoresPerNode,
+		//		nodes:         largeMultiStoreNodes,
+		//		cpus:          8,
+		//		volumeSize:    5000,
+		//		ebsThroughput: 250, /* MB/s */
+		//	}),
+		//	backup: makeRestoringBackupSpecs(backupSpecs{
+		//		cloud: spec.GCE,
+		//	}),
+		//	timeout:                10 * time.Hour,
+		//	suites:                 registry.Suites(registry.Nightly),
+		//	restoreUptoIncremental: defaultRestoreUptoIncremental,
+		//},
 	} {
 		sp := sp
 		sp.initTestName()
 
 		r.Add(registry.TestSpec{
-			Name:      sp.testName,
-			Owner:     registry.OwnerDisasterRecovery,
-			Benchmark: true,
-			Cluster:   sp.hardware.makeClusterSpecs(r),
-			Timeout:   sp.timeout,
+			Name:    sp.testName,
+			Owner:   registry.OwnerDisasterRecovery,
+			Cluster: sp.hardware.makeClusterSpecs(r),
+			Timeout: sp.timeout,
 			// These tests measure performance. To ensure consistent perf,
 			// disable metamorphic encryption.
 			EncryptionSupport:         registry.EncryptionAlwaysDisabled,
@@ -473,6 +357,8 @@ func registerRestore(r registry.Registry) {
 					for _, stmt := range append(sp.setUpStmts,
 						"SET CLUSTER SETTING server.cpu_profile.duration = '2s'",
 						"SET CLUSTER SETTING server.cpu_profile.cpu_usage_combined_threshold = 80",
+						"SET CLUSTER SETTING backup.restore_span.target_size = '32 MB'",
+						"ALTER RANGE default CONFIGURE ZONE USING range_min_bytes = 67108864, range_max_bytes = 67108864, num_replicas = 3",
 					) {
 						_, err := db.Exec(stmt)
 						if err != nil {
@@ -504,6 +390,7 @@ var defaultHardware = hardwareSpecs{
 // hardwareSpecs define the cluster setup for a restore roachtest. These values
 // should not get updated as the test runs.
 type hardwareSpecs struct {
+	storesPerNode int
 
 	// cpus is the per node cpu count.
 	cpus int
@@ -532,6 +419,9 @@ type hardwareSpecs struct {
 func (hw hardwareSpecs) makeClusterSpecs(r registry.Registry) spec.ClusterSpec {
 	clusterOpts := make([]spec.Option, 0)
 	clusterOpts = append(clusterOpts, spec.CPU(hw.cpus))
+	if hw.storesPerNode != 0 {
+		clusterOpts = append(clusterOpts, spec.SSD(hw.storesPerNode))
+	}
 	if hw.volumeSize != 0 {
 		clusterOpts = append(clusterOpts, spec.VolumeSize(hw.volumeSize))
 	}
@@ -596,6 +486,9 @@ func (hw hardwareSpecs) getCRDBNodes() option.NodeListOption {
 // Unless the caller provides any explicit specs, the default specs are used.
 func makeHardwareSpecs(override hardwareSpecs) hardwareSpecs {
 	specs := defaultHardware
+	if override.storesPerNode != 0 {
+		specs.storesPerNode = override.storesPerNode
+	}
 	if override.cpus != 0 {
 		specs.cpus = override.cpus
 	}
@@ -835,6 +728,8 @@ func (tpce tpceRestore) String() string {
 		builder.WriteString("8TB")
 	case 2000000:
 		builder.WriteString("32TB")
+	case 4000000:
+		builder.WriteString("64TB")
 	default:
 		panic("tpce customer count not recognized")
 	}
@@ -1012,11 +907,33 @@ func (rd *restoreDriver) roachprodOpts() option.StartOpts {
 }
 
 func (rd *restoreDriver) prepareCluster(ctx context.Context) {
+	rd.t.Status("starting cluster")
+	startOpts := rd.roachprodOpts()
+	startOpts.RoachprodOpts.StoreCount = largeMultiStoreStoresPerNode
+	startOpts.RoachprodOpts.WALFailover = ""
+	startSettings := install.MakeClusterSettings(rd.defaultClusterSettings()...)
+	startSettings.Env = append(startSettings.Env, "COCKROACH_SCAN_INTERVAL=30s")
 	rd.c.Start(ctx, rd.t.L(),
-		rd.roachprodOpts(),
-		install.MakeClusterSettings(rd.defaultClusterSettings()...),
+		startOpts,
+		startSettings,
 		rd.sp.hardware.getCRDBNodes())
 	rd.getAOST(ctx)
+	rd.t.Status("store setup")
+	conn := rd.c.Conn(ctx, rd.t.L(), 2)
+	defer conn.Close()
+
+	testutils.SucceedsSoon(rd.t, func() error {
+		var count int
+		r := conn.QueryRowContext(ctx, `SELECT count(*) FROM crdb_internal.kv_store_status;`)
+		if err := r.Scan(&count); err != nil {
+			rd.t.Fatalf("store status: %s", err)
+		}
+		wantStores := largeMultiStoreNodes * largeMultiStoreStoresPerNode
+		if count != wantStores {
+			return errors.Errorf("expected %d stores, but found %d", wantStores, count)
+		}
+		return nil
+	})
 }
 
 // getAOST gets the AOST to use in the restore cmd.
