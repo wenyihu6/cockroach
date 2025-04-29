@@ -28,6 +28,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/logger"
+	"github.com/cockroachdb/cockroach/pkg/roachprod/vm"
 	"github.com/cockroachdb/cockroach/pkg/testutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/sqlutils"
 	"github.com/cockroachdb/cockroach/pkg/ts/tspb"
@@ -540,6 +541,8 @@ func (hw hardwareSpecs) makeClusterSpecs(r registry.Registry) spec.ClusterSpec {
 	}
 	if hw.storesPerNode != 0 {
 		clusterOpts = append(clusterOpts, spec.SSD(hw.storesPerNode))
+		clusterOpts = append(clusterOpts, spec.Arch(vm.ArchAMD64))
+		clusterOpts = append(clusterOpts, spec.PreferLocalSSD())
 	}
 
 	if hw.mem != spec.Auto {
