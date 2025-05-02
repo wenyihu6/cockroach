@@ -667,6 +667,7 @@ func (db *DB) AdminSplit(
 func (db *DB) AdminScatter(
 	ctx context.Context, key roachpb.Key, maxSize int64,
 ) (*kvpb.AdminScatterResponse, error) {
+	fmt.Println("admin scatter")
 	scatterReq := &kvpb.AdminScatterRequest{
 		RequestHeader:   kvpb.RequestHeaderFromSpan(roachpb.Span{Key: key, EndKey: key.Next()}),
 		RandomizeLeases: true,

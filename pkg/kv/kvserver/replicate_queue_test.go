@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -184,8 +185,8 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 		nodes         int
 		storesPerNode int
 	}{
-		{"simple", 5, 1},
-		{"multi-store", 4, 2},
+		//{"multi-store", 4, 8},
+		{"single-store", 32, 1},
 	}
 
 	// Speed up the test.
@@ -214,7 +215,6 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 		})
 	}
 	for _, testCase := range testCases {
-
 		t.Run(testCase.name, func(t *testing.T) {
 			if testCase.storesPerNode > 1 {
 				// 8 stores with active rebalancing can lead to failed heartbeats due
@@ -252,13 +252,17 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 				kvserver.MaxStoreGossipFrequency.Override(ctx, &st.SV, 0)
 			}
 
+			fmt.Println("starting the test")
+
 			// Add a few ranges per store.
 			numStores := testCase.nodes * testCase.storesPerNode
 			newRanges := numStores * 2
 			trackedRanges := map[roachpb.RangeID]struct{}{}
+			var wg sync.WaitGroup
 			for i := 0; i < newRanges; i++ {
 				tableID := bootstrap.TestingUserDescID(uint32(i))
 				splitKey := keys.SystemSQLCodec.TablePrefix(tableID)
+
 				// Retry the splits on descriptor errors which are likely as the replicate
 				// queue is already hard at work.
 				testutils.SucceedsSoon(t, func() error {
@@ -271,6 +275,7 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 						// We don't do this for i=0 since that range stays at five replicas.
 						return errors.Errorf("still downreplicating: %s", &desc)
 					}
+					fmt.Println("splitting")
 					_, rightDesc, err := tc.SplitRange(splitKey)
 					if err != nil {
 						return err
@@ -281,6 +286,14 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 					}
 					return nil
 				})
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					s := tc.Server(0)
+					db := s.DB()
+					_, err := db.AdminScatter(ctx, splitKey, 0 /*maxSize*/)
+					require.NoError(t, err)
+				}()
 			}
 
 			countReplicas := func() (total int, perStore []int) {

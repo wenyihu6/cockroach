@@ -4190,6 +4190,7 @@ func (r *Replica) adminScatter(
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
 		if currentAttempt == maxAttempts {
 			log.Eventf(ctx, "stopped scattering after hitting max %d attempts", maxAttempts)
+			fmt.Printf("stopped scattering after hitting max %d attempts\n", maxAttempts)
 			break
 		}
 		desc, conf := r.DescAndSpanConfig()
@@ -4198,6 +4199,8 @@ func (r *Replica) adminScatter(
 			// The replica can not be processed, so skip it.
 			log.Warningf(ctx,
 				"failed to scatter range (%v) at %dth attempt: cannot process replica due to %v",
+				desc, currentAttempt+1, err)
+			fmt.Printf("failed to scatter range (%v) at %dth attempt: cannot process replica due to %v\n",
 				desc, currentAttempt+1, err)
 			break
 		}
@@ -4211,9 +4214,12 @@ func (r *Replica) adminScatter(
 			// updating the descriptor while processing.
 			if IsRetriableReplicationChangeError(err) {
 				log.Errorf(ctx, "retrying scatter process for range %v after retryable error: %v", desc, err)
+				fmt.Printf("retrying scatter process for range %v after retryable error: %v\n", desc, err)
 				continue
 			}
 			log.Warningf(ctx, "failed to scatter range (%v) at %dth attempt due to %v",
+				desc, currentAttempt+1, err)
+			fmt.Printf("failed to scatter range (%v) at %dth attempt due to %v\n",
 				desc, currentAttempt+1, err)
 			break
 		}
@@ -4234,10 +4240,10 @@ func (r *Replica) adminScatter(
 			targetStoreID := potentialLeaseTargets[newLeaseholderIdx].StoreID
 			if targetStoreID != r.store.StoreID() {
 				if tokenErr := r.allocatorToken.TryAcquire(ctx, "scatter"); tokenErr != nil {
-					log.Warningf(ctx, "failed to scatter lease to s%d: %+v", targetStoreID, tokenErr)
+					log.Warningf(ctx, "failed to scatter lease to s%d: %+v\n", targetStoreID, tokenErr)
 				} else {
 					defer r.allocatorToken.Release(ctx)
-					log.VEventf(ctx, 2, "randomly transferring lease to s%d", targetStoreID)
+					log.VEventf(ctx, 2, "randomly transferring lease to s%d\n", targetStoreID)
 					if err := r.AdminTransferLease(ctx, targetStoreID, false /* bypassSafetyChecks */); err != nil {
 						log.Warningf(ctx, "failed to scatter lease to s%d: %+v", targetStoreID, err)
 					}
