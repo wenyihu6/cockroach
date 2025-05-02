@@ -185,8 +185,8 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 		nodes         int
 		storesPerNode int
 	}{
-		//{"multi-store", 4, 8},
-		{"single-store", 32, 1},
+		{"multi-store", 4, 8},
+		{"single-store", 20, 1},
 	}
 
 	// Speed up the test.
