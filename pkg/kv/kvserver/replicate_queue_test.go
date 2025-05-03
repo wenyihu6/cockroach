@@ -17,7 +17,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -258,7 +257,6 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 			numStores := testCase.nodes * testCase.storesPerNode
 			newRanges := numStores * 2
 			trackedRanges := map[roachpb.RangeID]struct{}{}
-			var wg sync.WaitGroup
 			for i := 0; i < newRanges; i++ {
 				tableID := bootstrap.TestingUserDescID(uint32(i))
 				splitKey := keys.SystemSQLCodec.TablePrefix(tableID)
@@ -286,14 +284,10 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 					}
 					return nil
 				})
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					s := tc.Server(0)
-					db := s.DB()
-					_, err := db.AdminScatter(ctx, splitKey, 0 /*maxSize*/)
-					require.NoError(t, err)
-				}()
+				s := tc.Server(0)
+				db := s.DB()
+				_, err := db.AdminScatter(ctx, splitKey, 0 /*maxSize*/)
+				require.NoError(t, err)
 			}
 
 			countReplicas := func() (total int, perStore []int) {
