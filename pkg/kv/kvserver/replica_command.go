@@ -4263,6 +4263,8 @@ func (r *Replica) adminScatter(
 		}
 	}
 
+	fmt.Println("num of replicas moved: ", numReplicasMoved)
+
 	ri := r.GetRangeInfo(ctx)
 	stats := r.GetMVCCStats()
 	return kvpb.AdminScatterResponse{

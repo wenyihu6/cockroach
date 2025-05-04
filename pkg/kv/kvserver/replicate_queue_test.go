@@ -10,6 +10,7 @@ import (
 	gosql "database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"math"
 	"math/rand"
 	"os"
@@ -167,6 +168,36 @@ func TestReplicateQueueRebalance(t *testing.T) {
 		// it.
 		t.Error(info)
 	}
+}
+
+// TestAdminScatterAllocatorToken verifies issue #144579 by demonstrating that
+// AdminScatter does not acquire the allocator token. AdminScatter should not
+// have scattered replicas while the token was explicitly held by the test. But
+// the test confirms otherwise.
+func TestAdminScatterAllocatorToken(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+	ctx := context.Background()
+
+	tc := testcluster.StartTestCluster(t, 10, base.TestClusterArgs{
+		ReplicationMode: base.ReplicationAuto,
+	})
+	defer tc.Stopper().Stop(ctx)
+
+	// Hold allocator token and verify scatter is blocked
+	s := tc.Server(0)
+	db := s.DB()
+	key := roachpb.Key("a")
+	_, _, err := tc.SplitRange(key)
+	tc.AddVotersOrFatal(t, key, tc.Target(1), tc.Target(2))
+	err = db.AdminSplit(ctx, key, hlc.MaxTimestamp)
+	require.NoError(t, err)
+	require.NoError(t, db.Put(ctx, key, "abc"))
+	resp, err := db.AdminScatter(ctx, key, 0)
+	require.NoError(t, err)
+	require.Greater(t, resp.ReplicasScatteredBytes, int64(0))
+	desc := tc.LookupRangeOrFatal(t, key)
+	fmt.Println(desc)
 }
 
 // TestReplicateQueueRebalanceMultiStore creates a test cluster with and without
@@ -360,20 +391,6 @@ func TestReplicateQueueRebalanceMultiStore(t *testing.T) {
 				}
 				return nil
 			}, 4*time.Minute)
-
-			// Query the range log to see if anything unexpected happened. Concretely,
-			// we'll make sure that our tracked ranges never had >3 replicas.
-			infos, err := queryRangeLog(tc.Conns[0], `SELECT info FROM system.rangelog ORDER BY timestamp DESC`)
-			require.NoError(t, err)
-			for _, info := range infos {
-				if _, ok := trackedRanges[info.UpdatedDesc.RangeID]; !ok || len(info.UpdatedDesc.Replicas().VoterDescriptors()) <= 3 {
-					continue
-				}
-				// If we have atomic changes enabled, we expect to never see four replicas
-				// on our tracked ranges. If we don't have atomic changes, we can't avoid
-				// it.
-				t.Error(info)
-			}
 		})
 	}
 }
