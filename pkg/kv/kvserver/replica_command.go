@@ -110,11 +110,16 @@ func (r *Replica) AdminSplit(
 		return kvpb.AdminSplitResponse{}, kvpb.NewErrorf("cannot split range with no key provided")
 	}
 
+	log.KvDistribution.Infof(ctx, "before desc %v", r.Desc())
+
 	err := r.executeAdminCommandWithDescriptor(ctx, func(desc *roachpb.RangeDescriptor) error {
 		var err error
 		reply, err = r.adminSplitWithDescriptor(ctx, args, desc, true /* delayable */, reason, false /* findFirstSafeKey */)
 		return err
 	})
+
+	log.KvDistribution.Infof(ctx, "after desc %v", r.Desc())
+
 	return reply, err
 }
 
@@ -569,6 +574,8 @@ func (r *Replica) adminSplitWithDescriptor(
 		}
 		return reply, errors.Wrapf(err, "split at key %s failed", splitKey)
 	}
+
+	log.KvDistribution.Infof(ctx, "before desc %v", r.Desc())
 	return reply, nil
 }
 
@@ -4189,7 +4196,7 @@ func (r *Replica) adminScatter(
 	// Loop until we hit an error or until we hit `maxAttempts` for the range.
 	for re := retry.StartWithCtx(ctx, retryOpts); re.Next(); {
 		if currentAttempt == maxAttempts {
-			log.Eventf(ctx, "stopped scattering after hitting max %d attempts", maxAttempts)
+			log.KvDistribution.Infof(ctx, "stopped scattering after hitting max %d attempts", maxAttempts)
 			fmt.Printf("stopped scattering after hitting max %d attempts\n", maxAttempts)
 			break
 		}
@@ -4197,7 +4204,7 @@ func (r *Replica) adminScatter(
 		_, err := rq.replicaCanBeProcessed(ctx, r, false /* acquireLeaseIfNeeded */)
 		if err != nil {
 			// The replica can not be processed, so skip it.
-			log.Warningf(ctx,
+			log.KvDistribution.Warningf(ctx,
 				"failed to scatter range (%v) at %dth attempt: cannot process replica due to %v",
 				desc, currentAttempt+1, err)
 			fmt.Printf("failed to scatter range (%v) at %dth attempt: cannot process replica due to %v\n",
@@ -4213,7 +4220,7 @@ func (r *Replica) adminScatter(
 			// issued, in which case the scatter may fail due to the range split
 			// updating the descriptor while processing.
 			if IsRetriableReplicationChangeError(err) {
-				log.Errorf(ctx, "retrying scatter process for range %v after retryable error: %v", desc, err)
+				log.KvDistribution.Errorf(ctx, "retrying scatter process for range %v after retryable error: %v", desc, err)
 				fmt.Printf("retrying scatter process for range %v after retryable error: %v\n", desc, err)
 				continue
 			}
@@ -4223,6 +4230,8 @@ func (r *Replica) adminScatter(
 				desc, currentAttempt+1, err)
 			break
 		}
+		log.KvDistribution.Infof(ctx, "retrying attempt at scattering range: %d", currentAttempt+1)
+		fmt.Println("retrying attempt at scattering range: ", currentAttempt+1)
 		currentAttempt++
 		re.Reset()
 	}

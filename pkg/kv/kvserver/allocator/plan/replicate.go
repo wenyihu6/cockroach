@@ -221,7 +221,7 @@ func (rp ReplicaPlanner) PlanOneChange(
 		Op:      AllocationNoop{},
 		Replica: repl,
 	}
-	log.KvDistribution.VEventf(ctx, 6,
+	log.KvDistribution.VEventf(ctx, 0,
 		"planning range change desc=%s config=%s",
 		desc, conf.String())
 
@@ -618,8 +618,8 @@ func (rp ReplicaPlanner) removeVoter(
 	stats = stats.trackRemoveMetric(allocatorimpl.VoterTarget, allocatorimpl.Alive)
 
 	// Remove a replica.
-	log.KvDistribution.Infof(ctx, "removing voting replica %+v due to over-replication: %s",
-		removeVoter, rangeRaftProgress(repl.RaftStatus(), existingVoters))
+	log.KvDistribution.Infof(ctx, "removing voting replica %+v due to over-replication: %s with goal %v",
+		removeVoter, rangeRaftProgress(repl.RaftStatus(), existingVoters), conf.NumVoters)
 	// TODO(aayush): Directly removing the voter here is a bit of a missed
 	// opportunity since we could potentially be 1 non-voter short and the
 	// `target` could be a valid store for a non-voter. In such a scenario, we
@@ -804,7 +804,7 @@ func (rp ReplicaPlanner) considerRebalance(
 	if !ok {
 		// If there was nothing to do for the set of voting replicas on this
 		// range, attempt to rebalance non-voters.
-		log.KvDistribution.VInfof(ctx, 2, "no suitable rebalance target for voters")
+		log.KvDistribution.VInfof(ctx, 0, "no suitable rebalance target for voters")
 		addTarget, removeTarget, details, ok = rp.allocator.RebalanceNonVoter(
 			ctx,
 			rp.storePool,
@@ -820,7 +820,7 @@ func (rp ReplicaPlanner) considerRebalance(
 	}
 
 	if !ok {
-		log.KvDistribution.VInfof(ctx, 2, "no suitable rebalance target for non-voters")
+		log.KvDistribution.VInfof(ctx, 0, "no suitable rebalance target for non-voters")
 		return nil, stats, nil
 	}
 	// If we have a valid rebalance action (ok == true) and we haven't
@@ -829,6 +829,7 @@ func (rp ReplicaPlanner) considerRebalance(
 	chgs, performingSwap, err := ReplicationChangesForRebalance(ctx, desc, len(existingVoters), addTarget,
 		removeTarget, rebalanceTargetType)
 	if err != nil {
+		log.KvDistribution.VInfof(ctx, 0, "replication changes for rebalance failed: %s", err)
 		return nil, stats, err
 	}
 

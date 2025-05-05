@@ -844,8 +844,10 @@ func (c candidate) compare(o candidate) float64 {
 		return 0
 	}
 	if c.rangeCount < o.rangeCount {
+		log.KvDistribution.Infof(context.Background(), "c is a better candidate: o range count %v and candidate range count %v", o.rangeCount, c.rangeCount)
 		return float64(o.rangeCount-c.rangeCount) / float64(o.rangeCount)
 	}
+	log.KvDistribution.Infof(context.Background(), "o is a better candidate: o range count %v and candidate range count %v", o.rangeCount, c.rangeCount)
 	return -float64(c.rangeCount-o.rangeCount) / float64(c.rangeCount)
 }
 
@@ -1066,6 +1068,7 @@ func (cl candidateList) selectWorst(randGen allocatorRand) *candidate {
 	order := randGen.Perm(len(cl))
 	randGen.Unlock()
 	worst := &cl[order[0]]
+	log.KvDistribution.Infof(context.Background(), "worst %v", worst)
 	for i := 1; i < allocatorRandomCount; i++ {
 		if cl[order[i]].less(*worst) {
 			worst = &cl[order[i]]
@@ -1105,6 +1108,7 @@ func rankedCandidateListForAllocation(
 	options ScorerOptions,
 	targetType TargetReplicaType,
 ) candidateList {
+	log.KvDistribution.Infof(ctx, "candidate stores: %v, existing replicas: %v, nonvoter: %v, localities: %v", candidateStores, existingReplicas, nonVoterReplicas, existingStoreLocalities)
 	var candidates candidateList
 	existingReplTargets := roachpb.MakeReplicaSet(existingReplicas).ReplicationTargets()
 	var nonVoterReplTargets []roachpb.ReplicationTarget
@@ -1128,6 +1132,8 @@ func rankedCandidateListForAllocation(
 			validCandidateStores = append(validCandidateStores, s)
 		}
 	}
+
+	log.KvDistribution.Infof(ctx, "validCandidateStores: %v", validCandidateStores)
 
 	// Create a new store list, which will update the average for each stat to
 	// only be the average value of valid candidates.
@@ -1818,11 +1824,13 @@ func bestRebalanceTarget(
 			continue
 		}
 		target := option.candidates.selectBest(randGen)
+		log.KvDistribution.Infof(context.Background(), "option for rebalancin: %v", target)
 		if target == nil {
 			continue
 		}
 		existing := option.existing
 		if betterRebalanceTarget(target, &existing, bestTarget, &replaces) == target {
+			log.KvDistribution.Infof(context.Background(), "better target for rebalancing: %v", target)
 			bestIdx = i
 			bestTarget = target
 			replaces = existing
@@ -1842,7 +1850,11 @@ func bestRebalanceTarget(
 // betterRebalanceTarget returns whichever of target1 or target2 is a larger
 // improvement over its corresponding existing replica that it will be
 // replacing in the range.
-func betterRebalanceTarget(target1, existing1, target2, existing2 *candidate) *candidate {
+func betterRebalanceTarget(target1, existing1, target2, existing2 *candidate) (res *candidate) {
+	defer func() {
+		log.KvDistribution.Infof(context.Background(), "target1 %v, target2 %v, existing1 %v, existing2 %v chosen %v",
+			target1, target2, existing1, existing2, res)
+	}()
 	if target2 == nil {
 		return target1
 	}

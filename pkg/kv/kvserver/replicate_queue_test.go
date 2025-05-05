@@ -179,17 +179,23 @@ func TestAdminScatterAllocatorToken(t *testing.T) {
 	defer log.Scope(t).Close(t)
 	ctx := context.Background()
 
-	tc := testcluster.StartTestCluster(t, 10, base.TestClusterArgs{
+	tc := testcluster.StartTestCluster(t, 9, base.TestClusterArgs{
 		ReplicationMode: base.ReplicationAuto,
 	})
 	defer tc.Stopper().Stop(ctx)
 
+	require.NoError(t, log.SetVModule("replicate_queue=5,allocator=2,replica_command=5"))
+	require.NoError(t, tc.WaitForFullReplication())
+
 	// Hold allocator token and verify scatter is blocked
 	s := tc.Server(0)
 	db := s.DB()
+
+	_, err := tc.ServerConn(0).Exec(`SET CLUSTER SETTING kv.replicate_queue.enabled = 'false'`)
+	time.Sleep(5 * time.Second)
 	key := roachpb.Key("a")
-	_, _, err := tc.SplitRange(key)
-	tc.AddVotersOrFatal(t, key, tc.Target(1), tc.Target(2))
+	_, _, err = tc.SplitRange(key)
+	//tc.AddVotersOrFatal(t, key, tc.Target(1), tc.Target(2))
 	err = db.AdminSplit(ctx, key, hlc.MaxTimestamp)
 	require.NoError(t, err)
 	require.NoError(t, db.Put(ctx, key, "abc"))
@@ -198,6 +204,7 @@ func TestAdminScatterAllocatorToken(t *testing.T) {
 	require.Greater(t, resp.ReplicasScatteredBytes, int64(0))
 	desc := tc.LookupRangeOrFatal(t, key)
 	fmt.Println(desc)
+	t.Fail()
 }
 
 // TestReplicateQueueRebalanceMultiStore creates a test cluster with and without

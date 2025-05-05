@@ -1608,7 +1608,7 @@ func (a Allocator) RemoveTarget(
 		options,
 	)
 
-	log.KvDistribution.VEventf(ctx, 3, "remove %s: %s", targetType, rankedCandidates)
+	log.KvDistribution.Infof(ctx, "remove %v: from candidates %v", targetType, rankedCandidates)
 	if bad := rankedCandidates.selectWorst(a.randGen); bad != nil {
 		for _, exist := range existingReplicas {
 			if exist.StoreID == bad.store.StoreID {
@@ -1787,6 +1787,8 @@ func (a Allocator) RebalanceTarget(
 			return zero, zero, "", false
 		}
 
+		log.KvDistribution.Infof(ctx, "target: %v, existingCandidate: %v", target, existingCandidate)
+
 		// Add a fake new replica to our copy of the replica descriptor so that we can
 		// simulate the removal logic. If we decide not to go with this target, note
 		// that this needs to be removed from desc before we try any other target.
@@ -1826,6 +1828,7 @@ func (a Allocator) RebalanceTarget(
 				NodeID:  existingCandidate.store.Node.NodeID,
 				StoreID: existingCandidate.store.StoreID,
 			}
+			log.KvDistribution.Infof(ctx, "remove replica: %v", removeReplica)
 			break
 		}
 
@@ -1851,6 +1854,7 @@ func (a Allocator) RebalanceTarget(
 		if target.store.StoreID != removeReplica.StoreID {
 			// Successfully populated these variables
 			_, _ = target, removeReplica
+			log.KvDistribution.Infof(ctx, "successfully found remove replica: %v", removeReplica)
 			break
 		}
 
@@ -1877,6 +1881,7 @@ func (a Allocator) RebalanceTarget(
 		NodeID:  removeReplica.NodeID,
 		StoreID: removeReplica.StoreID,
 	}
+
 	return addTarget, removeTarget, string(detailsBytes), true
 }
 
