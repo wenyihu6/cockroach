@@ -479,6 +479,12 @@ func registerRestore(r registry.Registry) {
 						}
 					}
 
+					// Wait for initial up-replication.
+					err = roachtestutil.WaitForReplication(ctx, t.L(), db, 3, roachtestutil.AtLeastReplicationFactor)
+					require.NoError(t, err)
+					_, err = db.Exec("SET CLUSTER SETTING kv.replicate_queue.enabled = false")
+					require.NoError(t, err)
+
 					t.Status(`running restore`)
 					//metricCollector := rd.initRestorePerfMetrics(ctx, durationGauge)
 					if err := rd.run(ctx, ""); err != nil {
