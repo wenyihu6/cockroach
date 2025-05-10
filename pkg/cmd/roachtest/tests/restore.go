@@ -470,7 +470,7 @@ func registerRestore(r registry.Registry) {
 					for _, stmt := range append(sp.setUpStmts,
 						"SET CLUSTER SETTING server.cpu_profile.duration = '2s'",
 						"SET CLUSTER SETTING server.cpu_profile.cpu_usage_combined_threshold = 80",
-						"SET CLUSTER SETTING backup.restore_span.target_size = '32 MB'",
+						"SET CLUSTER SETTING backup.restore_span.target_size = '32 MiB'",
 						"ALTER RANGE default CONFIGURE ZONE USING range_min_bytes = 16777216, range_max_bytes = 67108864, num_replicas = 3",
 					) {
 						_, err := db.Exec(stmt)

@@ -176,7 +176,7 @@ func distRestore(
 			UserProto:                   execCtx.User().EncodeProto(),
 			TargetSize:                  md.spanFilter.targetSize,
 			MaxFileCount:                int64(md.spanFilter.maxFileCount),
-			ChunkSize:                   int64(chunkSize),
+			ChunkSize:                   1,
 			NumEntries:                  int64(md.numImportSpans),
 			NumNodes:                    int64(numNodes),
 			JobID:                       int64(md.jobID),
