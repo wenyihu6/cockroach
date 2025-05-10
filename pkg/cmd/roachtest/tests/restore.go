@@ -1082,7 +1082,7 @@ func (rd *restoreDriver) run(ctx context.Context, target string) error {
 		return errors.Wrapf(err, "failed to connect to node 1; running restore")
 	}
 	defer conn.Close()
-	_, err = conn.ExecContext(ctx, rd.restoreCmd(target, "WITH unsafe_restore_incompatible_version"))
+	_, err = conn.ExecContext(ctx, rd.restoreCmd(target, "WITH unsafe_restore_incompatible_version, schema_only, verify_table_data"))
 	return err
 }
 
