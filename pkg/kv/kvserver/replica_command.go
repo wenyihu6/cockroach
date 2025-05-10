@@ -4160,6 +4160,13 @@ func (r *Replica) adminScatter(
 		MaxRetries:     5,
 	}
 
+	min := 1 * time.Minute
+	max := 4 * time.Minute
+
+	// Calculate a random duration between min and max
+	randomDuration := time.Duration(rand.Int63n(int64(max-min))) + min
+	time.Sleep(randomDuration)
+	//
 	// On every `processOneChange` call with the `scatter` option set, stores in
 	// the cluster are essentially randomly categorized as "overfull" or
 	// "underfull" (replicas on overfull stores are then rebalanced to the
