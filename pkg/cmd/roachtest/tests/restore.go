@@ -441,7 +441,7 @@ func registerRestore(r registry.Registry) {
 			Benchmark:        true,
 			Cluster:          r.MakeClusterSpec(multiStoreNodes),
 			Timeout:          sp.timeout,
-			CompatibleClouds: registry.OnlyLocal,
+			CompatibleClouds: registry.OnlyGCE,
 			Suites:           sp.suites,
 			Skip:             sp.skip,
 			//PostProcessPerfMetrics: restoreAggregateFunction,
@@ -1082,7 +1082,7 @@ func (rd *restoreDriver) run(ctx context.Context, target string) error {
 		return errors.Wrapf(err, "failed to connect to node 1; running restore")
 	}
 	defer conn.Close()
-	_, err = conn.ExecContext(ctx, rd.restoreCmd(target, "WITH unsafe_restore_incompatible_version, schema_only, verify_table_data"))
+	_, err = conn.ExecContext(ctx, rd.restoreCmd(target, "WITH unsafe_restore_incompatible_version"))
 	return err
 }
 
