@@ -4242,7 +4242,7 @@ func (r *Replica) adminScatter(
 					log.Warningf(ctx, "failed to scatter lease to s%d: %+v", targetStoreID, tokenErr)
 				} else {
 					defer r.allocatorToken.Release(ctx)
-					log.VEventf(ctx, 2, "randomly transferring lease to s%d", targetStoreID)
+					log.Eventf(ctx, "randomly transferring lease to s%d", targetStoreID)
 					if err := r.AdminTransferLease(ctx, targetStoreID, false /* bypassSafetyChecks */); err != nil {
 						log.Warningf(ctx, "failed to scatter lease to s%d: %+v", targetStoreID, err)
 					}

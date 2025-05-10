@@ -482,6 +482,12 @@ func registerRestore(r registry.Registry) {
 					// Wait for initial up-replication.
 					err = roachtestutil.WaitForReplication(ctx, t.L(), db, 3, roachtestutil.AtLeastReplicationFactor)
 					require.NoError(t, err)
+					if err := waitForRebalance(
+						ctx, t.L(), db, 10, 60, /* stableSeconds */
+					); err != nil {
+						return err
+					}
+					t.Status(`disabled replicate queue`)
 					_, err = db.Exec("SET CLUSTER SETTING kv.replicate_queue.enabled = false")
 					require.NoError(t, err)
 
