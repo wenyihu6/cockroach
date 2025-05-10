@@ -439,7 +439,7 @@ func registerRestore(r registry.Registry) {
 			Name:             sp.testName,
 			Owner:            registry.OwnerDisasterRecovery,
 			Benchmark:        true,
-			Cluster:          r.MakeClusterSpec(multiStoreNodes),
+			Cluster:          r.MakeClusterSpec(multiStoreNodes, spec.SSD(multiStoreStoresPerNode)),
 			Timeout:          sp.timeout,
 			CompatibleClouds: registry.OnlyGCE,
 			Suites:           sp.suites,
