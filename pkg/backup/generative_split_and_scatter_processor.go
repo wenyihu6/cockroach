@@ -670,9 +670,11 @@ func runGenerativeSplitAndScatter(
 						if err := chunkEntrySplitAndScatterers[worker].split(ctx, flowCtx.Codec(), splitKey); err != nil {
 							return err
 						}
-						if _, err := chunkEntrySplitAndScatterers[worker].scatter(ctx, flowCtx.Codec(), splitKey); err != nil {
+						cd, err := chunkEntrySplitAndScatterers[worker].scatter(ctx, flowCtx.Codec(), splitKey)
+						if err != nil {
 							return err
 						}
+						chunkDestination = cd
 					}
 
 					scatteredEntry := entryNode{
