@@ -278,7 +278,7 @@ func newGenerativeSplitAndScatterProcessor(
 	// order to keep up with the rate at which chunks are split and scattered.
 	// TODO(rui): This tries to cover for a bad scatter by having 2 * the number
 	// of nodes in the cluster. Does this knob need to be re-tuned?
-	numEntrySplitWorkers := 2 * numChunkSplitAndScatterWorkers
+	numEntrySplitWorkers := numChunkSplitAndScatterWorkers
 
 	mkSplitAndScatterer := func() (splitAndScatterer, error) {
 		if spec.ValidateOnly {
@@ -668,6 +668,9 @@ func runGenerativeSplitAndScatter(
 						// Split at the next entry.
 						splitKey = importSpanChunk.entries[nextChunkIdx].Span.Key
 						if err := chunkEntrySplitAndScatterers[worker].split(ctx, flowCtx.Codec(), splitKey); err != nil {
+							return err
+						}
+						if _, err := chunkEntrySplitAndScatterers[worker].scatter(ctx, flowCtx.Codec(), splitKey); err != nil {
 							return err
 						}
 					}
