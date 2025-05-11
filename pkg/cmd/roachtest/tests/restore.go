@@ -489,6 +489,7 @@ func registerRestore(r registry.Registry) {
 					}
 					t.Status(`disabled replicate queue`)
 					_, err = db.Exec("SET CLUSTER SETTING kv.replicate_queue.enabled = false")
+					_, err = db.Exec("SET CLUSTER SETTING kv.lease_queue.enabled = false")
 					require.NoError(t, err)
 
 					t.Status(`running restore`)

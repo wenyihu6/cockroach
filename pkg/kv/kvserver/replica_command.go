@@ -4174,6 +4174,7 @@ func (r *Replica) adminScatter(
 
 	if args.MaxSize > 0 {
 		if existing, limit := r.GetMVCCStats().Total(), args.MaxSize; existing > limit {
+			log.Eventf(ctx, "existing range size %d exceeds specified limit %d", existing, limit)
 			return kvpb.AdminScatterResponse{}, errors.Errorf("existing range size %d exceeds specified limit %d", existing, limit)
 		}
 	}
@@ -4221,7 +4222,7 @@ func (r *Replica) adminScatter(
 			terminatingErr = true
 			break
 		}
-		log.Eventf(ctx, "processOneChange succeeded but retry until we hit the max attempts: currently %d/%d", currentAttempt, maxAttempts)
+		log.Errorf(ctx, "processOneChange succeeded but retry until we hit the max attempts: currently %d/%d", currentAttempt, maxAttempts)
 		currentAttempt++
 		re.Reset()
 	}
