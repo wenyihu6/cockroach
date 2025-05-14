@@ -113,6 +113,8 @@ func TestScatterResponse(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
+	log.Eventf(context.Background(), "test scatter response")
+	log.Infof(context.Background(), "test scatter response from info")
 	ts, sqlDB, kvDB := serverutils.StartServer(t, base.TestServerArgs{})
 	defer ts.Stopper().Stop(context.Background())
 
@@ -174,6 +176,8 @@ func TestScatterResponse(t *testing.T) {
 	if e, a := 100, i; e != a {
 		t.Fatalf("expected %d rows, but got %d", e, a)
 	}
+
+	t.Fail()
 }
 
 // TestScatterWithOneVoter tests that the scatter command works when the

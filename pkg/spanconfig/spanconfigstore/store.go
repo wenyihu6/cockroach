@@ -364,6 +364,9 @@ func (s *Store) maybeLogUpdate(ctx context.Context, update *spanconfig.Update) e
 		log.KvDistribution.Infof(ctx,
 			"changing the spanconfig for span:%+v from:%+v to:%+v",
 			target, curSpanConfig, nextSC)
+		log.KvDistribution.VEventf(ctx, 0, "hello from kv distribution eventf")
+		log.Eventf(ctx, "hello from eventf")
+		log.VEventf(ctx, 0, "hello from veventf")
 	}
 	return nil
 }
