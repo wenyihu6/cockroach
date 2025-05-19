@@ -126,6 +126,7 @@ func (c *Cache) storeGossipUpdate(_ string, content roachpb.Value) {
 		return
 	}
 	nodeID := storeDesc.Node.NodeID
+	// store descriptor
 	if nodeID == 0 {
 		log.Errorf(ctx, "unexpected update for node 0, %v", storeDesc)
 		return

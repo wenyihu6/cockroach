@@ -925,7 +925,7 @@ func (nl *NodeLiveness) ScanNodeVitalityFromKV(
 // this method is called. The results should not be cached externally as they
 // may no longer be accurate in the future. See livenesspb.NodeVitality for
 // using this method.
-func (nl *NodeLiveness) GetNodeVitalityFromCache(nodeID roachpb.NodeID) livenesspb.NodeVitality {
+func (nl *NodeLiveness) GetNodeVitalityFromCache(nodeID roachpb.NodeID, storeID roachpb.StoreID) livenesspb.NodeVitality {
 	return nl.cache.GetNodeVitality(nodeID)
 }
 

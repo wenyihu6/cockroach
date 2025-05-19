@@ -361,6 +361,15 @@ func (d ReplicaSet) HasReplicaOnNode(nodeID NodeID) bool {
 	return false
 }
 
+func (d ReplicaSet) HasReplicaOnStore(nodeID NodeID, storeID StoreID) bool {
+	for _, rep := range d.wrapped {
+		if rep.NodeID == nodeID && rep.StoreID == storeID {
+			return true
+		}
+	}
+	return false
+}
+
 // CanMakeProgress reports whether the given descriptors can make progress at
 // the replication layer. This is more complicated than just counting the number
 // of replicas due to the existence of joint quorums.

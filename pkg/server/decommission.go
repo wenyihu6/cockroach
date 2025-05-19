@@ -41,6 +41,14 @@ type decommissioningNodeMap struct {
 	nodes map[roachpb.NodeID]interface{}
 }
 
+func (t *decommissioningNodeMap) makeOnStoreDecommissioningCallback(
+	stores *kvserver.Stores,
+) func(nID roachpb.NodeID, sID roachpb.StoreID) {
+	return func(decommissioningNodeID roachpb.NodeID, decommissioningStoreID roachpb.StoreID) {
+
+	}
+}
+
 // makeOnNodeDecommissioningCallback returns a callback that enqueues the
 // decommissioning node's ranges into the `stores`' replicateQueues for
 // rebalancing.

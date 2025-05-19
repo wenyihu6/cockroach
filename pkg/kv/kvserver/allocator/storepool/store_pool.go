@@ -47,14 +47,14 @@ type NodeCountFunc func() int
 // A NodeLivenessFunc accepts a node ID and current time and returns whether or
 // not the node is live. A node is considered dead if its liveness record has
 // expired by more than TimeUntilNodeDead.
-type NodeLivenessFunc func(nid roachpb.NodeID) livenesspb.NodeLivenessStatus
+type NodeLivenessFunc func(nid roachpb.NodeID, storeID roachpb.StoreID) livenesspb.NodeLivenessStatus
 
 // MakeStorePoolNodeLivenessFunc returns a function which determines
 // the status of a node based on information provided by the specified
 // NodeLiveness.
 func MakeStorePoolNodeLivenessFunc(nodeLiveness *liveness.NodeLiveness) NodeLivenessFunc {
-	return func(nodeID roachpb.NodeID) livenesspb.NodeLivenessStatus {
-		return nodeLiveness.GetNodeVitalityFromCache(nodeID).LivenessStatus()
+	return func(nodeID roachpb.NodeID, storeID roachpb.StoreID) livenesspb.NodeLivenessStatus {
+		return nodeLiveness.GetNodeVitalityFromCache(nodeID, storeID).LivenessStatus()
 	}
 }
 
@@ -207,7 +207,7 @@ func (sd *StoreDetailMu) status(
 	//
 	// Store statuses checked in the following order:
 	// dead -> decommissioning -> unknown -> draining -> suspect -> available.
-	switch nl(sd.Desc.Node.NodeID) {
+	switch nl(sd.Desc.Node.NodeID, sd.Desc.StoreID) {
 	case livenesspb.NodeLivenessStatus_DEAD, livenesspb.NodeLivenessStatus_DECOMMISSIONED:
 		return updateLastUnavailableAndReturnStatusRLocked(now, storeStatusDead)
 	case livenesspb.NodeLivenessStatus_DECOMMISSIONING:
