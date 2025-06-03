@@ -1,0 +1,35 @@
+# Explore how load based and sized based splitting occur in isolation. In this
+# example, there is only one store so no rebalancing activity should occur.
+gen_cluster nodes=1
+----
+
+gen_ranges ranges=5 repl_factor=1
+----
+
+gen_load rate=1000 rw_ratio=0 request_cpu_per_access=20 min_key=1 max_key=10000
+----
+
+log_range_usage delay=3m
+----
+
+log_range_usage delay=6m
+----
+
+log_range_usage delay=20m
+----
+
+log_range_usage delay=30m
+----
+
+log_range_usage delay=40m
+----
+
+log_range_usage delay=50m
+----
+
+log_range_usage delay=60m
+----
+
+eval duration=60m
+----
+

@@ -6,11 +6,10 @@
 package gen
 
 import (
-	"time"
-
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/event"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/scheduled"
+	"time"
 )
 
 // EventGen provides a  method to generate a list of events that will apply to

@@ -355,6 +355,29 @@ func TestDataDriven(t *testing.T) {
 					LocalityString: localityString,
 				})
 				return ""
+			case "log_range_usage":
+				var delay time.Duration
+				scanIfExists(t, d, "delay", &delay)
+				eventGen.ScheduleEvent(settingsGen.Settings.StartTime, delay, event.LogRangeUsage{})
+				return ""
+			case "change_load":
+				var delay time.Duration
+				scanIfExists(t, d, "delay", &delay)
+
+				var key, writes, writeSize, reads, readSize, requestCPU, raftCPU = int64(10), int64(5), int64(5), int64(5), int64(5), int64(5), int64(5)
+				scanIfExists(t, d, "key", &key)
+				scanIfExists(t, d, "writes", &writes)
+				scanIfExists(t, d, "writeSize", &writeSize)
+				scanIfExists(t, d, "reads", &reads)
+				scanIfExists(t, d, "readSize", &readSize)
+				scanIfExists(t, d, "requestCPU", &requestCPU)
+				scanIfExists(t, d, "raftCPU", &raftCPU)
+
+				//eventGen.ScheduleEvent(settingsGen.Settings.StartTime, delay, event.ApplyLoadEvent{
+				//	Callback: func() {
+				//	},
+				//})
+				return ""
 			case "set_capacity":
 				var store int
 				var ioThreshold float64 = -1

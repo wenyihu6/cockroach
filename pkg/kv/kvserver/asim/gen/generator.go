@@ -7,14 +7,13 @@ package gen
 
 import (
 	"fmt"
-	"math/rand"
-	"time"
-
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/metrics"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/workload"
+	"math/rand"
+	"time"
 )
 
 // SettingsGen provides a method to generate simulations settings given a seed.

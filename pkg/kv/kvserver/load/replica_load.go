@@ -6,9 +6,11 @@
 package load
 
 import (
+	"context"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/replicastats"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
@@ -118,7 +120,6 @@ func (rl *ReplicaLoad) record(stat LoadStat, val float64, nodeID roachpb.NodeID)
 	now := timeutil.Unix(0, rl.clock.PhysicalNow())
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
-
 	rl.mu.stats[stat].RecordCount(now, val, nodeID)
 }
 
@@ -178,6 +179,10 @@ func (rl *ReplicaLoad) getLocked(stat LoadStat) float64 {
 	// than the minimum duration.
 	if val, dur := rl.mu.stats[stat].AverageRatePerSecond(timeutil.Unix(0, rl.clock.PhysicalNow())); dur >= replicastats.MinStatsDuration {
 		ret = val
+	}
+
+	if stat == RaftCPUNanos {
+		log.Infof(context.Background(), "replica load stat %v", ret)
 	}
 	return ret
 }

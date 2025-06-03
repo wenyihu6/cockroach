@@ -254,7 +254,6 @@ func (rs *ReplicaStats) RecordCount(now time.Time, count float64, nodeID roachpb
 	if rs.getNodeLocality != nil {
 		(*record.localityCounts)[rs.getNodeLocality(nodeID)] += count
 	}
-
 }
 
 func (rs *ReplicaStats) maybeRotate(now time.Time) {

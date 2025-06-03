@@ -44,6 +44,8 @@ type SetCapacityOverrideEvent struct {
 	CapacityOverride state.CapacityOverride
 }
 
+type LogRangeUsage struct{}
+
 // SetNodeLocalityEvent represents a mutation event responsible for updating
 // the locality of a node identified by NodeID.
 type SetNodeLocalityEvent struct {
@@ -62,6 +64,7 @@ var _ Event = &SetNodeLivenessEvent{}
 var _ Event = &SetCapacityOverrideEvent{}
 var _ Event = &SetNodeLocalityEvent{}
 var _ Event = &SetSimulationSettingsEvent{}
+var _ Event = &LogRangeUsage{}
 
 func (se SetSimulationSettingsEvent) Func() EventFunc {
 	return MutationFunc(func(ctx context.Context, s state.State) {
@@ -81,6 +84,21 @@ func (se SetSpanConfigEvent) Func() EventFunc {
 
 func (se SetSpanConfigEvent) String() string {
 	return fmt.Sprintf("set span config event with span=%v, config=%v", se.Span, &se.Config)
+}
+
+func (lr LogRangeUsage) String() string {
+	return "log range usage event"
+}
+
+func (lr LogRangeUsage) Func() EventFunc {
+	return MutationFunc(func(ctx context.Context, s state.State) {
+		for _, store := range s.Stores() {
+			for _, rng := range s.Replicas(store.StoreID()) {
+				// Log the usage for each range.
+				log.Infof(ctx, "range %d usage: %+v", rng.Range(), s.RangeUsageInfo(rng.Range(), store.StoreID()))
+			}
+		}
+	})
 }
 
 func (ae AddNodeEvent) Func() EventFunc {

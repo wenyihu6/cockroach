@@ -6,7 +6,9 @@
 package workload
 
 import (
+	"context"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"math/rand"
 	"sort"
 	"time"
@@ -57,6 +59,7 @@ type RandomGenerator struct {
 	keyGenerator        KeyGenerator
 	rand                *rand.Rand
 	lastRun             time.Time
+	start               time.Time
 	rollsPerSecond      float64
 	readRatio           float64
 	maxSize             int
@@ -81,6 +84,7 @@ func NewRandomGenerator(
 		keyGenerator:        keyGenerator,
 		rand:                keyGenerator.rand(),
 		lastRun:             start,
+		start:               start,
 		rollsPerSecond:      rate,
 		readRatio:           readRatio,
 		maxSize:             maxSize,
@@ -94,6 +98,14 @@ func NewRandomGenerator(
 // workload generator was called.
 func (rwg *RandomGenerator) Tick(maxTime time.Time) LoadBatch {
 	elapsed := maxTime.Sub(rwg.lastRun).Seconds()
+
+	// TODO(wenyihu6): hacky way to test out some theories
+	if maxTime.After(rwg.start.Add(5 * time.Minute)) {
+		rwg.requestCPUPerAccess = 200
+		rwg.raftCPUPerWrite = 200
+		log.Infof(context.Background(), "applied requestCPUPerAccess at %v", elapsed)
+	}
+
 	count := int(elapsed * rwg.rollsPerSecond)
 	// Do not attempt to generate additional load events if the elapsed
 	// duration is not sufficiently large. If we did, this would bump the last
