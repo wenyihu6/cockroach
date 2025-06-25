@@ -26,6 +26,27 @@ func (id SyncChangeID) IsValid() bool {
 	return id != 0
 }
 
+type Author uint64
+
+const (
+	LeaseQueue Author = iota
+	ReplicateQueue
+	MMA
+)
+
+func (s Author) External() bool {
+	switch s {
+	case LeaseQueue:
+		return true
+	case ReplicateQueue:
+		return true
+	case MMA:
+		return false
+	default:
+		panic("unknown Author")
+	}
+}
+
 // The expected usage for the non-mma components is:
 // changeIDs := allocatorSync.NonMMA(PreTransferLease|PreChangeReplicas)()
 // // Actually apply the change, or when simulating, queue up the change to be
@@ -244,10 +265,35 @@ func (as *AllocatorSync) MMAPreApply(
 	return syncChangeID
 }
 
+func (as *AllocatorSync) updateMetrics(success bool, executorOfChange Author) {
+	switch executorOfChange {
+	case LeaseQueue:
+		if success {
+			as.mmAllocator.Metrics().ExternalLeaseTransferSuccess.Inc(1)
+		} else {
+			as.mmAllocator.Metrics().ExternalLeaseTransferFailure.Inc(1)
+		}
+	case ReplicateQueue:
+		if success {
+			as.mmAllocator.Metrics().ExternalReplicaRebalanceSuccess.Inc(1)
+		} else {
+			as.mmAllocator.Metrics().ExternalReplicaRebalanceFailure.Inc(1)
+		}
+	case MMA:
+		if success {
+			as.mmAllocator.Metrics().ExternalLeaseTransferFailure.Inc(1)
+		} else {
+
+		}
+	default:
+		panic("unknown author for PostApply")
+	}
+}
+
 // PostApply is called after changes have been applied to the cluster, by both
 // the old allocator components (lease queue, replicate queue and store
 // rebalancer), as well as the new mma.Allocator.
-func (as *AllocatorSync) PostApply(ctx context.Context, syncChangeID SyncChangeID, success bool) {
+func (as *AllocatorSync) PostApply(ctx context.Context, syncChangeID SyncChangeID, success bool, executorOfChange Author) {
 	var tracked trackedAllocatorChange
 	func() {
 		as.mu.Lock()

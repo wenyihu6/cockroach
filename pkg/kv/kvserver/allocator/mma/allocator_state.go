@@ -18,9 +18,86 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/metric"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
+)
+
+type MMAMetrics struct {
+	ExternalLeaseMoveDroppedDueToStateInconsistency        *metric.Counter
+	ExternalReplicaRebalanceDroppedDueToStateInconsistency *metric.Counter
+	ExternalReplicaRebalanceSuccess                        *metric.Counter
+	ExternalReplicaRebalanceFailure                        *metric.Counter
+	ExternalLeaseTransferSuccess                           *metric.Counter
+	ExternalLeaseTransferFailure                           *metric.Counter
+}
+
+func makeMMAMetrics() *MMAMetrics {
+	return &MMAMetrics{
+		ExternalReplicaRebalanceDroppedDueToStateInconsistency: metric.NewCounter(metaExternalReplicaRebalanceDroppedDueToStateInconsistency),
+		ExternalLeaseMoveDroppedDueToStateInconsistency:        metric.NewCounter(metaExternalLeaseTransferDroppedDueToStateInconsistency),
+		ExternalReplicaRebalanceSuccess:                        metric.NewCounter(metaExternalReplicaRebalanceSuccess),
+		ExternalReplicaRebalanceFailure:                        metric.NewCounter(metaExternalReplicaRebalanceFailure),
+		ExternalLeaseTransferSuccess:                           metric.NewCounter(metaExternalLeaseTransferSuccess),
+		ExternalLeaseTransferFailure:                           metric.NewCounter(metaExternalLeaseTransferFailure),
+	}
+}
+
+var (
+	metaExternalReplicaRebalanceDroppedDueToStateInconsistency = metric.Metadata{
+		Name:        "mma.rebalances.dropped.external",
+		Help:        "",
+		Measurement: "Range Rebalances",
+		Unit:        metric.Unit_COUNT,
+		Essential:   true,
+		Category:    metric.Metadata_REPLICATION,
+	}
+
+	metaExternalLeaseTransferDroppedDueToStateInconsistency = metric.Metadata{
+		Name:        "mma.lease.dropped.external",
+		Help:        "",
+		Measurement: "Lease Transfers",
+		Unit:        metric.Unit_COUNT,
+		Essential:   true,
+		Category:    metric.Metadata_REPLICATION,
+	}
+
+	metaExternalReplicaRebalanceSuccess = metric.Metadata{
+		Name:        "mma.rebalances.external.success",
+		Help:        "",
+		Measurement: "Range Rebalances",
+		Unit:        metric.Unit_COUNT,
+		Essential:   true,
+		Category:    metric.Metadata_REPLICATION,
+	}
+
+	metaExternalLeaseTransferSuccess = metric.Metadata{
+		Name:        "mma.lease.external.success",
+		Help:        "",
+		Measurement: "Lease Transfers",
+		Unit:        metric.Unit_COUNT,
+		Essential:   true,
+		Category:    metric.Metadata_REPLICATION,
+	}
+
+	metaExternalReplicaRebalanceFailure = metric.Metadata{
+		Name:        "mma.rebalances.external.failure",
+		Help:        "",
+		Measurement: "Range Rebalances",
+		Unit:        metric.Unit_COUNT,
+		Essential:   true,
+		Category:    metric.Metadata_REPLICATION,
+	}
+
+	metaExternalLeaseTransferFailure = metric.Metadata{
+		Name:        "mma.lease.external.failure",
+		Help:        "",
+		Measurement: "Lease Transfers",
+		Unit:        metric.Unit_COUNT,
+		Essential:   true,
+		Category:    metric.Metadata_REPLICATION,
+	}
 )
 
 type allocatorState struct {
@@ -70,9 +147,9 @@ type allocatorState struct {
 	// try-write-lock that could quickly return with failure then we could avoid
 	// this. We could of course build our own queueing mechanism instead of
 	// relying on the queueing in mutex.
-
-	mu syncutil.Mutex
-	cs *clusterState
+	mmaMetrics *MMAMetrics
+	mu         syncutil.Mutex
+	cs         *clusterState
 
 	// Ranges that are under-replicated, over-replicated, don't satisfy
 	// constraints, have low diversity etc. Avoids iterating through all ranges.
@@ -102,6 +179,7 @@ func NewAllocatorState(ts timeutil.TimeSource, rand *rand.Rand) *allocatorState 
 		rangesNeedingAttention: map[roachpb.RangeID]struct{}{},
 		diversityScoringMemo:   newDiversityScoringMemo(),
 		rand:                   rand,
+		mmaMetrics:             makeMMAMetrics(),
 	}
 }
 
@@ -114,6 +192,10 @@ const ignoreLoadThresholdAndHigherGraceDuration = 5 * time.Minute
 const ignoreHigherThanLoadThresholdGraceDuration = 8 * time.Minute
 
 const overloadGracePeriod = time.Minute
+
+func (a *allocatorState) Metrics() *MMAMetrics {
+	return a.mmaMetrics
+}
 
 // Called periodically, say every 10s.
 //

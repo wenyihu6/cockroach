@@ -130,7 +130,7 @@ func (m *multiMetricStoreRebalancer) rebalance(ctx context.Context) (attemptedCh
 					m.metrics.RangeRebalanceCount.Inc(1)
 				}
 			}
-			m.as.PostApply(ctx, changeID, success)
+			m.as.PostApply(ctx, changeID, success, MMA)
 		}
 	}
 	return len(changes) > 0
