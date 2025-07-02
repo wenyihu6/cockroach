@@ -10,6 +10,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"math"
 	"math/rand"
 	"reflect"
@@ -253,6 +254,7 @@ func (s *state) updateStoreCapacity(storeID StoreID) {
 	if store, ok := s.stores[storeID]; ok {
 		capacity := s.capacity(storeID)
 		if override, ok := s.capacityOverrides[storeID]; ok {
+			log.Infof(context.Background(), "overriding store capacity before capacity %v override %v for store %v", capacity, override, storeID)
 			capacity = mergeOverride(capacity, override)
 		}
 		store.desc.Capacity = capacity

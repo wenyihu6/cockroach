@@ -17,6 +17,7 @@ go_library(
         "//pkg/roachpb",
         "//pkg/settings",
         "//pkg/util/humanizeutil",
+        "//pkg/util/log",
         "//pkg/util/timeutil",
         "@com_github_cockroachdb_redact//:redact",
     ],

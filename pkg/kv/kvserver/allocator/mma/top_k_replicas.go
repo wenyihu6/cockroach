@@ -2,7 +2,6 @@ package mma
 
 import (
 	"container/heap"
-
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 )
 
@@ -25,10 +24,14 @@ func (t *topKReplicas) startInit() {
 	t.replicaHeap = t.replicaHeap[:0]
 }
 
-func (t *topKReplicas) addReplica(rangeID roachpb.RangeID, loadValue LoadValue) {
+func (t *topKReplicas) addReplica(rangeID roachpb.RangeID, loadValue LoadValue, replicaStoreID roachpb.StoreID, msgStoreID roachpb.StoreID) {
 	if loadValue < t.threshold {
+		//log.Infof(context.Background(), "replica r%d load %v < threshold %v, skipping for dim %s, replica store id: %v, leaseholder store id: %v",
+		//	rangeID, loadValue, t.threshold, t.dim, replicaStoreID, msgStoreID)
 		return
 	}
+	//log.Infof(context.Background(), "replica r%d load %v < threshold %v, not skipping for dim %s, replica store id: %v, leaseholder store id: %v",
+	//	rangeID, loadValue, t.threshold, t.dim, replicaStoreID, msgStoreID)
 	rl := replicaLoad{
 		RangeID: rangeID,
 		load:    loadValue,

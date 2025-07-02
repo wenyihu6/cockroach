@@ -192,6 +192,7 @@ type meanNodeLoad struct {
 }
 
 type storeLoadSummary struct {
+	dimension                                              LoadDimension
 	sls                                                    loadSummary
 	nls                                                    loadSummary
 	dimSummary                                             [NumLoadDimensions]loadSummary
@@ -412,6 +413,12 @@ func computeMeansForStoreSet(
 		float64(means.nodeLoad.loadCPU) / float64(means.nodeLoad.capacityCPU)
 	means.nodeLoad.loadCPU /= LoadValue(n)
 	means.nodeLoad.capacityCPU /= LoadValue(n)
+	log.Infof(context.Background(), "means node load: load cpu: %v, capacity cpu: %v, util cpu: %v",
+		means.nodeLoad.loadCPU, means.nodeLoad.capacityCPU, means.nodeLoad.utilCPU)
+	log.Infof(context.Background(), "set for store means %v and store load %v",
+		means.stores, means.storeLoad.load)
+	log.Infof(context.Background(), "means store load: load: %v, capacity: %v, util: %v",
+		means.storeLoad.load, means.storeLoad.capacity, means.storeLoad.util)
 }
 
 // loadSummary aggregates across all load dimensions for a store, or a node.
@@ -464,6 +471,7 @@ func (ls loadSummary) SafeFormat(w redact.SafePrinter, _ rune) {
 
 // Computes the loadSummary for a particular load dimension.
 func loadSummaryForDimension(
+	storeID roachpb.StoreID,
 	dim LoadDimension, load LoadValue, capacity LoadValue, meanLoad LoadValue, meanUtil float64,
 ) loadSummary {
 	loadSummary := loadLow
@@ -495,6 +503,15 @@ func loadSummaryForDimension(
 	// useful when there are heterogeneous nodes/stores, so this computation
 	// will need to be revisited.
 
+	//means node load: load cpu: ‹33337›, capacity cpu: ‹49999›, util cpu: 0.6667444449629664
+	//I250702 11:56:33.421000 55 kv/kvserver/allocator/mma/load.go:418 ⋮ [-] 347900  means store load: load: [cpu: ‹33337›, write-bandwith: ‹0›, byte-size: ‹8053063499›], capacity: [cpu: ‹49999›, write-bandwith: ‹9223372036854775807›, byte-size: ‹219902325571›], util: [0.6667444449629664 0 0.036621092924276066]
+	//I250702 11:56:33.421007 55 kv/kvserver/allocator/mma/load.go:564 ⋮ [-] 347901  store id: 1, dim: CPURate, loadSummary: ‹loadNoChange›, fractionAbove: 0.09724930257671649, upper bound: ‹overloadUrgent›
+	// mean load: 33337
+	// s1 load: 0.09724930257671649
+	// I250702 11:56:33.421019 55 kv/kvserver/allocator/mma/allocator_state.go:471 ⋮ [n1s1,t59m35s] 347905  (lease-transfer) range 180 store 1
+	// sls=(store=‹loadNoChange› cpu=‹loadNoChange› writes=‹loadNormal› bytes=‹loadNormal› node=‹loadNoChange› high_disk=false fd=‹ok›, frac_pending=0.00,0.00(true))
+	// means [cpu: ‹33337›, write-bandwith: ‹0›, byte-size: ‹8053063499›]
+	// store [cpu: ‹36579›, write-bandwith: ‹0›, byte-size: ‹8053063499›]
 	fractionAbove := float64(load)/float64(meanLoad) - 1.0
 	var fractionUsed float64
 	if capacity != UnknownCapacity {
@@ -519,6 +536,7 @@ func loadSummaryForDimension(
 		meanFractionLow      = -0.1
 		meanFractionNoChange = 0.05
 	)
+	// 0.09724930257671649
 	if fractionAbove > meanFractionSlow {
 		loadSummary = overloadSlow
 	} else if fractionAbove < meanFractionLow {
@@ -536,21 +554,26 @@ func loadSummaryForDimension(
 		// overload due to heterogeneity, while we primarily still want to focus
 		// on balancing towards the mean usage.
 		if fractionUsed > 0.9 {
+			log.Infof(context.Background(), "store id: %v, dim: %v, loadSummary: %v, fractionAbove: %v, upper bound: %v", storeID, dim, min(summaryUpperBound, overloadUrgent), fractionAbove, summaryUpperBound)
 			return min(summaryUpperBound, overloadUrgent)
 		}
 		// INVARIANT: fractionUsed <= 0.9
 		if fractionUsed > 0.75 {
 			if meanUtil*1.5 < fractionUsed {
+				log.Infof(context.Background(), "store id: %v, dim: %v, loadSummary: %v, fractionAbove: %v, upper bound: %v", storeID, dim, min(summaryUpperBound, overloadUrgent), fractionAbove, summaryUpperBound)
 				return min(summaryUpperBound, overloadUrgent)
 			}
 			return min(summaryUpperBound, overloadSlow)
 		}
 		// INVARIANT: fractionUsed <= 0.75
 		if meanUtil*1.75 < fractionUsed {
+			log.Infof(context.Background(), "store id: %v, dim: %v, loadSummary: %v, fractionAbove: %v, upper bound: %v", storeID, dim, min(summaryUpperBound, overloadSlow), fractionAbove, summaryUpperBound)
 			return min(summaryUpperBound, overloadSlow)
 		}
+		log.Infof(context.Background(), "store id: %v, dim: %v, loadSummary: %v, fractionAbove: %v, upper bound: %v", storeID, dim, min(summaryUpperBound, max(loadSummary, loadNoChange)), fractionAbove, summaryUpperBound)
 		return min(summaryUpperBound, max(loadSummary, loadNoChange))
 	}
+	log.Infof(context.Background(), "store id: %v, dim: %v, loadSummary: %v, fractionAbove: %v, upper bound: %v", storeID, dim, min(summaryUpperBound, loadSummary), fractionAbove, summaryUpperBound)
 	return min(summaryUpperBound, loadSummary)
 }
 

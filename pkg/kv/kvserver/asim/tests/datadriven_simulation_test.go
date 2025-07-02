@@ -542,7 +542,7 @@ func TestDataDriven(t *testing.T) {
 
 				if showInitialValue {
 					buf.WriteString("\ninitial store values: ")
-					buf.WriteString(history.ShowRecordedValueAt(0, stat))
+					buf.WriteString(history.ShowRecordedValueAt(min(len(history.Recorded)-1, 1), stat))
 				}
 				if showLastValue {
 					buf.WriteString("\nlast store values: ")

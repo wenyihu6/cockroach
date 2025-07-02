@@ -771,6 +771,7 @@ func (ss *storeState) computeMaxFractionPending() {
 			continue
 		}
 		if ss.reportedLoad[i] == 0 {
+			log.Infof(context.Background(), "I'm confused why it is 0: %v for store %v", ss.reportedLoad, ss.StoreID)
 			fracIncrease = 1000
 			fracDecrease = 1000
 			break
@@ -1129,6 +1130,7 @@ func (cs *clusterState) processStoreLoadMsg(ctx context.Context, storeMsg *Store
 	// Reset the adjusted load to be the reported load. We will re-apply any
 	// remaining pending change deltas to the updated adjusted load.
 	ss.adjusted.load = storeMsg.Load
+	log.Infof(ctx, "for store %v, store load is %v", ss.StoreID, ss.adjusted.load)
 	ss.adjusted.secondaryLoad = storeMsg.SecondaryLoad
 	ss.maxFractionPendingIncrease, ss.maxFractionPendingDecrease = 0, 0
 
@@ -1381,6 +1383,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		if sls.highDiskSpaceUtilization {
 			topk.dim = ByteSize
 		} else if sls.sls > loadNoChange {
+			log.Infof(ctx, "sls.sls=%s", sls.sls)
 			// If multiple dimensions are contributing the same loadSummary, we will pick
 			// CPURate before WriteBandwidth before ByteSize.
 			for i := range sls.dimSummary {
@@ -1390,6 +1393,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 				}
 			}
 		}
+		log.Infof(ctx, "topk.dim=%s, sls=%s for remote store %d", topk.dim, sls.sls, ss.StoreID)
 		// Setting a threshold such that only ranges > some threshold of the
 		// store's load in the top-k dimension are included in the top-k. These
 		// values are copied from store_rebalancer.go:
@@ -1476,6 +1480,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 			// range in its set of replicas since there can be only one replica of a
 			// range on a node, and clusterState only maintains ranges for which
 			// some local store is a leaseholder.
+			log.Info(ctx, "this happened")
 			continue
 		}
 		rs := cs.ranges[rangeID]
@@ -1490,12 +1495,15 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 					l := rs.load.Load[CPURate]
 					if !replica.ReplicaState.IsLeaseholder {
 						l = rs.load.RaftCPU
+						if rs.load.RaftCPU != 0 {
+							log.Infof(ctx, "raft cpu is non-zero for once")
+						}
 					}
-					topk.addReplica(rangeID, l)
+					topk.addReplica(rangeID, l, replica.StoreID, msg.StoreID)
 				case WriteBandwidth:
-					topk.addReplica(rangeID, rs.load.Load[WriteBandwidth])
+					topk.addReplica(rangeID, rs.load.Load[WriteBandwidth], replica.StoreID, msg.StoreID)
 				case ByteSize:
-					topk.addReplica(rangeID, rs.load.Load[ByteSize])
+					topk.addReplica(rangeID, rs.load.Load[ByteSize], replica.StoreID, msg.StoreID)
 				}
 			}
 		}
@@ -2023,12 +2031,14 @@ func computeLoadSummary(
 	sls := loadLow
 	var highDiskSpaceUtil bool
 	var dimSummary [NumLoadDimensions]loadSummary
+	var dimension LoadDimension
 	for i := range msl.load {
 		// TODO(kvoli,sumeerbhola): Handle negative adjusted store/node loads.
 		ls := loadSummaryForDimension(
-			LoadDimension(i), ss.adjusted.load[i], ss.capacity[i], msl.load[i], msl.util[i])
+			ss.StoreID, LoadDimension(i), ss.adjusted.load[i], ss.capacity[i], msl.load[i], msl.util[i])
 		if ls > sls {
 			sls = ls
+			dimension = LoadDimension(i)
 		}
 		dimSummary[i] = ls
 		switch LoadDimension(i) {
@@ -2036,8 +2046,9 @@ func computeLoadSummary(
 			highDiskSpaceUtil = highDiskSpaceUtilization(ss.adjusted.load[i], ss.capacity[i])
 		}
 	}
-	nls := loadSummaryForDimension(CPURate, ns.adjustedCPU, ns.CapacityCPU, mnl.loadCPU, mnl.utilCPU)
+	nls := loadSummaryForDimension(0, CPURate, ns.adjustedCPU, ns.CapacityCPU, mnl.loadCPU, mnl.utilCPU)
 	return storeLoadSummary{
+		dimension:                  dimension,
 		sls:                        sls,
 		nls:                        nls,
 		dimSummary:                 dimSummary,

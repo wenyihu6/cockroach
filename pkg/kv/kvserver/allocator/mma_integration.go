@@ -76,6 +76,11 @@ func MakeStoreLoadMsg(desc roachpb.StoreDescriptor, origTimestampNanos int64) mm
 			// store to be > 100% e.g. if a node is at 80% cpu util and has 10
 			// stores, and all the cpu usage is due to store s1, then s1 will have
 			// 800% util.
+			// node capacity = stores cpu rate * node cpu capacity
+			//                 / node cpu rate usage
+			// cpu util (0.8) 10 stores
+			// node capacity = (stores cpu rate / 0.8) / 10
+			// store capacity = (stores cpu rate*8)
 			nodeCapacity := float64(desc.NodeCapacity.StoresCPURate) / cpuUtil
 			storeCapacity := nodeCapacity / float64(desc.NodeCapacity.NumStores)
 			capacity[mma.CPURate] = mma.LoadValue(storeCapacity)

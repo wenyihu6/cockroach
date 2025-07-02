@@ -328,6 +328,9 @@ func (ret RangesInfo) initializeRangesInfoWithSpanConfigs(
 	rangeInterval := int(float64(maxKey-minKey+1) / float64(numRanges))
 	for rngIdx := 0; rngIdx < numRanges; rngIdx++ {
 		key := Key(int64(rngIdx*rangeInterval)) + Key(minKey)
+		if int64(key) == maxKey {
+			panic("key == maxKey")
+		}
 		configCopy := config
 		rangeInfo := RangeInfo{
 			Descriptor: roachpb.RangeDescriptor{

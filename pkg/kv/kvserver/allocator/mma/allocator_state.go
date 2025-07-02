@@ -286,9 +286,15 @@ func (a *allocatorState) rebalanceStores(
 	// fdDrain or fdDead, nor do we attempt to shed replicas from a store which
 	// is storeMembershipRemoving (decommissioning). These are currently handled
 	// via replicate_queue.go.
+	var allStores []sheddingStore
+
 	for storeID, ss := range a.cs.stores {
 		sls := a.cs.meansMemo.getStoreLoadSummary(clusterMeans, storeID, ss.loadSeqNum)
-		log.VInfof(ctx, 2, "evaluating store s%d for shedding: load summary %v", storeID, sls)
+		log.VInfof(ctx, 2, "evaluating store s%d for shedding: load summary %v", storeID, sls.sls)
+		allStores = append(allStores, sheddingStore{
+			StoreID:          storeID,
+			storeLoadSummary: sls,
+		})
 
 		if sls.sls >= overloadSlow {
 			if ss.overloadEndTime != (time.Time{}) {
@@ -308,6 +314,7 @@ func (a *allocatorState) rebalanceStores(
 				log.VInfof(ctx, 2, "adding store s%d to shedding list: pending decrease %.2f < threshold %.2f, pending increase %.2f < epsilon",
 					storeID, ss.maxFractionPendingDecrease, maxFractionPendingThreshold, ss.maxFractionPendingIncrease)
 				sheddingStores = append(sheddingStores, sheddingStore{StoreID: storeID, storeLoadSummary: sls})
+				log.Infof(ctx, "store s%v was added to shedding store list: %v", storeID, sls.sls)
 			} else {
 				log.VInfof(ctx, 2, "skipping overloaded store s%d: pending decrease %.2f >= threshold %.2f or pending increase %.2f >= epsilon",
 					storeID, ss.maxFractionPendingDecrease, maxFractionPendingThreshold, ss.maxFractionPendingIncrease)
@@ -318,8 +325,37 @@ func (a *allocatorState) rebalanceStores(
 			log.Infof(ctx, "overload-end s%v (%v) - load dropped below no-change threshold", storeID, sls)
 			ss.overloadEndTime = now
 		}
+	}
+
+	slices.SortFunc(allStores, func(a, b sheddingStore) int {
+		// Prefer to shed from the local store first.
+		if a.StoreID == localStoreID {
+			return -1
+		} else if b.StoreID == localStoreID {
+			return 1
+		}
+		// Use StoreID for tie-breaker for determinism.
+		return cmp.Or(-cmp.Compare(a.nls, b.nls), -cmp.Compare(a.sls, b.sls),
+			cmp.Compare(a.StoreID, b.StoreID))
+	})
+
+	log.Infof(ctx, "local store is at s%d", localStoreID)
+
+	for _, store := range allStores {
+		log.Infof(ctx, "evaluating s%d: node load %s, store load %s worst dim %s",
+			store.StoreID, store.nls, store.sls, store.dimension)
 
 	}
+
+	for _, store := range allStores {
+		var b strings.Builder
+		b.WriteString(fmt.Sprintf("store load for %s", store.StoreID))
+		for dim, load := range store.dimSummary {
+			b.WriteString(fmt.Sprintf("dim(%s): %v; ", LoadDimension(dim), load))
+		}
+		log.Infof(ctx, "%s\n", b.String())
+	}
+
 	// We have used storeLoadSummary.sls to filter above. But when sorting, we
 	// first compare using nls. Consider the following scenario with 4 stores
 	// per node: node n1 is at 90% cpu utilization and has 4 stores each
@@ -360,7 +396,7 @@ func (a *allocatorState) rebalanceStores(
 	rangeMoveCount := 0
 	leaseTransferCount := 0
 	for _, store := range sheddingStores {
-		log.Infof(ctx, "processing shedding store s%d: node load %.2f, store load %.2f",
+		log.Infof(ctx, "processing shedding store s%d: node load %s, store load %s",
 			store.StoreID, store.nls, store.sls)
 		ss := a.cs.stores[store.StoreID]
 
@@ -955,9 +991,6 @@ func sortTargetCandidateSetAndPick(
 	}
 	if loadThreshold <= loadNoChange {
 		panic("loadThreshold must be > loadNoChange")
-	} else {
-		log.Infof(ctx, "sortTargetCandidateSetAndPick: loadThreshold=%v cands%s", loadThreshold,
-			b.String())
 	}
 	slices.SortFunc(cands.candidates, func(a, b candidateInfo) int {
 		if diversityScoresAlmostEqual(a.diversityScore, b.diversityScore) {
@@ -1111,7 +1144,7 @@ func sortTargetCandidateSetAndPick(
 		fmt.Fprintf(&b, " s%v(%v)", cands.candidates[i].StoreID, cands.candidates[i].sls)
 	}
 	j = rng.Intn(j)
-	log.Infof(ctx, "candidates:%s, picked s%v", b.String(), cands.candidates[j].StoreID)
+	log.Infof(ctx, "sortTargetCandidateSetAndPick: candidates:%s, picked s%v", b.String(), cands.candidates[j].StoreID)
 	if ignoreLevel == ignoreLoadNoChangeAndHigher && cands.candidates[j].sls >= loadNoChange ||
 		ignoreLevel == ignoreLoadThresholdAndHigher && cands.candidates[j].sls >= loadThreshold ||
 		ignoreLevel == ignoreHigherThanLoadThreshold && cands.candidates[j].sls > loadThreshold {
