@@ -1944,6 +1944,7 @@ func (cs *clusterState) canShedAndAddLoad(
 	means *meansForStoreSet,
 	onlyConsiderTargetCPUSummary bool,
 	overloadedDim LoadDimension,
+	threshold loadSummary,
 ) bool {
 	// TODO(tbg): in experiments, we often see interesting behavior right when
 	// the load delta addition flips the loadSummary for either the target or the
@@ -2003,7 +2004,7 @@ func (cs *clusterState) canShedAndAddLoad(
 	}
 
 	canAddLoad := !targetSLS.highDiskSpaceUtilization && overloadedDimPermitsChange &&
-		(targetSummary < loadNoChange ||
+		(targetSummary < threshold ||
 			(targetSLS.maxFractionPendingIncrease < epsilon &&
 				targetSLS.maxFractionPendingDecrease < epsilon &&
 				targetSLS.sls <= srcSLS.sls &&

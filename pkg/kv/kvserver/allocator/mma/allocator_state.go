@@ -246,6 +246,37 @@ func (a *allocatorState) LoadSummaryForAllStores() string {
 	return a.cs.loadSummaryForAllStores()
 }
 
+// computeThreshold computes the load summary for the target summary during
+// canShedAndAddLoad based on the ignore level and load threshold. The value
+// return is the load summary threshold we are willing to accept for the target
+// summary. We will take the transfer if the resulted target load summary is
+// less than the threshold.
+//
+// TODO(wenyihu6): Note that the computation for threshold is a little different
+// from sortTargetCandidateSetAndPick which involves
+// discardedCandsHadNoPendingChanges. Figure this piece out after confirming if
+// this is a desirable change.
+func computeThreshold(ignoreLevel ignoreLevel, loadThreshold loadSummary) loadSummary {
+	if loadThreshold <= loadNoChange {
+		panic("loadThreshold must be > loadNoChange")
+	}
+	switch ignoreLevel {
+	case ignoreLoadNoChangeAndHigher:
+		// Can take anything < load no change.
+		return loadNoChange
+	case ignoreLoadThresholdAndHigher:
+		// Lift the restriction and take anything < loadThreshold.
+		return loadThreshold
+	case ignoreHigherThanLoadThreshold:
+		// Lift the restriction and take anything < loadThreshold. We don't return
+		// loadThreshold + 1 for ignoreHigherThanLoadThreshold since it seems too
+		// aggressive for data-driven tests.
+		return loadThreshold
+	default:
+		panic(fmt.Sprintf("unexpected ignoreLevel: %v", ignoreLevel))
+	}
+}
+
 var mmaid = atomic.Int64{}
 
 // Called periodically, say every 10s.
@@ -532,7 +563,7 @@ func (a *allocatorState) rebalanceStores(
 					addedLoad[CPURate] = 0
 					panic("raft cpu higher than total cpu")
 				}
-				if !a.cs.canShedAndAddLoad(ctx, ss, targetSS, addedLoad, &means, true, CPURate) {
+				if !a.cs.canShedAndAddLoad(ctx, ss, targetSS, addedLoad, &means, true, CPURate, computeThreshold(ignoreHigherThanLoadThreshold, sls.sls)) {
 					log.VInfof(ctx, 2, "result(failed): cannot shed from s%d to s%d for r%d: delta load %v",
 						store.StoreID, targetStoreID, rangeID, addedLoad)
 					continue
@@ -739,7 +770,7 @@ func (a *allocatorState) rebalanceStores(
 			if !isLeaseholder {
 				addedLoad[CPURate] = rstate.load.RaftCPU
 			}
-			if !a.cs.canShedAndAddLoad(ctx, ss, targetSS, addedLoad, cands.means, false, loadDim) {
+			if !a.cs.canShedAndAddLoad(ctx, ss, targetSS, addedLoad, cands.means, false, loadDim, computeThreshold(ignoreLevel, ssSLS.sls)) {
 				log.VInfof(ctx, 2, "result(failed): cannot shed from s%d to s%d for r%d: delta load %v",
 					store.StoreID, targetStoreID, rangeID, addedLoad)
 				continue
