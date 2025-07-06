@@ -646,7 +646,7 @@ func (a *allocatorState) rebalanceStores(
 			log.VInfof(ctx, 2, "excluding all stores on n%d due to overload/fd status", nodeID)
 		} else {
 			// This store is excluded of course.
-			storesToExclude.insert(store.StoreID)
+			//storesToExclude.insert(store.StoreID)
 		}
 
 		// Iterate over top-K ranges first and try to move them.
