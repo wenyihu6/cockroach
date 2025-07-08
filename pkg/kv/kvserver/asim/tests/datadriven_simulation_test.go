@@ -470,6 +470,15 @@ func TestDataDriven(t *testing.T) {
 				}
 				return ""
 			case "setting":
+				var delay time.Duration
+				if isDelayed := scanIfExists(t, d, "delay", &delay); isDelayed {
+					var rebalanceMode int64
+					scanMustExist(t, d, "rebalance_mode", &rebalanceMode)
+					eventGen.ScheduleEvent(settingsGen.Settings.StartTime, delay, event.SetSimulationSettingsEvent{
+						Key:   "LBRebalancingMode",
+						Value: rebalanceMode,
+					})
+				}
 				scanIfExists(t, d, "replicate_queue_enabled", &settingsGen.Settings.ReplicateQueueEnabled)
 				scanIfExists(t, d, "lease_queue_enabled", &settingsGen.Settings.LeaseQueueEnabled)
 				scanIfExists(t, d, "split_queue_enabled", &settingsGen.Settings.SplitQueueEnabled)
