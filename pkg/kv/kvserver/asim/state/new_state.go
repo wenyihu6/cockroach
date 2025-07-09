@@ -234,6 +234,7 @@ func ClusterInfoWithDistribution(
 	nodeCount int, storesPerNode int, regions []string, regionNodeWeights []float64,
 ) ClusterInfo {
 	ret := ClusterInfo{}
+	ret.DiskCapacityGB = 256
 
 	ret.Regions = make([]Region, len(regions))
 	availableNodes := nodeCount
