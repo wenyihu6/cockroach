@@ -15,9 +15,8 @@ import (
 // disabled. For instance, defaultBasicRangesGen is only used if
 // randOption.range is false.
 const (
-	defaultNodes             = 3
-	defaultStoresPerNode     = 1
-	defaultStoreByteCapacity = 256 << 30 // 256 GiB
+	defaultNodes         = 3
+	defaultStoresPerNode = 1
 )
 
 const (
@@ -69,7 +68,6 @@ func getDefaultStaticOptionSettings() staticOptionSettings {
 	return staticOptionSettings{
 		nodes:               defaultNodes,
 		storesPerNode:       defaultStoresPerNode,
-		storeByteCapacity:   defaultStoreByteCapacity,
 		rwRatio:             defaultRwRatio,
 		rate:                defaultRate,
 		minBlock:            defaultMinBlock,
