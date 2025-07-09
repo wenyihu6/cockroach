@@ -63,16 +63,15 @@ func (rl *ReplicaLoadCounter) ApplyLoad(le workload.LoadEvent) {
 	rl.WriteBytes += le.WriteSize
 	rl.WriteKeys += le.Writes
 
+	rl.loadStats.RecordBatchRequests(LoadEventQPS(le), 0)
+	rl.loadStats.RecordWriteBytes(float64(le.WriteSize))
 	// TODO(kvoli): Recording the load on every load counter is horribly
 	// inefficient at the moment. It multiplies the time taken per test almost
 	// linearly by the number of load stats counters we bump. The other load
 	// stats are not used currently, re-enable them when perf is fixed and they
 	// are used.
-	rl.loadStats.RecordBatchRequests(LoadEventQPS(le), 0)
-	rl.loadStats.RecordWriteBytes(float64(le.WriteSize))
 	rl.loadStats.RecordReqCPUNanos(float64(le.RequestCPU))
 	rl.loadStats.RecordRaftCPUNanos(float64(le.RaftCPU))
-	rl.loadStats.RecordWriteBytes(float64(le.WriteSize))
 }
 
 // Load translates the recorded key accesses and size into range usage

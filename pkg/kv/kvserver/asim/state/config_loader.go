@@ -320,8 +320,6 @@ func initializeRangesInfoWithSpanConfigs(
 ) RangesInfo {
 	// If there are no ranges specified, default to 1 range.
 	if numRanges == 0 {
-		// TODO(tbg): possibly unused, try changing to a panic
-		// and seeing what happens.
 		numRanges = 1
 	}
 	ret := make(RangesInfo, numRanges)
@@ -380,6 +378,7 @@ func LoadClusterInfo(c ClusterInfo, settings *config.SimulationSettings) State {
 			for i := 0; i < z.NodeCount; i++ {
 				node := s.AddNode()
 				s.SetNodeLocality(node.NodeID(), locality)
+				s.SetNodeCPURateCapacity(node.NodeID(), c.NodeCPURateCapacityNanos)
 				storesRequired := z.StoresPerNode
 				if storesRequired < 1 {
 					panic(fmt.Sprintf("storesPerNode cannot be less than one but found %v", storesRequired))

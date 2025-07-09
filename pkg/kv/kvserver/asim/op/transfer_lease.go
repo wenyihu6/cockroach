@@ -22,7 +22,9 @@ type TransferLeaseOp struct {
 
 // NewTransferLeaseOp returns a new TransferLeaseOp.
 func NewTransferLeaseOp(
-	tick time.Time, rangeID roachpb.RangeID, source, target roachpb.StoreID,
+	tick time.Time,
+	rangeID roachpb.RangeID,
+	source, target roachpb.StoreID,
 ) *TransferLeaseOp {
 	return &TransferLeaseOp{
 		baseOp:  newBaseOp(tick),
