@@ -4,7 +4,7 @@
 # constraint conjunction currently satisfied by the decommissioning replica
 # being replaced, it was possible that a valid replacement target would never
 # be selected.
-gen_cluster nodes=4 region=(a,b,c) nodes_per_region=(1,1,2)
+gen_cluster nodes=4 locality=(a,b,c) nodes_per_region=(1,1,2)
 ----
 
 # Generate 5 ranges, where initially there will be two replicas in region c and
