@@ -324,6 +324,11 @@ func (s *state) Nodes() []Node {
 	return nodes
 }
 
+func (s *state) Node(nodeID NodeID) Node {
+	node := s.nodes[nodeID]
+	return node
+}
+
 // RangeFor returns the range containing Key in [StartKey, EndKey). This
 // cannot fail.
 func (s *state) RangeFor(key Key) Range {
