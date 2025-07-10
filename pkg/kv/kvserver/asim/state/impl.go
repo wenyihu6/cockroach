@@ -37,6 +37,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/spanconfig/spanconfigreporter"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
+	"github.com/cockroachdb/logtags"
 	"github.com/google/btree"
 )
 
@@ -1149,7 +1150,24 @@ func (s *state) UpdateStorePool(
 		detail := storeDescriptors[gossipStoreID]
 		copiedDetail := detail.Copy()
 		node.storepool.Details.StoreDetails.Store(gossipStoreID, copiedDetail)
+		copiedDesc := *copiedDetail.Desc
 		// TODO(mma): Support origin timestamps.
+		ts := s.clock.Now()
+		storeLoadMsg := mmaprototypehelpers.MakeStoreLoadMsg(copiedDesc, ts.UnixNano())
+		node.mmAllocator.SetStore(StoreAttrAndLocFromDesc(copiedDesc))
+		ctx := logtags.AddTag(context.Background(), fmt.Sprintf("n%d", nodeID), "")
+		ctx = logtags.AddTag(ctx, "t", ts.Sub(s.settings.StartTime))
+		node.mmAllocator.ProcessStoreLoadMsg(ctx, &storeLoadMsg)
+	}
+}
+
+func StoreAttrAndLocFromDesc(desc roachpb.StoreDescriptor) mmaprototype.StoreAttributesAndLocality {
+	return mmaprototype.StoreAttributesAndLocality{
+		StoreID:      desc.StoreID,
+		NodeID:       desc.Node.NodeID,
+		NodeAttrs:    desc.Node.Attrs,
+		NodeLocality: desc.Node.Locality,
+		StoreAttrs:   desc.Attrs,
 	}
 }
 

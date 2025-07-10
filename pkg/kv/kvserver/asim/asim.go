@@ -183,6 +183,17 @@ func (s *Simulator) addStore(storeID state.StoreID, tick time.Time) {
 		s.settings,
 		storerebalancer.GetStateRaftStatusFn(s.state),
 	)
+	// TODO: We add the store to every node's allocator in the cluster
+	// immediately. This is also updated via gossip, however there is a delay
+	// after startup. When calling `mma.ProcessStoreLeaseholderMsg` via
+	// tickMMStoreRebalancers, there may be not be a store state for some
+	// replicas. Setting it here ensures that the store is always present and
+	// initiated in each node's allocator. We should instead handle this in mma,
+	// or integration component.
+	for _, node := range s.state.Nodes() {
+		node.MMAllocator().SetStore(state.StoreAttrAndLocFromDesc(
+			s.state.StoreDescriptors(false, storeID)[0]))
+	}
 	s.mmSRs[storeID] = mmaintegration.NewMMAStoreRebalancer(
 		storeID,
 		store.NodeID(),
