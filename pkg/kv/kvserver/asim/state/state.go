@@ -7,13 +7,13 @@ package state
 
 import (
 	"fmt"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"strconv"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/workload"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
@@ -60,6 +60,7 @@ type State interface {
 	// first flag is false, then the capacity is generated from scratch,
 	// otherwise the last calculated capacity values are used for each store.
 	StoreDescriptors(bool, ...StoreID) []roachpb.StoreDescriptor
+	Node(NodeID) Node
 	// Nodes returns all nodes that exist in this state.
 	Nodes() []Node
 	// RangeFor returns the range containing Key in [StartKey, EndKey). This
