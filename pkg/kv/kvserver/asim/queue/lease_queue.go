@@ -9,10 +9,10 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
@@ -25,11 +25,12 @@ import (
 type leaseQueue struct {
 	baseQueue
 	plan.ReplicaPlanner
-	storePool storepool.AllocatorStorePool
-	planner   plan.ReplicationPlanner
-	clock     *hlc.Clock
-	settings  *config.SimulationSettings
-	as        *mmaprototypehelpers.AllocatorSync
+	storePool        storepool.AllocatorStorePool
+	planner          plan.ReplicationPlanner
+	clock            *hlc.Clock
+	settings         *config.SimulationSettings
+	as               *mmaprototypehelpers.AllocatorSync
+	lastSyncChangeID mmaprototypehelpers.SyncChangeID
 }
 
 // NewLeaseQueue returns a new lease queue.
@@ -117,6 +118,11 @@ func (lq *leaseQueue) Tick(ctx context.Context, tick time.Time, s state.State) {
 		lq.next = lq.lastTick
 	}
 
+	if !tick.Before(lq.next) && lq.lastSyncChangeID.IsValid() {
+		lq.as.PostApply(ctx, lq.lastSyncChangeID, true /* success */)
+		lq.lastSyncChangeID = mmaprototypehelpers.InvalidSyncChangeID
+	}
+
 	for !tick.Before(lq.next) && lq.priorityQueue.Len() != 0 {
 		item := heap.Pop(lq).(*replicaItem)
 		if item == nil {
@@ -156,8 +162,8 @@ func (lq *leaseQueue) Tick(ctx context.Context, tick time.Time, s state.State) {
 			continue
 		}
 
-		pushReplicateChange(
-			ctx, change, rng, tick, lq.settings.ReplicaChangeDelayFn(), lq.baseQueue)
+		lq.next, lq.lastSyncChangeID = pushReplicateChange(
+			ctx, change, repl, tick, lq.settings.ReplicaChangeDelayFn(), lq.baseQueue.stateChanger, lq.as, "lease queue")
 	}
 
 	lq.lastTick = tick
