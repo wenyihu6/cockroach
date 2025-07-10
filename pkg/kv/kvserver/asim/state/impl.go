@@ -426,6 +426,7 @@ func (s *state) AddNode() Node {
 		stores:      []StoreID{},
 		storepool:   sp,
 		mmAllocator: mmAllocator,
+		as:          kvserver.NewAllocatorSync(sp, mmAllocator),
 	}
 	s.nodes[nodeID] = node
 	s.SetNodeLiveness(nodeID, livenesspb.NodeLivenessStatus_LIVE)
@@ -568,7 +569,6 @@ func (s *state) AddStore(nodeID NodeID) (Store, bool) {
 		nodeID:    nodeID,
 		desc:      roachpb.StoreDescriptor{StoreID: roachpb.StoreID(storeID), Node: node.Descriptor()},
 		storepool: sp,
-		settings:  s.settings.ST,
 		allocator: allocator,
 		replicas:  make(map[RangeID]ReplicaID),
 	}
@@ -1403,9 +1403,11 @@ type node struct {
 	desc            roachpb.NodeDescriptor
 	cpuRateCapacity int64
 
-	stores      []StoreID
-	storepool   *storepool.StorePool
+	stores []StoreID
+
 	mmAllocator mmaprototype.Allocator
+	storepool   *storepool.StorePool
+	as          *kvserver.AllocatorSync
 }
 
 // NodeID returns the ID of this node.
@@ -1427,6 +1429,10 @@ func (n *node) MMAllocator() mmaprototype.Allocator {
 	return n.mmAllocator
 }
 
+func (n *node) AllocatorSync() *kvserver.AllocatorSync {
+	return n.as
+}
+
 // store is an implementation of the Store interface.
 type store struct {
 	storeID StoreID
@@ -1434,7 +1440,6 @@ type store struct {
 	desc    roachpb.StoreDescriptor
 
 	storepool *storepool.StorePool
-	settings  *cluster.Settings
 	replicas  map[RangeID]ReplicaID
 	// Old allocator is still used for queues.
 	allocator allocatorimpl.Allocator
@@ -1529,7 +1534,7 @@ func (r *rng) String() string {
 
 	for i, storeID := range storeIDs {
 		replica := r.replicas[storeID]
-		builder.WriteString(fmt.Sprintf("s%d:r%d", storeID, replica.replicaID))
+		builder.WriteString(fmt.Sprintf("s%d:r%d(%s)", storeID, replica.replicaID, replica.desc.Type))
 		if r.leaseholder == replica.replicaID {
 			builder.WriteString("*")
 		}

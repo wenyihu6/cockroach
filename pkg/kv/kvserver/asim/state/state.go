@@ -7,12 +7,13 @@ package state
 
 import (
 	"fmt"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"strconv"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/workload"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
@@ -59,6 +60,7 @@ type State interface {
 	// first flag is false, then the capacity is generated from scratch,
 	// otherwise the last calculated capacity values are used for each store.
 	StoreDescriptors(bool, ...StoreID) []roachpb.StoreDescriptor
+	Node(NodeID) Node
 	// Nodes returns all nodes that exist in this state.
 	Nodes() []Node
 	// RangeFor returns the range containing Key in [StartKey, EndKey). This
@@ -153,8 +155,8 @@ type State interface {
 	TickClock(time.Time)
 	// Clock returns the state Clock.
 	Clock() timeutil.TimeSource
-	// UpdateStorePool modifies the state of the StorePool for the Store with
-	// ID StoreID.
+	// UpdateStorePool modifies the state of the StorePool for the Node with
+	// ID NodeID.
 	UpdateStorePool(NodeID, map[roachpb.StoreID]*storepool.StoreDetailMu)
 	// NextReplicasFn returns a function, that when called will return the current
 	// replicas that exist on the store.
@@ -215,8 +217,10 @@ type Node interface {
 	Stores() []StoreID
 	// Descriptor returns the descriptor for this node.
 	Descriptor() roachpb.NodeDescriptor
-	// TODO(wenyihu6): use this in store rebalancer
+	// TODO: Move these to be external.
 	MMAllocator() mmaprototype.Allocator
+	// AllocatorSync returns the AllocatorSync for this node.
+	AllocatorSync() *kvserver.AllocatorSync
 }
 
 // Store is a container for replicas.
