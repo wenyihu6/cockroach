@@ -76,7 +76,7 @@ var LoadBasedRebalancingMode = settings.RegisterEnumSetting(
 	settings.SystemOnly,
 	"kv.allocator.load_based_rebalancing",
 	"whether to rebalance based on the distribution of load across stores",
-	"leases and replicas",
+	"multi-metric",
 	map[LBRebalancingMode]string{
 		LBRebalancingOff:               "off",
 		LBRebalancingLeasesOnly:        "leases",
@@ -205,7 +205,8 @@ func NewStoreRebalancer(
 			return !rq.store.cfg.SpanConfigSubscriber.LastUpdated().IsEmpty()
 		},
 		disabled: func() bool {
-			return LoadBasedRebalancingMode.Get(&st.SV) == LBRebalancingOff ||
+			mode := LoadBasedRebalancingMode.Get(&st.SV)
+			return mode == LBRebalancingOff || mode == LBRebalancingMultiMetric ||
 				rq.store.cfg.TestingKnobs.DisableStoreRebalancer
 		},
 	}
@@ -494,6 +495,14 @@ func (sr *StoreRebalancer) ShouldRebalanceStore(ctx context.Context, rctx *Rebal
 	if rctx == nil {
 		log.KvDistribution.Warningf(ctx,
 			"no rebalance context given, bailing out of rebalancing store, will try again later")
+		return false
+	}
+
+	if !(rctx.mode == LBRebalancingLeasesOnly || rctx.mode == LBRebalancingLeasesAndReplicas) {
+		// There's nothing to do, the store rebalancer is disabled. Note that this
+		// is redundant when called via the store rebalancer's Start method, but
+		// it's necessary when called from tests, which don't start the store
+		// rebalancer loop, such as the asim pkg.
 		return false
 	}
 
