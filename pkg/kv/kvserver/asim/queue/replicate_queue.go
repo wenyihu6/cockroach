@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
@@ -175,8 +175,8 @@ func pushReplicateChange(
 	case plan.AllocationTransferLeaseOp:
 		stateChange = &state.LeaseTransferChange{
 			RangeID:        state.RangeID(change.Replica.GetRangeID()),
-			TransferTarget: state.StoreID(op.Target),
-			Author:         state.StoreID(op.Source),
+			TransferTarget: state.StoreID(op.Target.StoreID),
+			Author:         state.StoreID(op.Source.StoreID),
 			Wait:           delayFn(rng.Size(), true),
 		}
 	case plan.AllocationChangeReplicasOp:
