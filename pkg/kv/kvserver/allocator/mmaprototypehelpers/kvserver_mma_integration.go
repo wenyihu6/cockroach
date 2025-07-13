@@ -324,45 +324,45 @@ func (as *AllocatorSync) PostApply(ctx context.Context, syncChangeID SyncChangeI
 	if as == nil {
 		return
 	}
-	var tracked trackedAllocatorChange
-	func() {
-		as.mu.Lock()
-		defer as.mu.Unlock()
-		var ok bool
-		tracked, ok = as.mu.trackedChanges[syncChangeID]
-		if !ok {
-			panic("PostApply called with unknown SyncChangeID")
-		}
-		delete(as.mu.trackedChanges, syncChangeID)
-	}()
-	if changeIDs := tracked.changeIDs; changeIDs != nil {
-		log.Infof(ctx, "PostApply: tracked=%v change_ids=%v success: %v", tracked, changeIDs, success)
-		as.updateMetrics(success, tracked.typ, tracked.author)
-		as.mmAllocator.AdjustPendingChangesDisposition(changeIDs, success)
-	} else {
-		log.Infof(ctx, "PostApply: tracked=%v no change_ids success: %v", tracked, success)
-	}
-	as.updateMetrics(success, tracked.typ, tracked.author)
-	if !success {
-		return
-	}
-	switch tracked.typ {
-	case AllocatorChangeTypeLeaseTransfer:
-		as.sp.UpdateLocalStoresAfterLeaseTransfer(tracked.transferFrom,
-			tracked.transferTo, tracked.usage)
-	case AllocatorChangeTypeChangeReplicas:
-		for _, chg := range tracked.chgs {
-			as.sp.UpdateLocalStoreAfterRebalance(
-				chg.Target.StoreID, tracked.usage, chg.ChangeType)
-		}
-	case AllocatorChangeTypeRelocateRange:
-		// TODO(kvoli): We don't need to implement this until later, as only one
-		// store rebalancer will run at a time and only the old store rebalancer
-		// issues relocate range commands.
-		//
-		// TODO(sumeer): We should implement it, and make all changes flow through
-		// AllocatorSync, even when the mma.Allocator is not used, since that
-		// simplifies the code.
-		panic("unimplemented")
-	}
+	// var tracked trackedAllocatorChange
+	// func() {
+	// 	as.mu.Lock()
+	// 	defer as.mu.Unlock()
+	// 	var ok bool
+	// 	tracked, ok = as.mu.trackedChanges[syncChangeID]
+	// 	if !ok {
+	// 		panic("PostApply called with unknown SyncChangeID")
+	// 	}
+	// 	delete(as.mu.trackedChanges, syncChangeID)
+	// }()
+	// if changeIDs := tracked.changeIDs; changeIDs != nil {
+	// 	log.Infof(ctx, "PostApply: tracked=%v change_ids=%v success: %v", tracked, changeIDs, success)
+	// 	as.updateMetrics(success, tracked.typ, tracked.author)
+	// 	as.mmAllocator.AdjustPendingChangesDisposition(changeIDs, success)
+	// } else {
+	// 	log.Infof(ctx, "PostApply: tracked=%v no change_ids success: %v", tracked, success)
+	// }
+	// as.updateMetrics(success, tracked.typ, tracked.author)
+	// if !success {
+	// 	return
+	// }
+	// switch tracked.typ {
+	// case AllocatorChangeTypeLeaseTransfer:
+	// 	as.sp.UpdateLocalStoresAfterLeaseTransfer(tracked.transferFrom,
+	// 		tracked.transferTo, tracked.usage)
+	// case AllocatorChangeTypeChangeReplicas:
+	// 	for _, chg := range tracked.chgs {
+	// 		as.sp.UpdateLocalStoreAfterRebalance(
+	// 			chg.Target.StoreID, tracked.usage, chg.ChangeType)
+	// 	}
+	// case AllocatorChangeTypeRelocateRange:
+	// 	// TODO(kvoli): We don't need to implement this until later, as only one
+	// 	// store rebalancer will run at a time and only the old store rebalancer
+	// 	// issues relocate range commands.
+	// 	//
+	// 	// TODO(sumeer): We should implement it, and make all changes flow through
+	// 	// AllocatorSync, even when the mma.Allocator is not used, since that
+	// 	// simplifies the code.
+	// 	panic("unimplemented")
+	// }
 }
