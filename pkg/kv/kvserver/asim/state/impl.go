@@ -555,22 +555,13 @@ func (s *state) AddStore(nodeID NodeID) (Store, bool) {
 	sp := node.storepool
 	s.storeSeqGen++
 	storeID := s.storeSeqGen
-	// Old allocator is still needed for other queues.
-	allocator := allocatorimpl.MakeAllocator(
-		s.settings.ST,
-		sp.IsDeterministic(),
-		func(id roachpb.NodeID) (time.Duration, bool) { return 0, true },
-		&allocator.TestingKnobs{
-			AllowLeaseTransfersToReplicasNeedingSnapshots: true,
-		},
-	)
+
 	store := &store{
 		storeID:   storeID,
 		nodeID:    nodeID,
 		desc:      roachpb.StoreDescriptor{StoreID: roachpb.StoreID(storeID), Node: node.Descriptor()},
 		storepool: sp,
 		settings:  s.settings.ST,
-		allocator: allocator,
 		replicas:  make(map[RangeID]ReplicaID),
 	}
 
@@ -1185,9 +1176,17 @@ func (s *state) NodeCountFn() storepool.NodeCountFunc {
 	}
 }
 
-// Allocator returns an allocator for the Store with ID StoreID.
-func (s *state) Allocator(storeID StoreID) allocatorimpl.Allocator {
-	return s.stores[storeID].allocator
+// MakeAllocator returns an allocator for the Store with ID StoreID, it
+// populates the storepool with the current state.
+func (s *state) MakeAllocator(storeID StoreID) allocatorimpl.Allocator {
+	return allocatorimpl.MakeAllocator(
+		s.stores[storeID].settings,
+		s.stores[storeID].storepool.IsDeterministic(),
+		func(id roachpb.NodeID) (time.Duration, bool) { return 0, true },
+		&allocator.TestingKnobs{
+			AllowLeaseTransfersToReplicasNeedingSnapshots: true,
+		},
+	)
 }
 
 // StorePool returns the store pool for the given storeID.

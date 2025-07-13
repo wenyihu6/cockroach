@@ -177,7 +177,7 @@ type State interface {
 	// TODO(kvoli): The storepool is part of the state at some tick, however
 	// the allocator and storepool should both be separated out of this
 	// interface, instead using it to populate themselves.
-	Allocator(StoreID) allocatorimpl.Allocator
+	MakeAllocator(StoreID) allocatorimpl.Allocator
 	// StorePool returns the store pool for the given storeID.
 	StorePool(StoreID) storepool.AllocatorStorePool
 	// LoadSplitterFor returns the load splitter for the Store with ID StoreID.
