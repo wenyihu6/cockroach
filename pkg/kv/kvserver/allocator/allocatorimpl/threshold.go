@@ -6,9 +6,12 @@
 package allocatorimpl
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/load"
 	"github.com/cockroachdb/cockroach/pkg/settings"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
 )
 
@@ -102,6 +105,7 @@ func LoadRebalanceRequiredMinDiff(sv *settings.Values, dims ...load.Dimension) l
 // OverfullLoadThresholds returns the overfull load threshold for each load
 // dimension.
 func OverfullLoadThresholds(means, thresholds, minThresholds load.Load) load.Load {
+	log.KvDistribution.Infof(context.Background(), "thresholds: %v, minThresholds: %v", load.ElementWiseProduct(means, thresholds), minThresholds)
 	return load.Add(means, load.Max(load.ElementWiseProduct(means, thresholds), minThresholds))
 }
 

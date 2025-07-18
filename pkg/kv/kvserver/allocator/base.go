@@ -36,7 +36,7 @@ const (
 	// number was arrived at from testing to minimize thrashing. This number is
 	// set independent of processor speed and assumes identical value of cpu
 	// time across all stores. i.e. all cpu's are identical.
-	MinCPUThresholdDifference = float64(50 * time.Millisecond)
+	MinCPUThresholdDifference = float64(1 * time.Nanosecond)
 
 	// MinCPUDifferenceForTransfers is the minimum CPU difference that a
 	// store rebalncer would care about to reconcile (via lease or replica
