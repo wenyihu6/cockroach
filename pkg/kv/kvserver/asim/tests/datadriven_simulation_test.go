@@ -565,11 +565,13 @@ func TestDataDriven(t *testing.T) {
 				var stat string
 				var height, width, sample = 15, 80, 1
 				var buf strings.Builder
+				var format = "graph"
 
 				scanMustExist(t, d, "stat", &stat)
 				scanIfExists(t, d, "sample", &sample)
 				scanIfExists(t, d, "height", &height)
 				scanIfExists(t, d, "width", &width)
+				scanIfExists(t, d, "format", &format)
 
 				require.GreaterOrEqual(t, len(runs), sample)
 
