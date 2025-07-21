@@ -6,6 +6,7 @@ go_library(
         "node_capacity_provider.go",
         "record_replica_load.go",
         "replica_load.go",
+        "runtime_load_monitor.go",
         "testing_knobs.go",
     ],
     importpath = "github.com/cockroachdb/cockroach/pkg/kv/kvserver/load",

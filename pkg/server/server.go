@@ -596,9 +596,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		rand.New(rand.NewSource(timeutil.Now().UnixNano())))
 	nodeRegistry.AddMetricStruct(mmAllocator.Metrics())
 
-	allocatorSync := mmaprototypehelpers.NewAllocatorSync(storePool, mmAllocator, func() bool {
-		return kvserver.LoadBasedRebalancingMode.Get(&st.SV) == kvserver.LBRebalancingMultiMetric
-	})
+	allocatorSync := kvserver.NewAllocatorSync(storePool, mmAllocator, st)
 	// TODO: Move this into a dedicated integration struct (per node, not
 	// per-store) for mma.Allocator.
 	g.RegisterCallbackWithOrigTimestamp(

@@ -12,7 +12,6 @@ go_library(
         "//pkg/kv/kvserver",
         "//pkg/kv/kvserver/allocator",
         "//pkg/kv/kvserver/allocator/mmaprototype",
-        "//pkg/kv/kvserver/allocator/mmaprototypehelpers",
         "//pkg/kv/kvserver/asim/config",
         "//pkg/kv/kvserver/asim/op",
         "//pkg/kv/kvserver/asim/state",

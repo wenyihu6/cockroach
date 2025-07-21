@@ -3,7 +3,7 @@
 // Use of this software is governed by the CockroachDB Software License
 // included in the /LICENSE file.
 
-package mmaprototypehelpers
+package kvserver
 
 import (
 	"context"
@@ -12,8 +12,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 )
@@ -64,7 +66,7 @@ type AllocatorSync struct {
 	// exporting them for integration since they are used in the asim package.
 	Sp          *storepool.StorePool
 	mmAllocator mmaprototype.Allocator
-	enabled     func() bool
+	st          *cluster.Settings
 	mu          struct {
 		syncutil.Mutex
 		changeSeqGen   SyncChangeID
@@ -73,12 +75,12 @@ type AllocatorSync struct {
 }
 
 func NewAllocatorSync(
-	sp *storepool.StorePool, mmAllocator mmaprototype.Allocator, mmmaEnabled func() bool,
+	sp *storepool.StorePool, mmAllocator mmaprototype.Allocator, st *cluster.Settings,
 ) *AllocatorSync {
 	as := &AllocatorSync{
 		Sp:          sp,
 		mmAllocator: mmAllocator,
-		enabled:     mmmaEnabled,
+		st:          st,
 	}
 	as.mu.trackedChanges = make(map[SyncChangeID]trackedAllocatorChange)
 	return as
@@ -118,18 +120,18 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 ) SyncChangeID {
 	existingReplicas := make([]mmaprototype.StoreIDAndReplicaState, len(desc.InternalReplicas))
 	for i, replica := range desc.Replicas().Descriptors() {
-		existingReplicas[i] = ReplicaDescriptorToReplicaIDAndType(replica, transferFrom.StoreID)
+		existingReplicas[i] = mmaprototypehelpers.ReplicaDescriptorToReplicaIDAndType(replica, transferFrom.StoreID)
 	}
 	replicaChanges := mmaprototype.MakeLeaseTransferChanges(desc.RangeID,
 		existingReplicas,
-		UsageInfoToMMALoad(usage),
+		mmaprototypehelpers.UsageInfoToMMALoad(usage),
 		transferTo,
 		transferFrom,
 	)
 	log.Infof(ctx, "registering external lease transfer change: usage=%v changes=%v",
 		usage, replicaChanges)
 	var changeIDs []mmaprototype.ChangeID
-	if as.enabled() {
+	if LoadBasedRebalancingMode.Get(&as.st.SV) == LBRebalancingMultiMetric {
 		changeIDs = as.mmAllocator.RegisterExternalChanges(replicaChanges[:])
 		if changeIDs == nil {
 			log.Info(ctx, "mma did not track lease transfer, skipping")
@@ -159,7 +161,7 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 	changes kvpb.ReplicationChanges,
 	leaseholder roachpb.StoreID,
 ) SyncChangeID {
-	rLoad := UsageInfoToMMALoad(usage)
+	rLoad := mmaprototypehelpers.UsageInfoToMMALoad(usage)
 	replicaChanges := make([]mmaprototype.ReplicaChange, 0, len(changes))
 	replicaSet := desc.Replicas()
 
@@ -220,7 +222,7 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 	log.Infof(ctx, "registering external replica change: chgs=%v usage=%v changes=%v",
 		changes, usage, replicaChanges)
 	var changeIDs []mmaprototype.ChangeID
-	if as.enabled() {
+	if LoadBasedRebalancingMode.Get(&as.st.SV) == LBRebalancingMultiMetric {
 		changeIDs = as.mmAllocator.RegisterExternalChanges(replicaChanges)
 		if changeIDs == nil {
 			log.Info(ctx, "cluster does not have a range for the external replica change, skipping")
@@ -347,7 +349,7 @@ func (as *AllocatorSync) PostApply(ctx context.Context, syncChangeID SyncChangeI
 		}
 		delete(as.mu.trackedChanges, syncChangeID)
 	}()
-	if as.enabled() {
+	if LoadBasedRebalancingMode.Get(&as.st.SV) == LBRebalancingMultiMetric {
 		if changeIDs := tracked.changeIDs; changeIDs != nil {
 			log.Infof(ctx, "PostApply: tracked=%v change_ids=%v success: %v", tracked, changeIDs, success)
 			as.updateMetrics(success, tracked.typ, tracked.author)

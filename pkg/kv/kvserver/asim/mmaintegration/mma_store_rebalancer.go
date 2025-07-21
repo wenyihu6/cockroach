@@ -13,7 +13,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/op"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
@@ -29,7 +28,7 @@ type MMAStoreRebalancer struct {
 	localStoreID state.StoreID
 	controller   op.Controller
 	allocator    mmaprototype.Allocator
-	as           *mmaprototypehelpers.AllocatorSync
+	as           *kvserver.AllocatorSync
 	settings     *config.SimulationSettings
 
 	// lastRebalanceTime is the last time allocator.ComputeChanges was called.
@@ -58,7 +57,7 @@ type MMAStoreRebalancer struct {
 type pendingChangeAndRangeUsageInfo struct {
 	change       mmaprototype.PendingRangeChange
 	usage        allocator.RangeUsageInfo
-	syncChangeID mmaprototypehelpers.SyncChangeID
+	syncChangeID kvserver.SyncChangeID
 }
 
 // NewMMAStoreRebalancer creates a new MMAStoreRebalancer.
@@ -66,7 +65,7 @@ func NewMMAStoreRebalancer(
 	localStoreID state.StoreID,
 	localNodeID state.NodeID,
 	allocator mmaprototype.Allocator,
-	as *mmaprototypehelpers.AllocatorSync,
+	as *kvserver.AllocatorSync,
 	controller op.Controller,
 	settings *config.SimulationSettings,
 ) *MMAStoreRebalancer {

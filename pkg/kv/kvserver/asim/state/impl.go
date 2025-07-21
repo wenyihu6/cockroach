@@ -432,9 +432,7 @@ func (s *state) AddNode() Node {
 		stores:      []StoreID{},
 		mmAllocator: mmAllocator,
 		storepool:   sp,
-		as: mmaprototypehelpers.NewAllocatorSync(sp, mmAllocator, func() bool {
-			return kvserver.LoadBasedRebalancingMode.Get(&s.settings.ST.SV) == kvserver.LBRebalancingMultiMetric
-		}),
+		as:          kvserver.NewAllocatorSync(sp, mmAllocator, s.settings.ST),
 	}
 	s.nodes[nodeID] = node
 	s.SetNodeLiveness(nodeID, livenesspb.NodeLivenessStatus_LIVE)
@@ -1441,7 +1439,7 @@ type node struct {
 	stores      []StoreID
 	storepool   *storepool.StorePool
 	mmAllocator mmaprototype.Allocator
-	as          *mmaprototypehelpers.AllocatorSync
+	as          *kvserver.AllocatorSync
 }
 
 // NodeID returns the ID of this node.
@@ -1463,7 +1461,7 @@ func (n *node) MMAllocator() mmaprototype.Allocator {
 	return n.mmAllocator
 }
 
-func (n *node) AllocatorSync() *mmaprototypehelpers.AllocatorSync {
+func (n *node) AllocatorSync() *kvserver.AllocatorSync {
 	return n.as
 }
 

@@ -11,8 +11,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
@@ -29,8 +29,8 @@ type leaseQueue struct {
 	planner          plan.ReplicationPlanner
 	clock            *hlc.Clock
 	settings         *config.SimulationSettings
-	as               *mmaprototypehelpers.AllocatorSync
-	lastSyncChangeID mmaprototypehelpers.SyncChangeID
+	as               *kvserver.AllocatorSync
+	lastSyncChangeID kvserver.SyncChangeID
 }
 
 // NewLeaseQueue returns a new lease queue.
@@ -40,7 +40,7 @@ func NewLeaseQueue(
 	stateChanger state.Changer,
 	settings *config.SimulationSettings,
 	allocator allocatorimpl.Allocator,
-	allocatorSync *mmaprototypehelpers.AllocatorSync,
+	allocatorSync *kvserver.AllocatorSync,
 	storePool storepool.AllocatorStorePool,
 	start time.Time,
 ) RangeQueue {
@@ -122,7 +122,7 @@ func (lq *leaseQueue) Tick(ctx context.Context, tick time.Time, s state.State) {
 
 	if !tick.Before(lq.next) && lq.lastSyncChangeID.IsValid() {
 		lq.as.PostApply(ctx, lq.lastSyncChangeID, true /* success */)
-		lq.lastSyncChangeID = mmaprototypehelpers.InvalidSyncChangeID
+		lq.lastSyncChangeID = kvserver.InvalidSyncChangeID
 	}
 
 	for !tick.Before(lq.next) && lq.priorityQueue.Len() != 0 {

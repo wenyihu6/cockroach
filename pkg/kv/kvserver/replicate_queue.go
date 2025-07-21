@@ -14,7 +14,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
@@ -537,14 +536,14 @@ type replicateQueue struct {
 	// logTracesThresholdFunc returns the threshold for logging traces from
 	// processing a replica.
 	logTracesThresholdFunc queueProcessTimeoutFunc
-	as                     *mmaprototypehelpers.AllocatorSync
+	as                     *AllocatorSync
 }
 
 var _ queueImpl = &replicateQueue{}
 
 // newReplicateQueue returns a new instance of replicateQueue.
 func newReplicateQueue(
-	store *Store, allocator allocatorimpl.Allocator, as *mmaprototypehelpers.AllocatorSync,
+	store *Store, allocator allocatorimpl.Allocator, as *AllocatorSync,
 ) *replicateQueue {
 	var storePool storepool.AllocatorStorePool
 	if store.cfg.StorePool != nil {
@@ -1031,7 +1030,7 @@ func (rq *replicateQueue) TransferLease(
 ) error {
 	rq.metrics.TransferLeaseCount.Inc(1)
 	log.KvDistribution.Infof(ctx, "transferring lease to s%d", target)
-	var changeID mmaprototypehelpers.SyncChangeID
+	var changeID SyncChangeID
 	if rq.as != nil {
 		changeID = rq.as.NonMMAPreTransferLease(
 			ctx,
@@ -1039,7 +1038,7 @@ func (rq *replicateQueue) TransferLease(
 			rangeUsageInfo,
 			source,
 			target,
-			mmaprototypehelpers.ReplicateQueue,
+			ReplicateQueue,
 		)
 	}
 	if err := rlm.AdminTransferLease(ctx, target.StoreID, false /* bypassSafetyChecks */); err != nil {
@@ -1080,7 +1079,7 @@ func (rq *replicateQueue) changeReplicas(
 	reason kvserverpb.RangeLogEventReason,
 	details string,
 ) error {
-	var changeID mmaprototypehelpers.SyncChangeID
+	var changeID SyncChangeID
 	if rq.as != nil {
 		changeID = rq.as.NonMMAPreChangeReplicas(
 			ctx,

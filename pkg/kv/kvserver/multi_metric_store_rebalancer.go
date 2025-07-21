@@ -10,7 +10,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
@@ -26,7 +25,7 @@ type multiMetricStoreRebalancer struct {
 	metrics StoreRebalancerMetrics
 	// TODO(wenyihu6): As shouldn't be imported but we are exporting it for
 	// integration since it is used in the asim package.
-	As        *mmaprototypehelpers.AllocatorSync
+	As        *AllocatorSync
 	allocator mmaprototype.Allocator
 	st        *cluster.Settings
 }

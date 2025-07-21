@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/plan"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
@@ -66,12 +65,12 @@ type leaseQueue struct {
 	purgCh            <-chan time.Time
 	lastLeaseTransfer atomic.Value // read and written by scanner & queue goroutines
 	*baseQueue
-	as *mmaprototypehelpers.AllocatorSync
+	as *AllocatorSync
 }
 
 var _ queueImpl = &leaseQueue{}
 
-func newLeaseQueue(store *Store, allocator allocatorimpl.Allocator, as *mmaprototypehelpers.AllocatorSync) *leaseQueue {
+func newLeaseQueue(store *Store, allocator allocatorimpl.Allocator, as *AllocatorSync) *leaseQueue {
 	var storePool storepool.AllocatorStorePool
 	if store.cfg.StorePool != nil {
 		storePool = store.cfg.StorePool
@@ -144,7 +143,7 @@ func (lq *leaseQueue) process(
 			repl.RangeUsageInfo(),
 			transferOp.Source,
 			transferOp.Target,
-			mmaprototypehelpers.LeaseQueue,
+			LeaseQueue,
 		)
 		if err := repl.AdminTransferLease(ctx, transferOp.Target.StoreID, false /* bypassSafetyChecks */); err != nil {
 			lq.as.PostApply(ctx, changeID, false /* success */)

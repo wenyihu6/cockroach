@@ -14,6 +14,7 @@ go_library(
         "flow_control_replica_integration.go",
         "flow_control_stores.go",
         "kv_snapshot_strategy.go",
+        "kvserver_mma_integration_helper.go",
         "lease_history.go",
         "lease_queue.go",
         "markers.go",

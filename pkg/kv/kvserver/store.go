@@ -32,7 +32,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/load"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototypehelpers"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/batcheval"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/closedts/ctpb"
@@ -1183,7 +1182,7 @@ type StoreConfig struct {
 	StorePool              *storepool.StorePool
 	StoreLiveness          *storeliveness.NodeContainer
 	MMAllocator            mmaprototype.Allocator
-	AllocatorSync          *mmaprototypehelpers.AllocatorSync
+	AllocatorSync          *AllocatorSync
 	Transport              *RaftTransport
 	StoreLivenessTransport *storeliveness.Transport
 	NodeDialer             *nodedialer.Dialer
