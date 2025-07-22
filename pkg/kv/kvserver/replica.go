@@ -2994,3 +2994,9 @@ type mmaRangeMessageNeeded struct {
 func (m *mmaRangeMessageNeeded) set() {
 	m.needed = true
 }
+
+func (m *mmaRangeMessageNeeded) getNeededAndReset(
+	rangeLoad mmaprototype.RangeLoad, raftStatus *raft.Status,
+) {
+
+}
