@@ -8,6 +8,7 @@ package kvserver
 import (
 	"context"
 	"fmt"
+	math "math"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/load"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/logstore"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rafttrace"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/raftutil"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/rangefeed"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/split"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/stateloader"
@@ -2983,20 +2985,72 @@ func (r *Replica) RangeLoad() mmaprototype.RangeLoad {
 // - lagging state of some replicas changed
 // - significant range load changes since the last RangeMessage constructed
 type mmaRangeMessageNeeded struct {
-	// needed indicates whether mma.RangeMessage should be constructed for this
-	// replica.
-	needed bool
+	// stateChangeTriggered indicates that there was a state change with the
+	// replica and mma should construct a new RangeMessage.
+	stateChangeTriggered bool
+
+	lastRangeLoad mmaprototype.RangeLoad
+	// laggingState and hasSendQueue
+	lastLaggingStates map[roachpb.ReplicaID]bool
 }
 
-// set marks the mmaRangeMessageNeeded as needed, indicating that
-// mma.RangeMessage should be constructed next time mma calls
-// TryConstructMMARangeMsg.
+// set marks the mmaRangeMessageNeeded as needed, indicating that mma should
+// construct a new RangeMessage next time mma calls TryConstructMMARangeMsg.
 func (m *mmaRangeMessageNeeded) set() {
-	m.needed = true
+	m.stateChangeTriggered = true
 }
 
-func (m *mmaRangeMessageNeeded) getNeededAndReset(
+func isSignificantRangeLoadChange(prev mmaprototype.RangeLoad, next mmaprototype.RangeLoad) bool {
+	isSignificant := func(prev, next mmaprototype.LoadValue) bool {
+		const threshold = 0.1
+		if prev == 0 && next == 0 {
+			return false
+		}
+		if prev == 0 && next != 0 {
+			return true
+		}
+		return math.Abs(float64(prev-next))/float64(prev) > threshold
+	}
+
+	for dim := range prev.Load {
+		if isSignificant(prev.Load[dim], next.Load[dim]) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mmaRangeMessageNeeded) checkIfNeeded(
+	rangeLoad mmaprototype.RangeLoad, raftStatus *raft.Status,
+) bool {
+	if m.stateChangeTriggered {
+		return true
+	}
+
+	if isSignificantRangeLoadChange(m.lastRangeLoad, rangeLoad) {
+		return true
+	}
+
+	for replicaID, lagging := range m.lastLaggingStates {
+		// TODO(mma): Unsure whether using ReplicaIsBehind is what we want here, since
+		// it is stronger than the lack of a send-queue. And we needed the
+		// send-queue state for something in the allocator.
+		if lagging != raftutil.ReplicaIsBehind(raftStatus, replicaID) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *mmaRangeMessageNeeded) neededAndReset(
 	rangeLoad mmaprototype.RangeLoad, raftStatus *raft.Status,
 ) {
-
+	if needed := m.checkIfNeeded(rangeLoad, raftStatus); needed {
+		m.lastRangeLoad = rangeLoad
+		clear(m.lastLaggingStates)
+		for repl := range raftStatus.Progress {
+			rid := roachpb.ReplicaID(repl)
+			m.lastLaggingStates[rid] = raftutil.ReplicaIsBehind(raftStatus, rid)
+		}
+	}
 }
