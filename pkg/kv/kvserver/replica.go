@@ -1000,6 +1000,10 @@ type Replica struct {
 		// lastTickTimestamp records the timestamp captured before the last tick of
 		// this replica.
 		lastTickTimestamp hlc.ClockTimestamp
+
+		// mmaRangeMessageNeeded is used to help mma determine whether a new range
+		// message should be constructed for this replica.
+		mmaRangeMessageNeeded mmaRangeMessageNeeded
 	}
 
 	// LeaderlessWatcher is used to signal when a replica is leaderless for a long
@@ -1166,6 +1170,8 @@ func (r *Replica) SetSpanConfig(conf roachpb.SpanConfig, sp roachpb.Span) bool {
 	r.mu.spanConfigExplicitlySet = true
 	r.mu.confSpan = sp
 	r.store.policyRefresher.EnqueueReplicaForRefresh(r)
+	// Inform mma when the span config changes.
+	r.mu.mmaRangeMessageNeeded.set()
 	return oldConf.HasConfigurationChange(conf)
 }
 
@@ -2964,4 +2970,27 @@ func (r *Replica) RangeLoad() mmaprototype.RangeLoad {
 	rl.Load[mmaprototype.WriteBandwidth] = mmaprototype.LoadValue(loadStats.WriteBytesPerSecond)
 	rl.Load[mmaprototype.ByteSize] = mmaprototype.LoadValue(r.GetMVCCStats().Total())
 	return rl
+}
+
+// mmaRangeMessageNeeded determines whether mma should construct a new range
+// message for this replica (mma.RangeMessage) by tracking the replica state.
+//
+// A new range message should be constructed when one of the following happens:
+// - replica was initialized
+// - span config change
+// - leaseholder changes
+// - range descripytor changes
+// - lagging state of some replicas changed
+// - significant range load changes since the last RangeMessage constructed
+type mmaRangeMessageNeeded struct {
+	// needed indicates whether mma.RangeMessage should be constructed for this
+	// replica.
+	needed bool
+}
+
+// set marks the mmaRangeMessageNeeded as needed, indicating that
+// mma.RangeMessage should be constructed next time mma calls
+// TryConstructMMARangeMsg.
+func (m *mmaRangeMessageNeeded) set() {
+	m.needed = true
 }
