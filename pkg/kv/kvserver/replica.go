@@ -3237,6 +3237,7 @@ func (r *Replica) TryConstructMMARangeMsg(
 
 	replicas := r.constructMMAReplicas(desc)
 	rLoad := r.MMARangeLoad()
+	// TODO(wenyihu6): we should use r.raftSparseStatusRLocked() here (cheaper).
 	if needed := r.mmaRangeMessageNeeded.getNeededAndReset(rLoad, r.RaftStatus()); needed {
 		return true, false, mmaprototype.RangeMsg{
 			RangeID:   r.RangeID,
