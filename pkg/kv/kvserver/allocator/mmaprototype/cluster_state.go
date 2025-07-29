@@ -1201,7 +1201,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		rs, ok := cs.ranges[rangeMsg.RangeID]
 		if !ok {
 			// This is the first time we've seen this range.
-			if !rangeMsg.Populated {
+			if !rangeMsg.HasSpanConf {
 				panic(errors.AssertionFailedf("rangeMsg for new range r%v is not populated", rangeMsg.RangeID))
 			}
 			rs = newRangeState(msg.StoreID)
@@ -1209,7 +1209,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		} else if rs.localRangeOwner != msg.StoreID {
 			rs.localRangeOwner = msg.StoreID
 		}
-		if !rangeMsg.Populated {
+		if !rangeMsg.HasSpanConf {
 			// When there are no pending changes, confirm that the membership state
 			// is consistent. If not, fall through and make it consistent. We have
 			// seen an example where AdjustPendingChangesDisposition lied about
@@ -1243,7 +1243,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		// Set the range state and store state to match the range message state
 		// initially. The pending changes which are not enacted in the range
 		// message are handled and added back below.
-		if rangeMsg.Populated {
+		if rangeMsg.HasSpanConf {
 			rs.load = rangeMsg.RangeLoad
 		}
 		for _, replica := range rs.replicas {
@@ -1342,8 +1342,8 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 				}
 			}
 		}
-		if rangeMsg.Populated {
-			normSpanConfig, err := makeNormalizedSpanConfig(&rangeMsg.Conf, cs.constraintMatcher.interner)
+		if rangeMsg.HasSpanConf {
+			normSpanConfig, err := makeNormalizedSpanConfig(&rangeMsg.MaybeConf, cs.constraintMatcher.interner)
 			if err != nil {
 				// TODO(kvoli): Should we log as a warning here, or return further back out?
 				panic(err)
