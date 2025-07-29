@@ -207,7 +207,13 @@ func (ms *mmaStore) StoreID() roachpb.StoreID {
 
 func (ms *mmaStore) GetReplicaIfExists(id roachpb.RangeID) replicaToApplyChanges {
 	s := (*Store)(ms)
-	return s.GetReplicaIfExists(id)
+	r := s.GetReplicaIfExists(id)
+	if r == nil {
+		// This avoids the wrapping (*Replica)(nil) in replicaToApplyChanges and
+		// makes caller nil check cleaner.
+		return nil
+	}
+	return r
 }
 
 // MakeStoreLeaseholderMsg constructs the StoreLeaseholderMsg by iterating over
