@@ -582,6 +582,15 @@ func TestDataDriven(t *testing.T) {
 					buf.WriteString("initial store values: ")
 					buf.WriteString(at0)
 					buf.WriteString("\n")
+				} else {
+					at1, ok1 := h.ShowRecordedValueAt(2, stat)
+					if ok1 {
+						buf.WriteString("initial store values: ")
+						buf.WriteString(at1)
+						buf.WriteString("\n")
+					} else {
+						buf.WriteString("initial store values: not available\n")
+					}
 				}
 				s, _ := h.ShowRecordedValueAt(len(h.Recorded)-1, stat)
 				buf.WriteString("last store values: ")

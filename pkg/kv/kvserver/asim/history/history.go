@@ -65,7 +65,7 @@ func (h *History) ShowRecordedValueAt(idx int, stat string) (string, bool) {
 		}
 		storeID := h.Recorded[idx][i].StoreID
 
-		if stat == "disk_fraction_used" || stat == "node_cpu_utilization"  {
+		if stat == "disk_fraction_used" || stat == "node_cpu_utilization" {
 			_, _ = fmt.Fprintf(&buf, "s%v=%.2f", storeID, v)
 		} else {
 			_, _ = fmt.Fprintf(&buf, "s%v=%.0f", storeID, v)
@@ -80,12 +80,4 @@ func (h *History) ShowRecordedValueAt(idx int, stat string) (string, bool) {
 	// is zero, all values were zero.
 	nonzero := stddev > 0 || mean != 0
 	return buf.String(), nonzero
-}
-
-func (h *History) ShowRecordedValueAt(idx int, stat string) string {
-	if stat == "cpu" {
-		return fmt.Sprintf("cpu: %s\nnode_cpu_utilization: %s",
-			h.showRecordedValueAt(idx, "cpu"), h.showRecordedValueAt(idx, "node_cpu_utilization"))
-	}
-	return h.showRecordedValueAt(idx, stat)
 }

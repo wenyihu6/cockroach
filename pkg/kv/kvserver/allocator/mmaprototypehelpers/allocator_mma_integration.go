@@ -6,9 +6,12 @@
 package mmaprototypehelpers
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
@@ -124,6 +127,7 @@ func MakeStoreLoadMsg(
 	// if capacity[mmaprototype.CPURate] == 0 {
 	// 	panic("ouch")
 	// }
+	log.KvDistribution.Infof(context.Background(), "store load for n%d is: load is %v capacity is %v", desc.Node.NodeID, load, capacity)
 	return mmaprototype.StoreLoadMsg{
 		NodeID:        desc.Node.NodeID,
 		StoreID:       desc.StoreID,
