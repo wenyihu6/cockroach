@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mmaintegration",
@@ -20,5 +20,20 @@ go_library(
         "//pkg/util/buildutil",
         "//pkg/util/syncutil",
         "//pkg/util/timeutil",
+    ],
+)
+
+go_test(
+    name = "mmaintegration_test",
+    srcs = ["mmaintegration_test.go"],
+    embed = [":mmaintegration"],
+    deps = [
+        "//pkg/kv/kvpb",
+        "//pkg/kv/kvserver/allocator",
+        "//pkg/kv/kvserver/allocator/mmaprototype",
+        "//pkg/roachpb",
+        "//pkg/settings/cluster",
+        "//pkg/util/leaktest",
+        "@com_github_stretchr_testify//require",
     ],
 )
