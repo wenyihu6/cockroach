@@ -12,8 +12,6 @@ import (
 )
 
 // MakeStoreLoadMsg makes a store load message.
-//
-// TODO(wenyihu6): Add more tests for this function.
 func MakeStoreLoadMsg(
 	desc roachpb.StoreDescriptor, origTimestampNanos int64,
 ) mmaprototype.StoreLoadMsg {
