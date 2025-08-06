@@ -52,8 +52,8 @@ func (m *mockStorePool) UpdateLocalStoresAfterLeaseTransfer(
 ) {
 	m.leaseholder = addTo
 	// Update CPU loads after lease transfer.
-	m.storeCPULoads[addTo] += float64(usage.RequestCPUNanosPerSecond)
-	m.storeCPULoads[removeFrom] -= float64(usage.RequestCPUNanosPerSecond)
+	m.storeCPULoads[addTo] += usage.RequestCPUNanosPerSecond
+	m.storeCPULoads[removeFrom] -= usage.RequestCPUNanosPerSecond
 }
 
 // UpdateLocalStoreAfterRebalance updates the mock store pool after a rebalance.
@@ -62,9 +62,9 @@ func (m *mockStorePool) UpdateLocalStoreAfterRebalance(
 ) {
 	switch changeType {
 	case roachpb.ADD_VOTER, roachpb.ADD_NON_VOTER:
-		m.storeCPULoads[storeID] += float64(usage.RequestCPUNanosPerSecond + usage.RaftCPUNanosPerSecond)
+		m.storeCPULoads[storeID] += usage.RequestCPUNanosPerSecond + usage.RaftCPUNanosPerSecond
 	case roachpb.REMOVE_VOTER, roachpb.REMOVE_NON_VOTER:
-		m.storeCPULoads[storeID] -= float64(usage.RequestCPUNanosPerSecond + usage.RaftCPUNanosPerSecond)
+		m.storeCPULoads[storeID] -= usage.RequestCPUNanosPerSecond + usage.RaftCPUNanosPerSecond
 	}
 	// For testing purposes, we'll just track that this method was called
 	// The actual implementation would handle the rebalance logic
@@ -480,7 +480,7 @@ func TestMakeStoreLoadMsg(t *testing.T) {
 
 		// Test all LoadDimension values for Capacity.
 		require.Equal(t, mmaprototype.LoadValue(expectedCapacityCPURate), msg.Capacity[mmaprototype.CPURate])
-		require.Equal(t, mmaprototype.LoadValue(expectedCapacityWriteBandwidth), msg.Capacity[mmaprototype.WriteBandwidth])
+		require.Equal(t, expectedCapacityWriteBandwidth, msg.Capacity[mmaprototype.WriteBandwidth])
 		require.Equal(t, mmaprototype.LoadValue(expectedCapacityByteSize), msg.Capacity[mmaprototype.ByteSize])
 
 		// Test secondary load.
@@ -508,7 +508,7 @@ func TestMakeStoreLoadMsg(t *testing.T) {
 
 		// Test all LoadDimension values for Capacity.
 		require.Equal(t, mmaprototype.LoadValue(expectedCapacityCPURate), msg.Capacity[mmaprototype.CPURate])
-		require.Equal(t, mmaprototype.LoadValue(expectedCapacityWriteBandwidth), msg.Capacity[mmaprototype.WriteBandwidth])
+		require.Equal(t, expectedCapacityWriteBandwidth, msg.Capacity[mmaprototype.WriteBandwidth])
 		require.Equal(t, mmaprototype.LoadValue(expectedCapacityByteSize), msg.Capacity[mmaprototype.ByteSize])
 
 		// Test secondary load.
