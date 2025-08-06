@@ -8,6 +8,7 @@ package plan
 import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 )
@@ -28,6 +29,7 @@ type AllocationTransferLeaseOp struct {
 	Target, Source     roachpb.ReplicationTarget
 	Usage              allocator.RangeUsageInfo
 	bypassSafetyChecks bool
+	Reason             allocatorimpl.TransferLeaseDecision
 }
 
 var _ AllocationOp = &AllocationTransferLeaseOp{}

@@ -2567,6 +2567,7 @@ const (
 	// TransferLeaseForCountBalance indicates the lease should be transferred to
 	// better balance lease counts.
 	TransferLeaseForCountBalance
+	TransferLeaseForLoad
 	// TransferLeaseForAccessLocality indicates the lease should be transferred
 	// for better access locality.
 	TransferLeaseForAccessLocality
@@ -2577,6 +2578,8 @@ const (
 	// because there is a more preferred leaseholder according the applied range
 	// lease preferences.
 	TransferLeaseForPreferences
+	TransferLeaseForDraining
+	TransferLeaseForDecommissioning
 )
 
 // ShouldTransfer returns true when the lease should be transferred, false

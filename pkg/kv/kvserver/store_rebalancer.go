@@ -542,6 +542,7 @@ func (sr *StoreRebalancer) applyLeaseRebalance(
 				StoreID: target.StoreID,
 			},
 			candidateReplica.RangeUsageInfo(),
+			allocatorimpl.TransferLeaseForLoad,
 		)
 	}); err != nil {
 		log.KvDistribution.Infof(ctx, "unable to transfer lease to s%d: %v", target.StoreID, err)

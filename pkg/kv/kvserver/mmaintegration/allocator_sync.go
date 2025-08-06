@@ -8,8 +8,10 @@ package mmaintegration
 import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
@@ -41,7 +43,7 @@ type storePool interface {
 type mmaState interface {
 	// RegisterExternalChanges is called by the allocator sync to register
 	// external changes with the mma.
-	RegisterExternalChanges(changes []mmaprototype.ReplicaChange) []mmaprototype.ChangeID
+	RegisterExternalChanges(changes []mmaprototype.ReplicaChange, bypassMMACheck bool) []mmaprototype.ChangeID
 	// AdjustPendingChangesDisposition is called by the allocator sync to adjust
 	// the disposition of pending changes.
 	AdjustPendingChangesDisposition(changeIDs []mmaprototype.ChangeID, success bool)
@@ -123,6 +125,13 @@ func (as *AllocatorSync) getTrackedChange(syncChangeID SyncChangeID) trackedAllo
 	return change
 }
 
+func bypassMMACheckOnLeaseTransfer(reason allocatorimpl.TransferLeaseDecision) bool {
+	return false
+}
+func bypassMMACheckOnRebalance(reason kvserverpb.RangeLogEventReason) bool {
+	return false
+}
+
 // NonMMAPreTransferLease is called by the lease/replicate queue to register a
 // transfer operation. SyncChangeID is returned to the caller. It is an
 // identifier that can be used to call PostApply to apply the change to the
@@ -131,10 +140,12 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	transferFrom, transferTo roachpb.ReplicationTarget,
+	reason allocatorimpl.TransferLeaseDecision,
 ) SyncChangeID {
 	var changeIDs []mmaprototype.ChangeID
 	if kvserverbase.LoadBasedRebalancingMode.Get(&as.st.SV) == kvserverbase.LBRebalancingMultiMetric {
-		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertLeaseTransferToMMA(desc, usage, transferFrom, transferTo))
+		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertLeaseTransferToMMA(desc, usage, transferFrom, transferTo),
+			bypassMMACheckOnLeaseTransfer(reason))
 	}
 	trackedChange := trackedAllocatorChange{
 		changeIDs: changeIDs,
@@ -156,10 +167,12 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 	usage allocator.RangeUsageInfo,
 	changes kvpb.ReplicationChanges,
 	leaseholderStoreID roachpb.StoreID,
+	reason kvserverpb.RangeLogEventReason,
 ) SyncChangeID {
 	var changeIDs []mmaprototype.ChangeID
 	if kvserverbase.LoadBasedRebalancingMode.Get(&as.st.SV) == kvserverbase.LBRebalancingMultiMetric {
-		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertReplicaChangeToMMA(desc, usage, changes, leaseholderStoreID))
+		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertReplicaChangeToMMA(desc, usage, changes, leaseholderStoreID),
+			bypassMMACheckOnRebalance(reason))
 	}
 	trackedChange := trackedAllocatorChange{
 		changeIDs: changeIDs,

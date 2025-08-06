@@ -812,7 +812,7 @@ func (rq *replicateQueue) applyChange(
 	case plan.AllocationFinalizeAtomicReplicationOp:
 		err = rq.finalizeAtomicReplication(ctx, replica)
 	case plan.AllocationTransferLeaseOp:
-		err = rq.TransferLease(ctx, replica, op.Source, op.Target, op.Usage)
+		err = rq.TransferLease(ctx, replica, op.Source, op.Target, op.Usage, op.Reason)
 	case plan.AllocationChangeReplicasOp:
 		err = rq.changeReplicas(
 			ctx,
@@ -945,6 +945,7 @@ func (rq *replicateQueue) shedLease(
 	desc *roachpb.RangeDescriptor,
 	conf *roachpb.SpanConfig,
 	opts allocator.TransferLeaseOptions,
+	reason allocatorimpl.TransferLeaseDecision,
 ) (allocator.LeaseTransferOutcome, error) {
 	rangeUsageInfo := repl.RangeUsageInfo()
 	// Learner replicas aren't allowed to become the leaseholder or raft leader,
@@ -971,7 +972,7 @@ func (rq *replicateQueue) shedLease(
 		NodeID:  targetDesc.NodeID,
 		StoreID: targetDesc.StoreID,
 	}
-	if err := rq.TransferLease(ctx, repl, source, target, rangeUsageInfo); err != nil {
+	if err := rq.TransferLease(ctx, repl, source, target, rangeUsageInfo, reason); err != nil {
 		return allocator.TransferErr, err
 	}
 	return allocator.TransferOK, nil
@@ -1000,6 +1001,7 @@ type RangeRebalancer interface {
 		rlm ReplicaLeaseMover,
 		source, target roachpb.ReplicationTarget,
 		rangeUsageInfo allocator.RangeUsageInfo,
+		reason allocatorimpl.TransferLeaseDecision,
 	) error
 
 	// RelocateRange relocates replicas to the requested stores, and can transfer
@@ -1029,6 +1031,7 @@ func (rq *replicateQueue) TransferLease(
 	rlm ReplicaLeaseMover,
 	source, target roachpb.ReplicationTarget,
 	rangeUsageInfo allocator.RangeUsageInfo,
+	reason allocatorimpl.TransferLeaseDecision,
 ) error {
 	rq.metrics.TransferLeaseCount.Inc(1)
 	log.KvDistribution.Infof(ctx, "transferring lease to s%d", target)
@@ -1039,6 +1042,7 @@ func (rq *replicateQueue) TransferLease(
 		rangeUsageInfo,
 		source,
 		target,
+		reason,
 	)
 
 	err := rlm.AdminTransferLease(ctx, target.StoreID, false /* bypassSafetyChecks */)
@@ -1083,6 +1087,7 @@ func (rq *replicateQueue) changeReplicas(
 		rangeUsageInfo,
 		chgs,
 		repl.StoreID(),
+		reason,
 	)
 	// NB: this calls the impl rather than ChangeReplicas because
 	// the latter traps tests that try to call it while the replication

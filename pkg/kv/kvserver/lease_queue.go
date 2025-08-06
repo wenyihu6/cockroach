@@ -144,6 +144,7 @@ func (lq *leaseQueue) process(
 			transferOp.Usage,
 			transferOp.Source,
 			transferOp.Target,
+			transferOp.Reason,
 		)
 		err = repl.AdminTransferLease(ctx, transferOp.Target.StoreID, false /* bypassSafetyChecks */)
 		// Inform allocator sync that the change has been applied which applies

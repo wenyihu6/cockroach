@@ -2021,6 +2021,7 @@ func (s *Store) SetDraining(drain bool, reporter func(int, redact.SafeString), v
 						desc,
 						conf,
 						allocator.TransferLeaseOptions{ExcludeLeaseRepl: true},
+						allocatorimpl.DontTransferLeaseNoStoreDescriptor,
 					)
 					duration := timeutil.Since(start).Microseconds()
 

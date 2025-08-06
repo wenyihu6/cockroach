@@ -76,7 +76,7 @@ type Allocator interface {
 	// be used to call AdjustPendingChangesDisposition when the changes are
 	// completed, either successfully or not. All changes should correspond to the
 	// same range.
-	RegisterExternalChanges(changes []ReplicaChange) []ChangeID
+	RegisterExternalChanges(changes []ReplicaChange, bypassMMACheck bool) []ChangeID
 
 	// ComputeChanges is called periodically and frequently, say every 10s.
 	//

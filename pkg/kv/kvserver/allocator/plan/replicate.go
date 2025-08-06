@@ -608,7 +608,7 @@ func (rp ReplicaPlanner) removeVoter(
 	}
 
 	transferOp, err := rp.maybeTransferLeaseAwayTarget(
-		ctx, repl, desc, conf, removeVoter.StoreID)
+		ctx, repl, desc, conf, removeVoter.StoreID, kvserverpb.ReasonRangeOverReplicated)
 	if err != nil {
 		return nil, stats, err
 	}
@@ -704,7 +704,7 @@ func (rp ReplicaPlanner) removeDecommissioning(
 	decommissioningReplica := decommissioningReplicas[0]
 
 	transferOp, err := rp.maybeTransferLeaseAwayTarget(
-		ctx, repl, desc, conf, decommissioningReplica.StoreID)
+		ctx, repl, desc, conf, decommissioningReplica.StoreID, kvserverpb.ReasonStoreDecommissioning)
 	if err != nil {
 		return nil, stats, err
 	}
@@ -871,6 +871,7 @@ func (rp ReplicaPlanner) maybeTransferLeaseAwayTarget(
 	desc *roachpb.RangeDescriptor,
 	conf *roachpb.SpanConfig,
 	removeStoreID roachpb.StoreID,
+	reason kvserverpb.RangeLogEventReason,
 ) (op AllocationOp, _ error) {
 	if removeStoreID != repl.StoreID() {
 		return nil, nil

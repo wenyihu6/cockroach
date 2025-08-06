@@ -15,6 +15,7 @@ const (
 	ReasonRangeOverReplicated  RangeLogEventReason = "range over-replicated"
 	ReasonStoreDead            RangeLogEventReason = "store dead"
 	ReasonStoreDecommissioning RangeLogEventReason = "store decommissioning"
+	ReasonDraining             RangeLogEventReason = "draining"
 	ReasonRebalance            RangeLogEventReason = "rebalance"
 	ReasonAdminRequest         RangeLogEventReason = "admin request"
 	ReasonAbandonedLearner     RangeLogEventReason = "abandoned learner replica"

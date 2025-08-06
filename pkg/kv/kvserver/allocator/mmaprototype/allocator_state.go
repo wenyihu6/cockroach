@@ -862,9 +862,18 @@ func (a *allocatorState) AdjustPendingChangesDisposition(changeIDs []ChangeID, s
 	}
 }
 
+func (a *allocatorState) shouldBalanace(changes []ReplicaChange) bool {
+	return true
+}
+
 // RegisterExternalChanges implements the Allocator interface. All changes should
 // correspond to the same range, panic otherwise.
-func (a *allocatorState) RegisterExternalChanges(changes []ReplicaChange) []ChangeID {
+func (a *allocatorState) RegisterExternalChanges(
+	changes []ReplicaChange, bypassMMACheck bool,
+) []ChangeID {
+	if !bypassMMACheck && a.shouldBalanace(changes) {
+		return nil
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if valid, reason := a.cs.preCheckOnApplyReplicaChanges(changes); !valid {
