@@ -812,7 +812,7 @@ func (rq *replicateQueue) applyChange(
 	case plan.AllocationFinalizeAtomicReplicationOp:
 		err = rq.finalizeAtomicReplication(ctx, replica)
 	case plan.AllocationTransferLeaseOp:
-		err = rq.TransferLease(ctx, replica, op.Source, op.Target, op.Usage)
+		err = rq.TransferLease(ctx, replica, op.Source, op.Target, op.Usage, false /*byPassMMA*/)
 	case plan.AllocationChangeReplicasOp:
 		err = rq.changeReplicas(
 			ctx,
@@ -971,7 +971,7 @@ func (rq *replicateQueue) shedLease(
 		NodeID:  targetDesc.NodeID,
 		StoreID: targetDesc.StoreID,
 	}
-	if err := rq.TransferLease(ctx, repl, source, target, rangeUsageInfo); err != nil {
+	if err := rq.TransferLease(ctx, repl, source, target, rangeUsageInfo, false /*byPassMMA*/); err != nil {
 		return allocator.TransferErr, err
 	}
 	return allocator.TransferOK, nil
@@ -1000,6 +1000,7 @@ type RangeRebalancer interface {
 		rlm ReplicaLeaseMover,
 		source, target roachpb.ReplicationTarget,
 		rangeUsageInfo allocator.RangeUsageInfo,
+		byPassMMA bool,
 	) error
 
 	// RelocateRange relocates replicas to the requested stores, and can transfer
@@ -1029,6 +1030,7 @@ func (rq *replicateQueue) TransferLease(
 	rlm ReplicaLeaseMover,
 	source, target roachpb.ReplicationTarget,
 	rangeUsageInfo allocator.RangeUsageInfo,
+	byPassMMA bool,
 ) error {
 	rq.metrics.TransferLeaseCount.Inc(1)
 	log.KvDistribution.Infof(ctx, "transferring lease to s%d", target)
@@ -1039,6 +1041,7 @@ func (rq *replicateQueue) TransferLease(
 		rangeUsageInfo,
 		source,
 		target,
+		byPassMMA,
 	)
 
 	err := rlm.AdminTransferLease(ctx, target.StoreID, false /* bypassSafetyChecks */)

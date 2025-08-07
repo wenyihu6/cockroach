@@ -131,9 +131,10 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	transferFrom, transferTo roachpb.ReplicationTarget,
+	bypassMMA bool,
 ) SyncChangeID {
 	var changeIDs []mmaprototype.ChangeID
-	if kvserverbase.LoadBasedRebalancingMode.Get(&as.st.SV) == kvserverbase.LBRebalancingMultiMetric {
+	if bypassMMA || kvserverbase.LoadBasedRebalancingMode.Get(&as.st.SV) == kvserverbase.LBRebalancingMultiMetric {
 		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertLeaseTransferToMMA(desc, usage, transferFrom, transferTo))
 	}
 	trackedChange := trackedAllocatorChange{
