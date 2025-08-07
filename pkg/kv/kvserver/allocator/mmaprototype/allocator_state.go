@@ -208,8 +208,8 @@ type allocatorState struct {
 	rangesNeedingAttention map[roachpb.RangeID]struct{}
 
 	diversityScoringMemo *diversityScoringMemo
-
-	rand *rand.Rand
+	scratchNodes         map[roachpb.NodeID]*NodeLoad
+	rand                 *rand.Rand
 }
 
 var _ Allocator = &allocatorState{}
@@ -228,6 +228,7 @@ func NewAllocatorState(ts timeutil.TimeSource, rand *rand.Rand) *allocatorState 
 		diversityScoringMemo:   newDiversityScoringMemo(),
 		rand:                   rand,
 		mmaMetrics:             makeMMAMetrics(),
+		scratchNodes:           map[roachpb.NodeID]*NodeLoad{},
 	}
 }
 
@@ -355,7 +356,6 @@ func (a *allocatorState) rebalanceStores(
 	var disj [1]constraintsConj
 	var storesToExclude storeIDPostingList
 	var storesToExcludeForRange storeIDPostingList
-	scratchNodes := map[roachpb.NodeID]*NodeLoad{}
 	// The caller has a fixed concurrency limit it can move ranges at, when it
 	// is the sender of the snapshot. So we don't want to create too many
 	// changes, since then the allocator gets too far ahead of what has been
@@ -474,9 +474,9 @@ func (a *allocatorState) rebalanceStores(
 					continue // leaseholder is the only candidate
 				}
 				var means meansForStoreSet
-				clear(scratchNodes)
+				clear(a.scratchNodes)
 				means.stores = candsPL
-				computeMeansForStoreSet(a.cs, &means, scratchNodes)
+				computeMeansForStoreSet(a.cs, &means, a.scratchNodes)
 				sls := a.cs.computeLoadSummary(store.StoreID, &means.storeLoad, &means.nodeLoad)
 				log.Dev.VInfof(ctx, 2, "considering lease-transfer r%v from s%v: candidates are %v", rangeID, store.StoreID, candsPL)
 				if sls.dimSummary[CPURate] < overloadSlow {
@@ -863,9 +863,16 @@ func (a *allocatorState) AdjustPendingChangesDisposition(changeIDs []ChangeID, s
 }
 
 func (a *allocatorState) shouldBalanace(changes []ReplicaChange) bool {
-	delta, secondaryDelta := loadDelta(changes)
-	// check the stores and see if this transfer makes sense
-	return true
+	removedStore, addedStore, _, addedLoad := loadDelta(changes)
+	// Check the stores and see if this transfer makes sense.
+	removedStoreState := a.cs.stores[removedStore]
+	targetStoreState := a.cs.stores[addedStore]
+	addedLoad := targetStoreState.adjusted.load
+	var means meansForStoreSet
+	clear(a.scratchNodes)
+	means.stores = candsPL
+	computeMeansForStoreSet(a.cs, &means, a.scratchNodes)
+	return a.cs.canShedAndAddLoad(context.Background(), removedStoreState, targetStoreState, addedLoad, nil, false, CPURate)
 }
 
 // RegisterExternalChanges implements the Allocator interface. All changes should

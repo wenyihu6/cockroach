@@ -79,6 +79,24 @@ func (lv *LoadVector) subtract(other LoadVector) {
 	}
 }
 
+func (lv *LoadVector) isGreaterThan(other LoadVector) bool {
+	for i := range lv {
+		if lv[i] > other[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func (lv *LoadVector) isLessThan(other LoadVector) bool {
+	for i := range lv {
+		if lv[i] < other[i] {
+			return true
+		}
+	}
+	return false
+}
+
 // A resource can have a capacity, which is also expressed using LoadValue.
 // There are some special case capacity values, enumerated here.
 const (
@@ -115,6 +133,24 @@ const (
 )
 
 type SecondaryLoadVector [NumSecondaryLoadDimensions]LoadValue
+
+func (lv *SecondaryLoadVector) isGreaterThan(other SecondaryLoadVector) bool {
+	for i := range lv {
+		if lv[i] > other[i] {
+			return true
+		}
+	}
+	return false
+}
+
+func (lv *SecondaryLoadVector) isLessThan(other SecondaryLoadVector) bool {
+	for i := range lv {
+		if lv[i] < other[i] {
+			return true
+		}
+	}
+	return false
+}
 
 func (lv *SecondaryLoadVector) add(other SecondaryLoadVector) {
 	for i := range other {

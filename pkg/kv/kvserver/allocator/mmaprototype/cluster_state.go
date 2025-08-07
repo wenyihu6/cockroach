@@ -177,10 +177,12 @@ type ReplicaChange struct {
 	replicaChangeType ReplicaChangeType
 }
 
-func loadDelta(changes []ReplicaChange) (delta map[roachpb.StoreID]LoadVector, secondaryDelta map[roachpb.StoreID]SecondaryLoadVector) {
-	delta = make(map[roachpb.StoreID]LoadVector)
-	secondaryDelta = make(map[roachpb.StoreID]SecondaryLoadVector)
+func loadDelta(changes []ReplicaChange) (removedStore roachpb.StoreID, addedStore roachpb.StoreID, removedLoad LoadVector, addedLoad LoadVector) {
+	delta := make(map[roachpb.StoreID]LoadVector)
+	secondaryDelta := make(map[roachpb.StoreID]SecondaryLoadVector)
+	storeIDs := []roachpb.StoreID{}
 	for _, c := range changes {
+		storeIDs = append(storeIDs, c.target.StoreID)
 		targetStoreDelta := delta[c.target.StoreID]
 		targetStoreSecondaryDelta := secondaryDelta[c.target.StoreID]
 		targetStoreDelta.add(c.loadDelta)
@@ -188,7 +190,26 @@ func loadDelta(changes []ReplicaChange) (delta map[roachpb.StoreID]LoadVector, s
 		delta[c.target.StoreID] = targetStoreDelta
 		secondaryDelta[c.target.StoreID] = targetStoreSecondaryDelta
 	}
-	return delta, secondaryDelta
+	if len(storeIDs) == 0 {
+		return removedStore, addedStore, removedLoad, addedLoad
+	}
+	removedStore = storeIDs[0]
+	addedStore = storeIDs[0]
+	removedLoad = delta[removedStore]
+	addedLoad = delta[addedStore]
+	for storeID, delta := range delta {
+		if delta.isGreaterThan(addedLoad) {
+			addedStore = storeID
+			addedLoad = delta
+		} else if delta.isLessThan(removedLoad) {
+			removedStore = storeID
+			removedLoad = delta
+		}
+	}
+	if addedStore == removedStore {
+		panic(fmt.Sprintf("addedStore == removedStore: %v", changes))
+	}
+	return removedStore, addedStore, removedLoad, addedLoad
 }
 
 func (rc ReplicaChange) String() string {
