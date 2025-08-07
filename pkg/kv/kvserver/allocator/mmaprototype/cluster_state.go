@@ -177,6 +177,20 @@ type ReplicaChange struct {
 	replicaChangeType ReplicaChangeType
 }
 
+func loadDelta(changes []ReplicaChange) (delta map[roachpb.StoreID]LoadVector, secondaryDelta map[roachpb.StoreID]SecondaryLoadVector) {
+	delta = make(map[roachpb.StoreID]LoadVector)
+	secondaryDelta = make(map[roachpb.StoreID]SecondaryLoadVector)
+	for _, c := range changes {
+		targetStoreDelta := delta[c.target.StoreID]
+		targetStoreSecondaryDelta := secondaryDelta[c.target.StoreID]
+		targetStoreDelta.add(c.loadDelta)
+		targetStoreSecondaryDelta.add(c.secondaryLoadDelta)
+		delta[c.target.StoreID] = targetStoreDelta
+		secondaryDelta[c.target.StoreID] = targetStoreSecondaryDelta
+	}
+	return delta, secondaryDelta
+}
+
 func (rc ReplicaChange) String() string {
 	return redact.StringWithoutMarkers(rc)
 }

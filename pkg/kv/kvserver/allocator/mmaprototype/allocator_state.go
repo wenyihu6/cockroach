@@ -863,6 +863,8 @@ func (a *allocatorState) AdjustPendingChangesDisposition(changeIDs []ChangeID, s
 }
 
 func (a *allocatorState) shouldBalanace(changes []ReplicaChange) bool {
+	delta, secondaryDelta := loadDelta(changes)
+	// check the stores and see if this transfer makes sense
 	return true
 }
 
