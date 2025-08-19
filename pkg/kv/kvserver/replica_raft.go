@@ -1230,6 +1230,7 @@ func (r *Replica) handleRaftReadyRaftMuLocked(
 	// to remove itself from the range.
 	if becameLeader && r.store.replicateQueue != nil {
 		r.store.replicateQueue.MaybeAddAsync(ctx, r, r.store.Clock().NowAsClockTimestamp())
+		log.Infof(ctx, "became leader: %v at node: %v", r.RangeID, r.store.NodeID())
 	}
 
 	stats.tApplicationBegin = crtime.NowMono()

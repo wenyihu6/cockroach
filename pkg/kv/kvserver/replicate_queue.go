@@ -290,6 +290,25 @@ var (
 		Measurement: "Replicas",
 		Unit:        metric.Unit_COUNT,
 	}
+	// NEW METRICS FOR PRIORITY TRACKING
+	metaReplicateQueueHighPriorityAfterRebalanceCount = metric.Metadata{
+		Name:        "queue.replicate.high_priority_after_rebalance",
+		Help:        "Number of times a replica was enqueued with high priority after a rebalance operation",
+		Measurement: "High Priority Enqueues",
+		Unit:        metric.Unit_COUNT,
+	}
+	metaReplicateQueuePriorityIncreaseCount = metric.Metadata{
+		Name:        "queue.replicate.priority_increase",
+		Help:        "Number of times a replica's priority increased between enqueue and pop time",
+		Measurement: "Priority Increases",
+		Unit:        metric.Unit_COUNT,
+	}
+	metaReplicateQueuePriorityDecreaseCount = metric.Metadata{
+		Name:        "queue.replicate.priority_decrease",
+		Help:        "Number of times a replica's priority decreased between enqueue and pop time",
+		Measurement: "Priority Decreases",
+		Unit:        metric.Unit_COUNT,
+	}
 )
 
 // quorumError indicates a retryable error condition which sends replicas being
@@ -349,6 +368,11 @@ type ReplicateQueueMetrics struct {
 	// TODO(sarkesian): Consider adding metrics for AllocatorRemoveLearner,
 	// AllocatorConsiderRebalance, and AllocatorFinalizeAtomicReplicationChange
 	// allocator actions.
+
+	// Priority tracking metrics
+	HighPriorityButRebalancing *metric.Counter
+	PriorityIncreaseCount      *metric.Counter
+	PriorityDecreaseCount      *metric.Counter
 }
 
 func makeReplicateQueueMetrics() ReplicateQueueMetrics {
@@ -385,6 +409,11 @@ func makeReplicateQueueMetrics() ReplicateQueueMetrics {
 		ReplaceDecommissioningReplicaErrorCount:   metric.NewCounter(metaReplicateQueueReplaceDecommissioningReplicaErrorCount),
 		RemoveDecommissioningReplicaSuccessCount:  metric.NewCounter(metaReplicateQueueRemoveDecommissioningReplicaSuccessCount),
 		RemoveDecommissioningReplicaErrorCount:    metric.NewCounter(metaReplicateQueueRemoveDecommissioningReplicaErrorCount),
+
+		// Priority tracking metrics
+		HighPriorityButRebalancing: metric.NewCounter(metaReplicateQueueHighPriorityAfterRebalanceCount),
+		PriorityIncreaseCount:      metric.NewCounter(metaReplicateQueuePriorityIncreaseCount),
+		PriorityDecreaseCount:      metric.NewCounter(metaReplicateQueuePriorityDecreaseCount),
 	}
 }
 
@@ -636,7 +665,7 @@ func (rq *replicateQueue) shouldQueue(
 }
 
 func (rq *replicateQueue) process(
-	ctx context.Context, repl *Replica, confReader spanconfig.StoreReader,
+	ctx context.Context, repl *Replica, confReader spanconfig.StoreReader, priority float64,
 ) (processed bool, err error) {
 	if tokenErr := repl.allocatorToken.TryAcquire(ctx, rq.name); tokenErr != nil {
 		log.KvDistribution.VEventf(ctx,
@@ -658,11 +687,12 @@ func (rq *replicateQueue) process(
 		return false, err
 	}
 	desc := repl.Desc()
+
 	// Use a retry loop in order to backoff in the case of snapshot errors,
 	// usually signaling that a rebalancing reservation could not be made with the
 	// selected target.
 	for r := retry.StartWithCtx(ctx, retryOpts); r.Next(); {
-		requeue, err := rq.processOneChangeWithTracing(ctx, repl, desc, &conf)
+		requeue, err := rq.processOneChangeWithTracing(ctx, repl, priority, desc, &conf)
 		if isSnapshotError(err) {
 			// If ChangeReplicas failed because the snapshot failed, we attempt to
 			// retry the operation. The most likely causes of the snapshot failing
@@ -687,13 +717,12 @@ func (rq *replicateQueue) process(
 		}
 
 		if testingAggressiveConsistencyChecks {
-			if _, err := rq.store.consistencyQueue.process(ctx, repl, confReader); err != nil {
+			if _, err := rq.store.consistencyQueue.process(ctx, repl, confReader, priority); err != nil {
 				log.KvDistribution.Warningf(ctx, "%v", err)
 			}
 		}
 
 		if requeue {
-			log.KvDistribution.VEventf(ctx, 1, "re-queuing")
 			rq.maybeAdd(ctx, repl, rq.store.Clock().NowAsClockTimestamp())
 		}
 		return true, nil
@@ -746,7 +775,11 @@ func filterTracingSpans(rec tracingpb.Recording, opNamesToFilter ...string) trac
 // logging the resulting traces to the DEV channel in the case of errors or
 // when the configured log traces threshold is exceeded.
 func (rq *replicateQueue) processOneChangeWithTracing(
-	ctx context.Context, repl *Replica, desc *roachpb.RangeDescriptor, conf *roachpb.SpanConfig,
+	ctx context.Context,
+	repl *Replica,
+	priority float64,
+	desc *roachpb.RangeDescriptor,
+	conf *roachpb.SpanConfig,
 ) (requeue bool, _ error) {
 	processStart := timeutil.Now()
 	startTracing := log.ExpensiveLogEnabled(ctx, 1)
@@ -760,7 +793,7 @@ func (rq *replicateQueue) processOneChangeWithTracing(
 	ctx, sp := tracing.EnsureChildSpan(ctx, rq.Tracer, "process replica", opts...)
 	defer sp.Finish()
 
-	requeue, err := rq.processOneChange(ctx, repl, desc, conf,
+	requeue, err := rq.processOneChange(ctx, repl, priority, desc, conf,
 		false /* scatter */, false, /* dryRun */
 	)
 	processDuration := timeutil.Since(processStart)
@@ -866,12 +899,32 @@ func ShouldRequeue(
 func (rq *replicateQueue) processOneChange(
 	ctx context.Context,
 	repl *Replica,
+	priority float64,
 	desc *roachpb.RangeDescriptor,
 	conf *roachpb.SpanConfig,
 	scatter, dryRun bool,
 ) (requeue bool, _ error) {
 	change, err := rq.planner.PlanOneChange(
 		ctx, repl, desc, conf, plan.PlannerOptions{Scatter: scatter})
+	priorityDuringProcess := change.Action.Priority()
+	//processing action: consider rebalance with pri 0, priority at enqueue time: 12002
+	log.Infof(ctx, "processing action: %v with pri %v, priority at enqueue time: %v", change.Action, priorityDuringProcess, priority)
+
+	// Block the outgoing leaseholder right after leaseholder and get into the enqueueing.
+	// Learner priority is enqueued. Unblock the outgoing leaseholder and block the incoming leaseholder. Learner will be removed. Once removed,
+	if priority != -1 {
+		if priorityDuringProcess > priority {
+			// priority has changed
+			rq.metrics.PriorityIncreaseCount.Inc(1)
+		} else if change.Action.Priority() < priority {
+			rq.metrics.PriorityDecreaseCount.Inc(1)
+		}
+		if change.Action == allocatorimpl.AllocatorConsiderRebalance && priority > allocatorimpl.AllocatorReplaceDecommissioningVoter.Priority() {
+			rq.metrics.HighPriorityButRebalancing.Inc(1)
+			log.Info(ctx, "WARNING:high priority but rebalancing")
+		}
+	}
+
 	// When there is an error planning a change, return the error immediately
 	// and do not requeue. It is unlikely that the range or storepool state
 	// will change quickly enough in order to not get the same error and

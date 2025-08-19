@@ -1087,7 +1087,7 @@ func TestReplicateQueueDeadNonVoters(t *testing.T) {
 				ServerArgs: base.TestServerArgs{
 					Knobs: base.TestingKnobs{
 						Store: &kvserver.StoreTestingKnobs{
-							BaseQueueDisabledBypassFilter: func(rangeID roachpb.RangeID) bool {
+							BaseQueueDisabledBypassFilter: func(_ roachpb.StoreID, rangeID roachpb.RangeID) bool {
 								return rangeID == roachpb.RangeID(atomic.LoadInt64(&scratchRangeID))
 							},
 						},
@@ -2489,4 +2489,106 @@ func TestReplicateQueueDecommissionScannerDisabled(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestReplicateQueueDecom(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	settings := cluster.MakeTestingClusterSettings()
+
+	ctx := context.Background()
+	tc := testcluster.StartTestCluster(t, 5, base.TestClusterArgs{
+		ReplicationMode: base.ReplicationManual,
+		ServerArgs: base.TestServerArgs{
+			Settings:          settings,
+			DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant,
+			// Disable the scanner.
+			ScanInterval:    100 * time.Hour,
+			ScanMinIdleTime: 100 * time.Hour,
+			ScanMaxIdleTime: 100 * time.Hour,
+		},
+	})
+	defer tc.Stopper().Stop(ctx)
+
+	decommissioningSrvIdx := 4
+	decommissioningSrv := tc.Server(decommissioningSrvIdx)
+	require.NoError(t, decommissioningSrv.Decommission(ctx,
+		livenesspb.MembershipStatus_DECOMMISSIONING,
+		[]roachpb.NodeID{tc.Server(decommissioningSrvIdx).NodeID()}))
+
+	// Ensure that the node is marked as decommissioning on every other node.
+	// Once this is set, we also know that the onDecommissioning callback has
+	// fired, which enqueues every range which is on the decommissioning node.
+	testutils.SucceedsSoon(t, func() error {
+		for i := 0; i < tc.NumServers(); i++ {
+			srv := tc.Server(i)
+			if _, exists := srv.DecommissioningNodeMap()[decommissioningSrv.NodeID()]; !exists {
+				return errors.Newf("node %d not detected to be decommissioning", decommissioningSrv.NodeID())
+			}
+		}
+		return nil
+	})
+
+	// Now add a replica to the decommissioning node and then enable the
+	// replicate queue. We expect that the replica will be removed after the
+	// decommissioning replica is noticed via maybeEnqueueProblemRange.
+	scratchKey := tc.ScratchRange(t)
+	tc.AddVotersOrFatal(t, scratchKey, tc.Target(decommissioningSrvIdx))
+	tc.ToggleReplicateQueues(true /* active */)
+	testutils.SucceedsSoon(t, func() error {
+		var descs []*roachpb.RangeDescriptor
+		tc.GetFirstStoreFromServer(t, decommissioningSrvIdx).VisitReplicas(func(r *kvserver.Replica) bool {
+			descs = append(descs, r.Desc())
+			return true
+		})
+		if len(descs) != 0 {
+			return errors.Errorf("expected no replicas, found %d: %v", len(descs), descs)
+		}
+		return nil
+	})
+}
+
+// put a marker
+func TestRebalanceLeaseholder(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	settings := cluster.MakeTestingClusterSettings()
+	var scratchRangeID int64
+	atomic.StoreInt64(&scratchRangeID, -1)
+
+	tc := testcluster.StartTestCluster(t, 4, base.TestClusterArgs{
+		ReplicationMode: base.ReplicationManual,
+		ServerArgs: base.TestServerArgs{
+			Settings: settings,
+			Knobs: base.TestingKnobs{
+				Store: &kvserver.StoreTestingKnobs{
+					BaseQueueDisabledBypassFilter: func(storeID roachpb.StoreID, rangeID roachpb.RangeID) bool {
+						if storeID == 4 && rangeID == roachpb.RangeID(atomic.LoadInt64(&scratchRangeID)) {
+							time.Sleep(1 * time.Second)
+							return true
+						}
+						return false
+					},
+				},
+			},
+		},
+	})
+	defer tc.Stopper().Stop(ctx)
+
+	scratchKey := tc.ScratchRange(t)
+	scratchRange := tc.LookupRangeOrFatal(t, scratchKey)
+	tc.AddVotersOrFatal(t, scratchRange.StartKey.AsRawKey(), tc.Targets(1, 2)...)
+	atomic.StoreInt64(&scratchRangeID, int64(scratchRange.RangeID))
+	lh, err := tc.FindRangeLeaseHolder(scratchRange, nil)
+	require.NoError(t, err)
+	_, err = tc.RebalanceVoter(
+		ctx,
+		scratchRange.StartKey.AsRawKey(),
+		roachpb.ReplicationTarget{StoreID: lh.StoreID, NodeID: lh.NodeID}, /* src */
+		roachpb.ReplicationTarget{StoreID: 4, NodeID: 4},                  /* dest */
+	)
+	require.NoError(t, err)
 }

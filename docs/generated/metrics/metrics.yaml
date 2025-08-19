@@ -14030,6 +14030,14 @@ layers:
       unit: COUNT
       aggregation: AVG
       derivative: NON_NEGATIVE_DERIVATIVE
+    - name: queue.replicate.high_priority_after_rebalance
+      exported_name: queue_replicate_high_priority_after_rebalance
+      description: Number of times a replica was enqueued with high priority after a rebalance operation
+      y_axis_label: High Priority Enqueues
+      type: COUNTER
+      unit: COUNT
+      aggregation: AVG
+      derivative: NON_NEGATIVE_DERIVATIVE
     - name: queue.replicate.nonvoterpromotions
       exported_name: queue_replicate_nonvoterpromotions
       description: Number of non-voters promoted to voters by the replicate queue
@@ -14046,6 +14054,22 @@ layers:
       unit: COUNT
       aggregation: AVG
       derivative: NONE
+    - name: queue.replicate.priority_decrease
+      exported_name: queue_replicate_priority_decrease
+      description: Number of times a replica's priority decreased between enqueue and pop time
+      y_axis_label: Priority Decreases
+      type: COUNTER
+      unit: COUNT
+      aggregation: AVG
+      derivative: NON_NEGATIVE_DERIVATIVE
+    - name: queue.replicate.priority_increase
+      exported_name: queue_replicate_priority_increase
+      description: Number of times a replica's priority increased between enqueue and pop time
+      y_axis_label: Priority Increases
+      type: COUNTER
+      unit: COUNT
+      aggregation: AVG
+      derivative: NON_NEGATIVE_DERIVATIVE
     - name: queue.replicate.process.failure
       exported_name: queue_replicate_process_failure
       description: Number of replicas which failed processing in the replicate queue
