@@ -7,6 +7,7 @@ package server
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"time"
 
@@ -48,6 +49,7 @@ func (t *decommissioningNodeMap) makeOnNodeDecommissioningCallback(
 	stores *kvserver.Stores,
 ) func(id roachpb.NodeID) {
 	return func(decommissioningNodeID roachpb.NodeID) {
+		fmt.Println("node decommissioning: ", decommissioningNodeID)
 		ctx := context.Background()
 		t.Lock()
 		defer t.Unlock()
@@ -313,6 +315,7 @@ func evaluateRangeCheckResult(
 func (s *topLevelServer) Decommission(
 	ctx context.Context, targetStatus livenesspb.MembershipStatus, nodeIDs []roachpb.NodeID,
 ) error {
+	log.Infof(ctx, "started decommissioning: %d", nodeIDs)
 	// If we're asked to decommission ourself we may lose access to cluster RPC,
 	// so we decommission ourself last. We copy the slice to avoid mutating the
 	// input slice.

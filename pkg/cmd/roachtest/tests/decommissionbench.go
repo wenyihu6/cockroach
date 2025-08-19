@@ -127,7 +127,17 @@ func registerDecommissionBench(r registry.Registry) {
 			// This test can take nearly an hour to import and achieve balance, so
 			// we extend the timeout to let it complete.
 			timeout: 4 * time.Hour,
-			skip:    manualBenchmarkingOnly,
+			//skip:    manualBenchmarkingOnly,
+		},
+		{
+			// Add a new node during decommission (no drain).
+			nodes:              4,
+			warehouses:         1000,
+			whileUpreplicating: true,
+			// This test can take nearly an hour to import and achieve balance, so
+			// we extend the timeout to let it complete.
+			timeout: 4 * time.Hour,
+			//skip:    manualBenchmarkingOnly,
 		},
 		{
 			// Drain before decommission, without adding a new node.
@@ -137,10 +147,9 @@ func registerDecommissionBench(r registry.Registry) {
 			// This test can take nearly an hour to import and achieve balance, so
 			// we extend the timeout to let it complete.
 			timeout: 4 * time.Hour,
-			skip:    manualBenchmarkingOnly,
+			//skip:    manualBenchmarkingOnly,
 		},
 		{
-			// Drain before decommission, and add a new node.
 			nodes:              8,
 			warehouses:         3000,
 			whileUpreplicating: true,
@@ -148,19 +157,19 @@ func registerDecommissionBench(r registry.Registry) {
 			// This test can take nearly an hour to import and achieve balance, so
 			// we extend the timeout to let it complete.
 			timeout: 4 * time.Hour,
-			skip:    manualBenchmarkingOnly,
+			//skip:    manualBenchmarkingOnly,
 		},
 		{
 			nodes:      4,
 			warehouses: 1000,
 			drainFirst: true,
-			skip:       manualBenchmarkingOnly,
+			//skip:       manualBenchmarkingOnly,
 		},
 		{
 			nodes:      4,
 			warehouses: 1000,
 			slowWrites: true,
-			skip:       manualBenchmarkingOnly,
+			//skip:       manualBenchmarkingOnly,
 		},
 		{
 			nodes:      8,
@@ -169,7 +178,7 @@ func registerDecommissionBench(r registry.Registry) {
 			// This test can take nearly an hour to import and achieve balance, so
 			// we extend the timeout to let it complete.
 			timeout: 4 * time.Hour,
-			skip:    manualBenchmarkingOnly,
+			//skip:    manualBenchmarkingOnly,
 		},
 		{
 			nodes:      12,
@@ -178,7 +187,7 @@ func registerDecommissionBench(r registry.Registry) {
 			// This test can take nearly an hour to import and achieve balance, so
 			// we extend the timeout to let it complete.
 			timeout: 3 * time.Hour,
-			skip:    manualBenchmarkingOnly,
+			//skip:    manualBenchmarkingOnly,
 		},
 		{
 			// Test to compare 12 4-store nodes vs 48 single-store nodes
@@ -187,7 +196,7 @@ func registerDecommissionBench(r registry.Registry) {
 			// This test can take nearly an hour to import and achieve balance, so
 			// we extend the timeout to let it complete.
 			timeout: 3 * time.Hour,
-			skip:    manualBenchmarkingOnly,
+			//skip:    manualBenchmarkingOnly,
 		},
 		{
 			// Multiregion decommission, and add a new node in the same region.
@@ -341,6 +350,7 @@ func registerDecommissionBenchSpec(r registry.Registry, benchSpec decommissionBe
 			} else {
 				runDecommissionBench(ctx, t, c, benchSpec, timeout)
 			}
+			t.Fatalf("test passed but still fail to collect logs")
 		},
 	})
 }
@@ -424,7 +434,7 @@ func setupDecommissionBench(
 		startOpts := option.NewStartOpts(option.NoBackupSchedule)
 		startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
 			fmt.Sprintf("--attrs=node%d", i),
-			"--vmodule=store_rebalancer=5,allocator=5,allocator_scorer=5,replicate_queue=5")
+			"--vmodule=store_rebalancer=5,allocator=5,allocator_scorer=5,replicate_queue=5,queue=5,replica_command=5")
 		c.Start(ctx, t.L(), startOpts, install.MakeClusterSettings(), c.Node(i))
 	}
 	{

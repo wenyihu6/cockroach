@@ -2920,7 +2920,7 @@ func (r *Replica) TestingRefreshLeaderlessWatcherUnavailableState(
 func (r *Replica) maybeEnqueueProblemRange(
 	ctx context.Context, now time.Time, leaseValid, isLeaseholder bool, maybeLog bool,
 ) {
-
+	log.KvDistribution.Infof(ctx, "decommissioning nudger maybeEnqueueProblemRange: now=%v, leaseValid=%v, isLeaseholder=%v", now, leaseValid, isLeaseholder)
 	// The method expects the caller to provide whether the lease is valid and
 	// the replica is the leaseholder for the range, so that it can avoid
 	// unnecessary work. We expect this method to be called in the context of
@@ -2928,7 +2928,7 @@ func (r *Replica) maybeEnqueueProblemRange(
 	if !isLeaseholder || !leaseValid {
 		// The replicate queue will not process the replica without a valid lease.
 		// Track when we skip enqueuing for these reasons.
-		log.KvDistribution.Infof(ctx, "not enqueuing replica %s because isLeaseholder=%t, leaseValid=%t",
+		log.KvDistribution.Infof(ctx, "decommissioning nudger not enqueuing replica %s because isLeaseholder=%t, leaseValid=%t",
 			r.Desc(), isLeaseholder, leaseValid)
 		r.store.metrics.DecommissioningNudgerNotLeaseholderOrInvalidLease.Inc(1)
 		return
@@ -2936,11 +2936,13 @@ func (r *Replica) maybeEnqueueProblemRange(
 
 	interval := EnqueueProblemRangeInReplicateQueueInterval.Get(&r.store.cfg.Settings.SV)
 	if interval == 0 {
+		log.KvDistribution.Infof(ctx, "decommissioning nudger not enqueuing replica due to zero interval %v", interval)
 		// The setting is disabled.
 		return
 	}
 	lastTime := r.lastProblemRangeReplicateEnqueueTime.Load().(time.Time)
 	if lastTime.Add(interval).After(now) {
+		log.KvDistribution.Infof(ctx, "decommissioning nudger skipping replica since it was enqueued less than interval ago lastTime=%v interval=%v now=%v", lastTime, interval, now)
 		// The last time the replica was enqueued is less than the interval ago,
 		// nothing to do.
 		return
@@ -2952,10 +2954,11 @@ func (r *Replica) maybeEnqueueProblemRange(
 	// the replica as we lost the race.
 	if !r.lastProblemRangeReplicateEnqueueTime.CompareAndSwap(lastTime, now) {
 		// This race condition is expected to be rare.
-		log.KvDistribution.VInfof(ctx, 1, "not enqueuing replica %s due to race: "+
-			"lastProblemRangeReplicateEnqueueTime was updated concurrently", r.Desc())
+		log.KvDistribution.Infof(ctx, "decommissioning nudger not enqueuing replica due to race: "+
+			"lastProblemRangeReplicateEnqueueTime was updated concurrently, lastTime=%v now=%v", lastTime, now)
 		return
 	}
+	log.KvDistribution.Infof(ctx, "enqueuing replica to decommissioning nudger %s", r.Desc())
 	r.store.metrics.DecommissioningNudgerEnqueue.Inc(1)
 	// TODO(dodeca12): Figure out a better way to track the
 	// decommissioning nudger enqueue failures/errors.

@@ -3504,6 +3504,7 @@ func (s *Store) updateReplicationGauges(ctx context.Context) error {
 				if maybeLog {
 					logBudgetOnDecommissioningNudger--
 				}
+				log.KvDistribution.Infof(ctx, "decommissioning nudger maybeEnqueueProblemRange: now=%v, leaseValid=%v, isLeaseholder=%v", goNow, metrics.LeaseValid, metrics.Leaseholder)
 				rep.maybeEnqueueProblemRange(ctx, goNow, metrics.LeaseValid, metrics.Leaseholder, maybeLog)
 				decommissioningRangeCount++
 			}

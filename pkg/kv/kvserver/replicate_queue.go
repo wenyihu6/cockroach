@@ -98,7 +98,7 @@ var EnqueueProblemRangeInReplicateQueueInterval = settings.RegisterDurationSetti
 		"processing, outside of the normal scanner interval; a problem range is "+
 		"one which is underreplicated or has a replica on a decommissioning store, "+
 		"disabled when set to 0",
-	0,
+	1*time.Second,
 )
 
 // TODO(wenyihu6): move these cluster settings to kvserverbase
