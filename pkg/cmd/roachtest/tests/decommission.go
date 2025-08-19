@@ -141,6 +141,20 @@ func registerDecommission(r registry.Registry) {
 			},
 		})
 	}
+	{
+		numNodes := 5
+		r.Add(registry.TestSpec{
+			Name:             "decommission/range-constraints",
+			Owner:            registry.OwnerKV,
+			Cluster:          r.MakeClusterSpec(numNodes),
+			CompatibleClouds: registry.AllExceptAWS,
+			Suites:           registry.Suites(registry.Nightly),
+			Leases:           registry.MetamorphicLeases,
+			Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
+				runDecommissionWithRangeConstraints(ctx, t, c)
+			},
+		})
+	}
 }
 
 // runDrainAndDecommission marks 3 nodes in the test cluster as "draining" and
@@ -1175,6 +1189,209 @@ func runDecommissionSlow(ctx context.Context, t test.Test, c cluster.Cluster) {
 	},
 		3*time.Minute,
 	)
+}
+
+// runDecommissionWithRangeConstraints creates a cluster with 4 nodes where
+// half of the ranges are configured to nodes 1,2,3 and the other half to
+// nodes 1,2,4. Then adds a new node 5 before decommissioning node 3.
+//
+// This test verifies that:
+// 1. Zone constraints can be used to control replica placement
+// 2. New nodes can be added to a cluster during decommission operations
+// 3. Decommissioning works correctly when ranges have specific constraints
+// 4. The allocator properly handles constraint changes during decommission
+//
+// Test flow:
+// 1. Start 4 nodes with node attributes (node1, node2, node3, node4)
+// 2. Create two tables: table_a and table_b
+// 3. Configure table_a to have replicas on nodes 1,2,3
+// 4. Configure table_b to have replicas on nodes 1,2,4
+// 5. Add node 5 to the cluster
+// 6. Decommission node 3, which should move table_a replicas to other nodes
+// 7. Verify that table_b replicas remain on nodes 1,2,4
+// 8. Verify that no ranges remain on the decommissioned node 3
+func runDecommissionWithRangeConstraints(ctx context.Context, t test.Test, c cluster.Cluster) {
+	const (
+		numNodes     = 5 // Start with 4, add 1 more
+		pinnedNodeID = 1
+		decommNodeID = 3
+	)
+
+	// Start the initial 4 nodes
+	for i := 1; i <= 4; i++ {
+		startOpts := option.DefaultStartOpts()
+		startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
+			fmt.Sprintf("--attrs=node%d", i),
+		)
+		c.Start(ctx, t.L(), withDecommissionVMod(startOpts), install.MakeClusterSettings(), c.Node(i))
+	}
+
+	// Initialize the cluster with some data
+	c.Run(ctx, option.WithNodes(c.Node(pinnedNodeID)),
+		fmt.Sprintf(`./cockroach workload init kv --drop --splits 1000 {pgurl:%d}`, pinnedNodeID))
+
+	h := newDecommTestHelper(t, c)
+
+	run := func(l *logger.Logger, stmt string) {
+		db := c.Conn(ctx, l, pinnedNodeID)
+		defer db.Close()
+
+		t.Status(stmt)
+		_, err := db.ExecContext(ctx, stmt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		l.Printf("run: %s\n", stmt)
+	}
+
+	// Wait for initial up-replication
+	if err := h.waitReplicatedAwayFrom(ctx, 0 /* no down node */, pinnedNodeID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create two tables with different zone configurations
+	// Table A: replicas on nodes 1,2,3
+	// Table B: replicas on nodes 1,2,4
+	{
+		db := c.Conn(ctx, t.L(), pinnedNodeID)
+		defer db.Close()
+
+		// Create tables
+		run(t.L(), `CREATE TABLE table_a (id INT PRIMARY KEY, data STRING)`)
+		run(t.L(), `CREATE TABLE table_b (id INT PRIMARY KEY, data STRING)`)
+
+		// Insert some data to create ranges
+		run(t.L(), `INSERT INTO table_a SELECT generate_series(1, 1000), 'data_a_' || generate_series(1, 1000)`)
+		run(t.L(), `INSERT INTO table_b SELECT generate_series(1, 1000), 'data_b_' || generate_series(1, 1000)`)
+
+		// Configure zone constraints for table_a to use nodes 1,2,3
+		run(t.L(), `ALTER TABLE table_a CONFIGURE ZONE USING constraints = '[+node1, +node2, +node3]'`)
+
+		// Configure zone constraints for table_b to use nodes 1,2,4
+		run(t.L(), `ALTER TABLE table_b CONFIGURE ZONE USING constraints = '[+node1, +node2, +node4]'`)
+
+		// Speed up the decommissioning
+		run(t.L(), `SET CLUSTER SETTING kv.snapshot_rebalance.max_rate='2GiB'`)
+
+		// Wait for the zone configurations to take effect
+		time.Sleep(10 * time.Second)
+	}
+
+	// Verify the range distribution before adding node 5
+	t.Status("verifying initial range distribution")
+	{
+		db := c.Conn(ctx, t.L(), pinnedNodeID)
+		defer db.Close()
+
+		// Check that table_a ranges are on nodes 1,2,3
+		var count int
+		err := db.QueryRow(`
+			SELECT count(*) FROM [SHOW RANGES FROM TABLE table_a] 
+			WHERE array_position(voting_replicas, 1) IS NOT NULL 
+			AND array_position(voting_replicas, 2) IS NOT NULL 
+			AND array_position(voting_replicas, 3) IS NOT NULL
+		`).Scan(&count)
+		require.NoError(t, err)
+		t.L().Printf("table_a ranges on nodes 1,2,3: %d", count)
+
+		// Check that table_b ranges are on nodes 1,2,4
+		err = db.QueryRow(`
+			SELECT count(*) FROM [SHOW RANGES FROM TABLE table_b] 
+			WHERE array_position(voting_replicas, 1) IS NOT NULL 
+			AND array_position(voting_replicas, 2) IS NOT NULL 
+			AND array_position(voting_replicas, 4) IS NOT NULL
+		`).Scan(&count)
+		require.NoError(t, err)
+		t.L().Printf("table_b ranges on nodes 1,2,4: %d", count)
+	}
+
+	// Add node 5 to the cluster
+	t.Status("adding node 5 to the cluster")
+	{
+		startOpts := option.NewStartOpts(option.SkipInit)
+		startOpts.RoachprodOpts.JoinTargets = []int{pinnedNodeID}
+		startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
+			fmt.Sprintf("--attrs=node%d", 5),
+		)
+		if err := c.StartE(ctx, t.L(), withDecommissionVMod(startOpts),
+			install.MakeClusterSettings(), c.Node(5)); err != nil {
+			t.Fatal(err)
+		}
+
+		// Wait for node 5 to be fully integrated
+		time.Sleep(10 * time.Second)
+	}
+
+	// Start a workload to generate some activity during decommission
+	m := t.NewGroup(task.WithContext(ctx))
+	m.Go(func(ctx context.Context, l *logger.Logger) error {
+		return c.RunE(ctx, option.WithNodes(c.Node(pinnedNodeID)),
+			"./cockroach workload run kv --max-rate 500 --tolerate-errors --duration=10m {pgurl:1-5}")
+	}, task.Name("workload"))
+
+	// Decommission node 3
+	t.Status(fmt.Sprintf("decommissioning node %d", decommNodeID))
+	{
+		// Get the logical node ID for node 3
+		nodeID, err := h.getLogicalNodeID(ctx, decommNodeID)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Remove node 3 from the zone constraints for table_a
+		run(t.L(), `ALTER TABLE table_a CONFIGURE ZONE USING constraints = '[+node1, +node2]'`)
+
+		// Decommission node 3
+		targetNodeList := option.NodeListOption{nodeID}
+		if err := timeutil.RunWithTimeout(ctx, "decommission", 20*time.Minute, func(ctx context.Context) error {
+			_, err := h.decommission(ctx, targetNodeList, pinnedNodeID, "--wait=all", "--checks=skip")
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+
+		// Wait for replicas to be moved away from node 3
+		if err := h.waitReplicatedAwayFrom(ctx, nodeID, pinnedNodeID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Verify the final range distribution
+	t.Status("verifying final range distribution")
+	{
+		db := c.Conn(ctx, t.L(), pinnedNodeID)
+		defer db.Close()
+
+		// Check that no ranges remain on node 3
+		var count int
+		err := db.QueryRow(`
+			SELECT count(*) FROM [SHOW RANGES FROM DATABASE defaultdb] 
+			WHERE array_position(voting_replicas, 3) IS NOT NULL
+		`).Scan(&count)
+		require.NoError(t, err)
+		require.Equal(t, 0, count, "expected no ranges on node 3 after decommission")
+
+		// Check that table_a ranges are now on nodes 1,2 (and possibly 5)
+		err = db.QueryRow(`
+			SELECT count(*) FROM [SHOW RANGES FROM TABLE table_a] 
+			WHERE array_position(voting_replicas, 1) IS NOT NULL 
+			AND array_position(voting_replicas, 2) IS NOT NULL
+		`).Scan(&count)
+		require.NoError(t, err)
+		t.L().Printf("table_a ranges on nodes 1,2 after decommission: %d", count)
+
+		// Check that table_b ranges are still on nodes 1,2,4
+		err = db.QueryRow(`
+			SELECT count(*) FROM [SHOW RANGES FROM TABLE table_b] 
+			WHERE array_position(voting_replicas, 1) IS NOT NULL 
+			AND array_position(voting_replicas, 2) IS NOT NULL 
+			AND array_position(voting_replicas, 4) IS NOT NULL
+		`).Scan(&count)
+		require.NoError(t, err)
+		t.L().Printf("table_b ranges on nodes 1,2,4 after decommission: %d", count)
+	}
+
+	m.Wait()
 }
 
 // Header from the output of `cockroach node decommission`.

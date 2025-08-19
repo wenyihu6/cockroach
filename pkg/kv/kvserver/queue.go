@@ -256,11 +256,12 @@ type queueImpl interface {
 	// The Replica is guaranteed to be initialized.
 	shouldQueue(context.Context, hlc.ClockTimestamp, *Replica, spanconfig.StoreReader) (shouldQueue bool, priority float64)
 
-	// process accepts a replica, and the system config and executes
-	// queue-specific work on it. The Replica is guaranteed to be initialized.
+	// process accepts a replica, the system config, and the priority that was used
+	// when the replica was enqueued, and executes queue-specific work on it.
+	// The Replica is guaranteed to be initialized.
 	// We return a boolean to indicate if the Replica was processed successfully
 	// (vs. it being a no-op or an error).
-	process(context.Context, *Replica, spanconfig.StoreReader) (processed bool, err error)
+	process(context.Context, *Replica, spanconfig.StoreReader, float64) (processed bool, err error)
 
 	// processScheduled is called after async task was created to run process.
 	// This function is called by the process loop synchronously. This method is
@@ -572,7 +573,7 @@ func (h baseQueueHelper) MaybeAdd(
 
 func (h baseQueueHelper) Add(ctx context.Context, repl replicaInQueue, prio float64) {
 	_, err := h.bq.addInternal(ctx, repl.Desc(), repl.ReplicaID(), prio)
-	if err != nil && log.V(1) {
+	if err != nil {
 		log.Infof(ctx, "during Add: %s", err)
 	}
 }
@@ -654,6 +655,7 @@ func (bq *baseQueue) maybeAdd(ctx context.Context, repl replicaInQueue, now hlc.
 	bq.mu.Unlock()
 
 	if stopped {
+		log.Infof(ctx, "queue stopped")
 		return
 	}
 
@@ -662,7 +664,8 @@ func (bq *baseQueue) maybeAdd(ctx context.Context, repl replicaInQueue, now hlc.
 		// replication, however still require specific range(s) to be processed
 		// through the queue.
 		bypassDisabled := bq.store.TestingKnobs().BaseQueueDisabledBypassFilter
-		if bypassDisabled == nil || !bypassDisabled(repl.GetRangeID()) {
+		if bypassDisabled == nil || !bypassDisabled(bq.store.StoreID(), repl.GetRangeID()) {
+			log.Infof(ctx, "queue disabled")
 			return
 		}
 	}
@@ -670,6 +673,7 @@ func (bq *baseQueue) maybeAdd(ctx context.Context, repl replicaInQueue, now hlc.
 	// Load the system config if it's needed.
 	confReader, err := bq.replicaCanBeProcessed(ctx, repl, false /* acquireLeaseIfNeeded */)
 	if err != nil {
+		log.Infof(ctx, "replica can not be processed: %v", err)
 		return
 	}
 
@@ -679,6 +683,7 @@ func (bq *baseQueue) maybeAdd(ctx context.Context, repl replicaInQueue, now hlc.
 	realRepl, _ := repl.(*Replica)
 	should, priority := bq.impl.shouldQueue(ctx, now, realRepl, confReader)
 	if !should {
+		log.Infof(ctx, "replica should not be processed")
 		return
 	}
 
@@ -690,12 +695,14 @@ func (bq *baseQueue) maybeAdd(ctx context.Context, repl replicaInQueue, now hlc.
 			return
 		}
 		if hasExternal {
+			log.Infof(ctx, "skipping %s for %s because it has external bytes", bq.name, realRepl)
 			log.VInfof(ctx, 1, "skipping %s for %s because it has external bytes", bq.name, realRepl)
 			return
 		}
 	}
 	_, err = bq.addInternal(ctx, repl.Desc(), repl.ReplicaID(), priority)
 	if !isExpectedQueueError(err) {
+		log.Infof(ctx, "unable to add: %+v", err)
 		log.Errorf(ctx, "unable to add: %+v", err)
 	}
 }
@@ -713,6 +720,7 @@ func (bq *baseQueue) addInternal(
 		// again for Add().
 		return false, errors.New("replica not initialized")
 	}
+	log.Infof(ctx, "addInternal: %v, %v, %v, %v", desc.RangeID, replicaID, priority, bq.store.StoreID())
 
 	bq.mu.Lock()
 	defer bq.mu.Unlock()
@@ -726,7 +734,7 @@ func (bq *baseQueue) addInternal(
 		// replication, however still require specific range(s) to be processed
 		// through the queue.
 		bypassDisabled := bq.store.TestingKnobs().BaseQueueDisabledBypassFilter
-		if bypassDisabled == nil || !bypassDisabled(desc.RangeID) {
+		if bypassDisabled == nil || !bypassDisabled(bq.store.StoreID(), desc.RangeID) {
 			if log.V(3) {
 				log.Infof(ctx, "queue disabled")
 			}
@@ -734,6 +742,7 @@ func (bq *baseQueue) addInternal(
 		}
 	}
 
+	time.Sleep(1 * time.Second)
 	// If the replica is currently in purgatory, don't re-add it.
 	if _, ok := bq.mu.purgatory[desc.RangeID]; ok {
 		return false, nil
@@ -872,7 +881,7 @@ func (bq *baseQueue) processLoop(stopper *stop.Stopper) {
 
 					repl, priority := bq.pop()
 					if repl != nil {
-						bq.processOneAsyncAndReleaseSem(ctx, repl, stopper)
+						bq.processOneAsyncAndReleaseSem(ctx, repl, priority, stopper)
 						bq.impl.postProcessScheduled(ctx, repl, priority)
 					} else {
 						// Release semaphore if no replicas were available.
@@ -901,7 +910,7 @@ func (bq *baseQueue) processLoop(stopper *stop.Stopper) {
 // processOneAsyncAndReleaseSem processes a replica if possible and releases the
 // processSem when the processing is complete.
 func (bq *baseQueue) processOneAsyncAndReleaseSem(
-	ctx context.Context, repl replicaInQueue, stopper *stop.Stopper,
+	ctx context.Context, repl replicaInQueue, priority float64, stopper *stop.Stopper,
 ) {
 	ctx = repl.AnnotateCtx(ctx)
 	taskName := bq.processOpName() + " [outer]"
@@ -917,7 +926,7 @@ func (bq *baseQueue) processOneAsyncAndReleaseSem(
 			// Release semaphore when finished processing.
 			defer func() { <-bq.processSem }()
 			start := timeutil.Now()
-			err := bq.processReplica(ctx, repl)
+			err := bq.processReplica(ctx, repl, priority)
 			bq.recordProcessDuration(ctx, timeutil.Since(start))
 			bq.finishProcessingReplica(ctx, stopper, repl, err)
 		}); err != nil {
@@ -950,7 +959,9 @@ func (bq *baseQueue) recordProcessDuration(ctx context.Context, dur time.Duratio
 //
 // ctx should already be annotated by both bq.AnnotateCtx() and
 // repl.AnnotateCtx().
-func (bq *baseQueue) processReplica(ctx context.Context, repl replicaInQueue) error {
+func (bq *baseQueue) processReplica(
+	ctx context.Context, repl replicaInQueue, priority float64,
+) error {
 
 	ctx, span := tracing.EnsureChildSpan(ctx, bq.Tracer, bq.processOpName())
 	defer span.Finish()
@@ -967,6 +978,13 @@ func (bq *baseQueue) processReplica(ctx context.Context, repl replicaInQueue) er
 		return err
 	}
 
+	// roachtest
+	// zone config: place replicas on 4 nodes
+	// add a node (n5)
+	// these 4 nodes are distributed equally
+	// decommission n3
+	// priority changed:
+
 	return timeutil.RunWithTimeout(ctx, redact.Sprintf("%s queue process replica %d", bq.name, repl.GetRangeID()),
 		bq.processTimeoutFunc(bq.store.ClusterSettings(), repl), func(ctx context.Context) error {
 			log.VEventf(ctx, 3, "processing...")
@@ -974,7 +992,7 @@ func (bq *baseQueue) processReplica(ctx context.Context, repl replicaInQueue) er
 			// it may not be and shouldQueue will be passed a nil realRepl. These tests
 			// know what they're getting into so that's fine.
 			realRepl, _ := repl.(*Replica)
-			processed, err := bq.impl.process(ctx, realRepl, conf)
+			processed, err := bq.impl.process(ctx, realRepl, conf, priority)
 			if err != nil {
 				return err
 			}
@@ -1315,7 +1333,7 @@ func (bq *baseQueue) processReplicasInPurgatory(
 					if _, err := bq.replicaCanBeProcessed(ctx, repl, false); err != nil {
 						bq.finishProcessingReplica(ctx, stopper, repl, err)
 					} else {
-						err = bq.processReplica(ctx, repl)
+						err = bq.processReplica(ctx, repl, -1)
 						bq.finishProcessingReplica(ctx, stopper, repl, err)
 					}
 				},
@@ -1345,7 +1363,12 @@ func (bq *baseQueue) processReplicasInPurgatory(
 // replicaItem corresponding to the returned Replica will be moved to the
 // "processing" state and should be cleaned up by calling
 // finishProcessingReplica once the Replica has finished processing.
-func (bq *baseQueue) pop() (replicaInQueue, float64) {
+func (bq *baseQueue) pop() (rp replicaInQueue, pri float64) {
+	defer func() {
+		if bq.name == "replicate" && rp != nil && rp.(*Replica) != nil {
+			log.Infof(context.Background(), "popped rep= %v with pri=%v", rp.Desc(), pri)
+		}
+	}()
 	bq.mu.Lock()
 	for {
 		if bq.mu.priorityQ.Len() == 0 {
@@ -1437,12 +1460,13 @@ func (bq *baseQueue) DrainQueue(ctx context.Context, stopper *stop.Stopper) {
 	defer bq.lockProcessing()()
 
 	ctx = bq.AnnotateCtx(ctx)
-	for repl, _ := bq.pop(); repl != nil; repl, _ = bq.pop() {
+	for repl, priority := bq.pop(); repl != nil; repl, _ = bq.pop() {
+		fmt.Println("priority: ", priority, ", replica: ", repl.Desc())
 		annotatedCtx := repl.AnnotateCtx(ctx)
 		if _, err := bq.replicaCanBeProcessed(annotatedCtx, repl, false); err != nil {
 			bq.finishProcessingReplica(annotatedCtx, stopper, repl, err)
 		} else {
-			err = bq.processReplica(annotatedCtx, repl)
+			err = bq.processReplica(annotatedCtx, repl, -1)
 			bq.finishProcessingReplica(annotatedCtx, stopper, repl, err)
 		}
 	}

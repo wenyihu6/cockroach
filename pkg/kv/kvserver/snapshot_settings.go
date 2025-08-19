@@ -140,7 +140,7 @@ var snapshotReservationQueueTimeoutFraction = settings.RegisterFloatSetting(
 	"kv.snapshot_receiver.reservation_queue_timeout_fraction",
 	"the fraction of a snapshot's total timeout that it is allowed to spend "+
 		"queued on the receiver waiting for a reservation",
-	0.4,
+	0.25,
 	settings.FloatInRange(0.25, 1.0),
 )
 

@@ -1087,7 +1087,7 @@ func TestReplicateQueueDeadNonVoters(t *testing.T) {
 				ServerArgs: base.TestServerArgs{
 					Knobs: base.TestingKnobs{
 						Store: &kvserver.StoreTestingKnobs{
-							BaseQueueDisabledBypassFilter: func(rangeID roachpb.RangeID) bool {
+							BaseQueueDisabledBypassFilter: func(_ roachpb.StoreID, rangeID roachpb.RangeID) bool {
 								return rangeID == roachpb.RangeID(atomic.LoadInt64(&scratchRangeID))
 							},
 						},
@@ -2489,4 +2489,752 @@ func TestReplicateQueueDecommissionScannerDisabled(t *testing.T) {
 		}
 		return nil
 	})
+}
+
+func TestReplicateQueueDecom(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	settings := cluster.MakeTestingClusterSettings()
+
+	ctx := context.Background()
+	tc := testcluster.StartTestCluster(t, 5, base.TestClusterArgs{
+		ReplicationMode: base.ReplicationManual,
+		ServerArgs: base.TestServerArgs{
+			Settings:          settings,
+			DefaultTestTenant: base.TestIsSpecificToStorageLayerAndNeedsASystemTenant,
+			// Disable the scanner.
+			ScanInterval:    100 * time.Hour,
+			ScanMinIdleTime: 100 * time.Hour,
+			ScanMaxIdleTime: 100 * time.Hour,
+		},
+	})
+	defer tc.Stopper().Stop(ctx)
+
+	decommissioningSrvIdx := 4
+	decommissioningSrv := tc.Server(decommissioningSrvIdx)
+	require.NoError(t, decommissioningSrv.Decommission(ctx,
+		livenesspb.MembershipStatus_DECOMMISSIONING,
+		[]roachpb.NodeID{tc.Server(decommissioningSrvIdx).NodeID()}))
+
+	// Ensure that the node is marked as decommissioning on every other node.
+	// Once this is set, we also know that the onDecommissioning callback has
+	// fired, which enqueues every range which is on the decommissioning node.
+	testutils.SucceedsSoon(t, func() error {
+		for i := 0; i < tc.NumServers(); i++ {
+			srv := tc.Server(i)
+			if _, exists := srv.DecommissioningNodeMap()[decommissioningSrv.NodeID()]; !exists {
+				return errors.Newf("node %d not detected to be decommissioning", decommissioningSrv.NodeID())
+			}
+		}
+		return nil
+	})
+
+	// Now add a replica to the decommissioning node and then enable the
+	// replicate queue. We expect that the replica will be removed after the
+	// decommissioning replica is noticed via maybeEnqueueProblemRange.
+	scratchKey := tc.ScratchRange(t)
+	tc.AddVotersOrFatal(t, scratchKey, tc.Target(decommissioningSrvIdx))
+	tc.ToggleReplicateQueues(true /* active */)
+	testutils.SucceedsSoon(t, func() error {
+		var descs []*roachpb.RangeDescriptor
+		tc.GetFirstStoreFromServer(t, decommissioningSrvIdx).VisitReplicas(func(r *kvserver.Replica) bool {
+			descs = append(descs, r.Desc())
+			return true
+		})
+		if len(descs) != 0 {
+			return errors.Errorf("expected no replicas, found %d: %v", len(descs), descs)
+		}
+		return nil
+	})
+}
+
+//	func TestReplicateQueueUpReplicateOddVotersDecom(t *testing.T) {
+//		defer leaktest.AfterTest(t)()
+//		defer log.Scope(t).Close(t)
+//		const replicaCount = 3
+//
+//		// Start with more nodes to create the race condition
+//		tc := testcluster.StartTestCluster(t, 6,
+//			base.TestClusterArgs{ReplicationMode: base.ReplicationAuto},
+//		)
+//		defer tc.Stopper().Stop(context.Background())
+//		ctx := context.Background()
+//
+//		testKey := keys.MetaMin
+//		_, err := tc.LookupRange(testKey)
+//		if err != nil {
+//			t.Fatal(err)
+//		}
+//		require.NoError(t, tc.WaitForFullReplication())
+//
+//		// Add two more nodes to create more complexity
+//		tc.AddAndStartServer(t, base.TestServerArgs{})
+//		tc.AddAndStartServer(t, base.TestServerArgs{})
+//
+//		// Create multiple ranges with larger data
+//		const numRanges = 15
+//		const dataSize = 1 << 20 // 1MB per range
+//		ranges := make([]roachpb.Key, numRanges)
+//
+//		// Create scratch ranges and populate them with data
+//		for i := 0; i < numRanges; i++ {
+//			// Create a new scratch range
+//			scratchKey := tc.ScratchRange(t)
+//			ranges[i] = scratchKey
+//
+//			// Generate large data for this range
+//			largeData := make([]byte, dataSize)
+//			for j := range largeData {
+//				largeData[j] = byte(i + j) // Create some variation in the data
+//			}
+//
+//			// Write data to the range using multiple keys
+//			const keysPerRange = 100
+//			for j := 0; j < keysPerRange; j++ {
+//				key := append(scratchKey, fmt.Sprintf("key_%d_%d", i, j)...)
+//				value := append(largeData, fmt.Sprintf("_value_%d", j)...)
+//
+//				// Use the DB to write data
+//				s := tc.Server(0)
+//				db := s.DB()
+//				require.NoError(t, db.Put(ctx, key, value))
+//			}
+//
+//			t.Logf("Created range %d with %d keys, total data size ~%d bytes",
+//				i, keysPerRange, dataSize*keysPerRange)
+//		}
+//
+//		// Define node indices for the race condition setup
+//		const decomNodeIdx = 1 // Node to be decommissioned
+//		const decomNodeID = 2
+//		const newTargetNodeIdx = 4   // New node that will receive rebalanced ranges
+//		const leaseholderNodeIdx = 5 // Node that will be leaseholder of decommissioning ranges
+//
+//		// Create the race condition setup:
+//		// 1. Add replicas to the decommissioning node for all ranges
+//		// 2. Make the leaseholder node the leaseholder for some ranges that are on the decommissioning node
+//		// 3. Add replicas to the new target node for some ranges
+//		// 4. This creates a scenario where the new target node might become leaseholder
+//		//    of ranges that are being decommissioned from the decom node
+//
+//		for i := 0; i < numRanges; i++ {
+//			// Add replica to decommissioning node for all ranges
+//			tc.AddVotersOrFatal(t, ranges[i], tc.Target(decomNodeIdx))
+//
+//			// For some ranges, make the leaseholder node the leaseholder
+//			if i < numRanges/3 {
+//				// Transfer lease to the leaseholder node
+//				tc.AddVotersOrFatal(t, ranges[i], tc.Target(leaseholderNodeIdx))
+//				tc.TransferRangeLeaseOrFatal(t, ranges[i], tc.Target(leaseholderNodeIdx))
+//			}
+//
+//			// For some ranges, add replicas to the new target node
+//			if i >= numRanges/3 && i < 2*numRanges/3 {
+//				tc.AddVotersOrFatal(t, ranges[i], tc.Target(newTargetNodeIdx))
+//			}
+//
+//			// For the remaining ranges, create a mix where both new target and leaseholder
+//			// nodes have replicas, creating potential for lease transfer conflicts
+//			if i >= 2*numRanges/3 {
+//				tc.AddVotersOrFatal(t, ranges[i], tc.Target(newTargetNodeIdx))
+//				tc.AddVotersOrFatal(t, ranges[i], tc.Target(leaseholderNodeIdx))
+//			}
+//		}
+//
+//		// Verify the setup before decommissioning
+//		t.Logf("Setup complete: decomNode=%d, newTargetNode=%d, leaseholderNode=%d",
+//			decomNodeIdx, newTargetNodeIdx, leaseholderNodeIdx)
+//
+//		// Log the current state of some ranges
+//		for i := 0; i < 5; i++ { // Log first 5 ranges
+//			desc := tc.LookupRangeOrFatal(t, ranges[i])
+//			t.Logf("Range %d: replicas=%v, leaseholder=%d",
+//				i, desc.Replicas().VoterDescriptors(), desc.LeaseholderNodeID)
+//		}
+//
+//		// Start decommissioning the node
+//		adminSrv := tc.Server(decomNodeIdx)
+//		adminClient := adminSrv.GetAdminClient(t)
+//		_, err = adminClient.Decommission(
+//			ctx, &serverpb.DecommissionRequest{
+//				NodeIDs:          []roachpb.NodeID{decomNodeID},
+//				TargetMembership: livenesspb.MembershipStatus_DECOMMISSIONING,
+//			},
+//		)
+//		require.NoError(t, err)
+//
+//		// Now the race condition can occur:
+//		// 1. The replicate queue will try to rebalance ranges away from the decommissioning node
+//		// 2. Some ranges might get rebalanced to the new target node
+//		// 3. The new target node might become leaseholder of ranges that are being decommissioned
+//		// 4. This could cause issues if the decommissioning logic doesn't handle this properly
+//
+//		// Wait for the rebalancing to complete and check for the race condition
+//		testutils.SucceedsSoon(t, func() error {
+//			// Check that all ranges have the correct number of replicas
+//			for i := 0; i < numRanges; i++ {
+//				descriptor, err := tc.LookupRange(ranges[i])
+//				if err != nil {
+//					return err
+//				}
+//				if len(descriptor.InternalReplicas) != replicaCount {
+//					return errors.Errorf("range %d replica count, want %d, current %d",
+//						i, replicaCount, len(descriptor.InternalReplicas))
+//				}
+//			}
+//			return nil
+//		})
+//
+//		// Force replication queue processing to trigger the race condition
+//		testutils.SucceedsSoon(t, func() error {
+//			if err := forceScanOnAllReplicationQueues(tc); err != nil {
+//				return err
+//			}
+//			return nil
+//		})
+//
+//		// Check for the specific race condition: ranges that have been rebalanced to the new target node
+//		// but are still being processed for decommissioning
+//		var raceConditionRanges []int
+//		for i := 0; i < numRanges; i++ {
+//			descriptor := tc.LookupRangeOrFatal(t, ranges[i])
+//
+//			// Check if this range has replicas on both the new target node and the decommissioning node
+//			hasNewTargetReplica := false
+//			hasDecomReplica := false
+//
+//			for _, replica := range descriptor.InternalReplicas {
+//				if replica.NodeID == tc.Server(newTargetNodeIdx).NodeID() {
+//					hasNewTargetReplica = true
+//				}
+//				if replica.NodeID == tc.Server(decomNodeIdx).NodeID() {
+//					hasDecomReplica = true
+//				}
+//			}
+//
+//			// This is the race condition: range has replicas on both nodes during decommissioning
+//			if hasNewTargetReplica && hasDecomReplica {
+//				raceConditionRanges = append(raceConditionRanges, i)
+//				t.Logf("RACE CONDITION DETECTED: Range %d has replicas on both new target node and decommissioning node", i)
+//			}
+//		}
+//
+//		if len(raceConditionRanges) > 0 {
+//			t.Logf("Found %d ranges in potential race condition state", len(raceConditionRanges))
+//		}
+//
+//		// Verify that the decommissioning node eventually has no replicas
+//		testutils.SucceedsSoon(t, func() error {
+//			var descs []*roachpb.RangeDescriptor
+//			tc.GetFirstStoreFromServer(t, decomNodeIdx).VisitReplicas(func(r *kvserver.Replica) bool {
+//				descs = append(descs, r.Desc())
+//				return true
+//			})
+//			if len(descs) != 0 {
+//				return errors.Errorf("expected no replicas on decommissioning node, found %d: %v", len(descs), descs)
+//			}
+//			return nil
+//		})
+//
+//		// Final verification: check that all ranges are properly replicated
+//		for i := 0; i < numRanges; i++ {
+//			descriptor := tc.LookupRangeOrFatal(t, ranges[i])
+//			require.Equal(t, replicaCount, len(descriptor.InternalReplicas),
+//				"Range %d should have %d replicas", i, replicaCount)
+//
+//			// Ensure no replicas are on the decommissioned node
+//			for _, replica := range descriptor.InternalReplicas {
+//				require.NotEqual(t, tc.Server(decomNodeIdx).NodeID(), replica.NodeID,
+//					"Range %d should not have replicas on decommissioned node", i)
+//			}
+//		}
+//	}
+// func TestRebalanceLeaseholder(t *testing.T) {
+// 	defer leaktest.AfterTest(t)()
+// 	defer log.Scope(t).Close(t)
+
+// 	ctx := context.Background()
+// 	settings := cluster.MakeTestingClusterSettings()
+// 	// kvserver.EnqueueProblemRangeInReplicateQueueInterval.Override(
+// 	// 	context.Background(), &settings.SV, 1*time.Second)
+
+// 	// Rebalance to n4 and see n4.
+// 	// 4 nodes: n1, n2, n3, new node n4, n5
+// 	// rebalance the range from n1 to n4
+// 	//
+// 	// Start a 4 node cluster with manual replication
+// 	var scratchRangeID int64
+// 	const numRanges = 100
+// 	atomic.StoreInt64(&scratchRangeID, -1)
+// 	ranges := make([]roachpb.RangeDescriptor, numRanges)
+
+// 	tc := testcluster.StartTestCluster(t, 4, base.TestClusterArgs{
+// 		ReplicationMode: base.ReplicationManual,
+// 		ServerArgs: base.TestServerArgs{
+// 			Settings: settings,
+// 			// Disable the scanner.
+// 			//ScanInterval:    100 * time.Hour,
+// 			//ScanMinIdleTime: 100 * time.Hour,
+// 			//ScanMaxIdleTime: 100 * time.Hour,
+// 			Knobs: base.TestingKnobs{
+// 				Store: &kvserver.StoreTestingKnobs{
+// 					// Disable all queues to control replication manually
+// 					BaseQueueDisabledBypassFilter: func(rangeID roachpb.RangeID) bool {
+// 						for i := 0; i < numRanges; i++ {
+// 							if ranges[i].RangeID == rangeID {
+// 								return true
+// 							}
+// 						}
+// 						return false
+// 					},
+// 				},
+// 			},
+// 		},
+// 	})
+// 	defer tc.Stopper().Stop(ctx)
+
+// 	// Create 100 test ranges
+// 	keys := make([]roachpb.Key, numRanges)
+
+// 	scratchKey := tc.ScratchRange(t)
+// 	// r1, r2, err := tc.SplitRange(scratchKey1)
+// 	// require.NoError(t, err)
+// 	// // 1, 3, 5: transfer lh to 5
+// 	// fmt.Println(r1)
+// 	// tc.AddVotersOrFatal(t, r1.StartKey.AsRawKey(), tc.Targets(2, 4)...)
+// 	// // 1, 2, 4: rebalance 1 to 5
+// 	// r1desc := tc.LookupRangeOrFatal(t, r1.StartKey.AsRawKey())
+// 	// r2desc := tc.LookupRangeOrFatal(t, r2.StartKey.AsRawKey())
+// 	// fmt.Println(r1desc)
+// 	// fmt.Println(r2desc)
+// 	// tc.AddVotersOrFatal(t, r2.StartKey.AsRawKey(), tc.Targets(1, 3)...)
+
+// 	// Create 100 ranges by splitting off from r1 and r2
+// 	// First 50 ranges will be splits from r1 (placed on nodes 1,3,5)
+// 	// Second 50 ranges will be splits from r2 (placed on nodes 1,2,4)
+// 	splitKey := scratchKey
+// 	left, right, err := tc.SplitRange(splitKey)
+// 	require.NoError(t, err)
+// 	// half of the ranges on 1, 2, 3 and rebalance lh to 4
+// 	tc.AddVotersOrFatal(t, left.StartKey.AsRawKey(), tc.Targets(1, 2)...)
+// 	// half of the ranges on 1, 2, 5 and rebalance lh to 4
+// 	tc.AddVotersOrFatal(t, right.StartKey.AsRawKey(), tc.Targets(1, 6)...)
+
+// 	for i := 0; i < numRanges; i++ {
+// 		//if i < numRanges/2 {
+// 		//	// Split from r1 range - these will inherit replicas on nodes 1,3,5
+// 		//	splitKey = r1.StartKey.AsRawKey()
+// 		//} else {
+// 		//	// Split from r2 range - these will inherit replicas on nodes 1,2,4
+// 		//	splitKey = r2.StartKey.AsRawKey()
+// 		//}
+
+// 		require.NoError(t, err)
+// 		ranges[i] = right
+// 		fmt.Println(splitKey)
+// 		keys[i] = splitKey
+// 		splitKey = splitKey.Next()
+// 	}
+// 	scratchRange := tc.LookupRangeOrFatal(t, scratchKey)
+// 	atomic.StoreInt64(&scratchRangeID, int64(scratchRange.RangeID))
+
+// 	// tc.WaitForFullReplication()
+
+// 	g := ctxgroup.WithContext(ctx)
+// 	g.GoCtx(func(ctx context.Context) error {
+// 		for i := 0; i < numRanges; i++ {
+// 			desc, err := tc.LookupRange(keys[i])
+// 			require.NoError(t, err)
+
+// 			target, err := tc.FindRangeLeaseHolder(desc, nil)
+// 			require.NoError(t, err)
+
+// 			skip := false
+// 			for _, replica := range desc.InternalReplicas {
+// 				if replica.NodeID == 4 {
+// 					skip = true
+// 				}
+// 			}
+// 			if skip {
+// 				continue
+// 			}
+// 			_, err = tc.RebalanceVoter(
+// 				ctx,
+// 				keys[i],
+// 				roachpb.ReplicationTarget{StoreID: target.StoreID, NodeID: target.NodeID}, /* src */
+// 				roachpb.ReplicationTarget{StoreID: 4, NodeID: 4},                          /* dest */
+// 			)
+// 			require.NoError(t, err)
+// 		}
+// 		return nil
+// 	})
+
+// 	//require.NoError(t, tc.AddAndStartServerE(base.TestServerArgs{}))
+
+// 	// Decommission n3.
+// 	const decomNodeID = 3
+// 	const decomNodeIdx = 2
+// 	adminSrv := tc.Server(decomNodeIdx)
+// 	for _, status := range []livenesspb.MembershipStatus{
+// 		livenesspb.MembershipStatus_DECOMMISSIONING,
+// 	} {
+// 		require.NoError(t, adminSrv.Decommission(ctx, status, []roachpb.NodeID{decomNodeID}))
+// 	}
+
+// 	// scratchKey := tc.ScratchRange(t)
+// 	// tc.AddVotersOrFatal(t, scratchKey, tc.Target(decommissioningSrvIdx))
+// 	// tc.ToggleReplicateQueues(true /* active */)
+
+// 	// // For the first half of ranges(n1, n2, n3), rebalance from n1 to n5.
+// 	// for i := 0; i < numRanges/2; i++ {
+// 	// 	_, err := tc.RebalanceVoter(
+// 	// 		ctx,
+// 	// 		keys[i],
+// 	// 		roachpb.ReplicationTarget{StoreID: 1, NodeID: 1}, /* src */
+// 	// 		roachpb.ReplicationTarget{StoreID: 5, NodeID: 5}, /* dest */
+// 	// 	)
+// 	// 	require.NoError(t, err)
+// 	// }
+
+// 	// For the second half of ranges(n1, n4, n5), transfer the lease to n5.
+// 	// for i := numRanges / 2; i < numRanges; i++ {
+// 	// 	err := tc.TransferRangeLease(
+// 	// 		ranges[i],
+// 	// 		roachpb.ReplicationTarget{StoreID: 5, NodeID: 5},
+// 	// 	)
+// 	// 	require.NoError(t, err)
+// 	// }
+
+// 	// Wait for node 3 to be fully decommissioned
+// 	testutils.SucceedsSoon(t, func() error {
+// 		var descs []*roachpb.RangeDescriptor
+// 		tc.GetFirstStoreFromServer(t, decomNodeIdx).VisitReplicas(func(r *kvserver.Replica) bool {
+// 			descs = append(descs, r.Desc())
+// 			return true
+// 		})
+// 		if len(descs) != 0 {
+// 			rangeIDs := make([]int64, len(descs))
+// 			for i, desc := range descs {
+// 				rangeIDs[i] = int64(desc.RangeID)
+// 			}
+// 			return errors.Errorf("expected no replicas on decommissioning node, found %d: %v\n, ranges: %v", len(descs), rangeIDs, ranges)
+// 		}
+// 		return nil
+// 	})
+// 	testutils.SucceedsSoon(t, func() error {
+// 		livenesses, err := adminSrv.NodeLiveness().(*liveness.NodeLiveness).ScanNodeVitalityFromKV(ctx)
+// 		if err != nil {
+// 			return err
+// 		}
+// 		for nodeID, nodeLiveness := range livenesses {
+// 			if nodeID == decomNodeID {
+// 				if nodeLiveness.IsDecommissioned() {
+// 					return nil
+// 				}
+// 				return errors.Errorf("n%d has membership: %s", nodeID, nodeLiveness.MembershipStatus())
+// 			}
+// 		}
+// 		return errors.Errorf("n%d liveness not found", decomNodeID)
+// 	})
+
+// 	// Now add a replica to the decommissioning node and then enable the
+// 	// replicate queue. We expect that the replica will be removed after the
+// 	// decommissioning replica is noticed via maybeEnqueueProblemRange.
+
+// 	// Verify no ranges are left on the decommissioned node
+
+// 	fmt.Println("test has failed: ", time.Now())
+// 	// // Verify all ranges are properly replicated
+// 	// for i := 0; i < numRanges; i++ {
+// 	// 	desc := tc.LookupRangeOrFatal(t, keys[i])
+// 	// 	require.Equal(t, 3, len(desc.InternalReplicas),
+// 	// 		"Range %d should have 3 replicas", i)
+
+// 	// 	// Ensure no replicas are on the decommissioned node
+// 	// 	for _, replica := range desc.InternalReplicas {
+// 	// 		require.NotEqual(t, decomNodeID, replica.NodeID,
+// 	// 			"Range %d should not have replicas on decommissioned node", i)
+// 	// 	}
+// 	// }
+// }
+
+func TestRebalanceLeaseholder(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	settings := cluster.MakeTestingClusterSettings()
+	// kvserver.EnqueueProblemRangeInReplicateQueueInterval.Override(
+	// 	context.Background(), &settings.SV, 1*time.Second)
+
+	// rebalance the range from n1 to n4
+	//
+	// Start a 4 node cluster with manual replication.
+	// Start ranges on n1, n2, n3. Rebalance the leaseholder replica to n4.
+	var scratchRangeID int64
+	const numRanges = 100
+	atomic.StoreInt64(&scratchRangeID, -1)
+	// ranges := make([]roachpb.RangeDescriptor, numRanges)
+
+	tc := testcluster.StartTestCluster(t, 4, base.TestClusterArgs{
+		ReplicationMode: base.ReplicationManual,
+		ServerArgs: base.TestServerArgs{
+			Settings: settings,
+			// Disable the scanner.
+			//ScanInterval:    100 * time.Hour,
+			//ScanMinIdleTime: 100 * time.Hour,
+			//ScanMaxIdleTime: 100 * time.Hour,
+			Knobs: base.TestingKnobs{
+				Store: &kvserver.StoreTestingKnobs{
+					BaseQueueDisabledBypassFilter: func(storeID roachpb.StoreID, rangeID roachpb.RangeID) bool {
+						// Go through the old one but not the new one. And then after that we want the new one to call maybe add while it also have other decommissioning replicas to process.
+						if storeID == 4 && rangeID == roachpb.RangeID(atomic.LoadInt64(&scratchRangeID)) {
+							return true
+						}
+						return false
+						// if storeID != 4 {
+						// 	// Old node: do not go through the queue.
+						// 	return false
+						// }
+						// // New node: by pass the queue.
+						// if rangeID == roachpb.RangeID(atomic.LoadInt64(&scratchRangeID)) {
+						// 	return true
+						// } else {
+						// 	// New node: enable the queue.
+						// 	return false
+						// }
+					},
+					// Disable all queues to control replication manually
+					// BaseQueueDisabledBypassFilter: func(rangeID roachpb.RangeID) bool {
+					// 	for i := 0; i < numRanges; i++ {
+					// 		if ranges[i].RangeID == rangeID {
+					// 			return true
+					// 		}
+					// 	}
+					// 	return false
+					// },
+				},
+			},
+		},
+	})
+	defer tc.Stopper().Stop(ctx)
+
+	// Create 100 test ranges
+	scratchKey := tc.ScratchRange(t)
+	scratchRange := tc.LookupRangeOrFatal(t, scratchKey)
+	tc.AddVotersOrFatal(t, scratchRange.StartKey.AsRawKey(), tc.Targets(1, 2)...)
+	atomic.StoreInt64(&scratchRangeID, int64(scratchRange.RangeID))
+	lh, err := tc.FindRangeLeaseHolder(scratchRange, nil)
+	require.NoError(t, err)
+	fmt.Println("!!! lh: ", lh)
+	_, err = tc.RebalanceVoter(
+		ctx,
+		scratchRange.StartKey.AsRawKey(),
+		roachpb.ReplicationTarget{StoreID: lh.StoreID, NodeID: lh.NodeID}, /* src */
+		roachpb.ReplicationTarget{StoreID: 4, NodeID: 4},                  /* dest */
+	)
+	require.NoError(t, err)
+	// // Create 100 ranges by splitting off from r1 and r2
+	// // First 50 ranges will be splits from r1 (placed on nodes 1,3,5)
+	// // Second 50 ranges will be splits from r2 (placed on nodes 1,2,4)
+	// splitKey := scratchKey
+	// left, right, err := tc.SplitRange(splitKey)
+	// require.NoError(t, err)
+	// // half of the ranges on 1, 2, 3 and rebalance lh to 4
+	// tc.AddVotersOrFatal(t, left.StartKey.AsRawKey(), tc.Targets(1, 2)...)
+	// // half of the ranges on 1, 2, 5 and rebalance lh to 4
+	// tc.AddVotersOrFatal(t, right.StartKey.AsRawKey(), tc.Targets(1, 6)...)
+
+	// for i := 0; i < numRanges; i++ {
+	// 	splitKey := scratchKey
+	// 	splitKey = splitKey.Next()
+	// 	keys[i] = splitKey
+	// 	ranges[i] = tc.LookupRangeOrFatal(t, splitKey)
+	// }
+	// atomic.StoreInt64(&scratchRangeID, int64(scratchRange.RangeID))
+
+	// tc.WaitForFullReplication()
+
+	// for i := 0; i < numRanges; i++ {
+	// 	desc, err := tc.LookupRange(keys[i])
+	// 	require.NoError(t, err)
+
+	// 	target, err := tc.FindRangeLeaseHolder(desc, nil)
+	// 	require.NoError(t, err)
+
+	// 	skip := false
+	// 	for _, replica := range desc.InternalReplicas {
+	// 		if replica.NodeID == 4 {
+	// 			skip = true
+	// 		}
+	// 	}
+	// 	if skip {
+	// 		continue
+	// 	}
+	// 	_, err = tc.RebalanceVoter(
+	// 		ctx,
+	// 		keys[i],
+	// 		roachpb.ReplicationTarget{StoreID: target.StoreID, NodeID: target.NodeID}, /* src */
+	// 		roachpb.ReplicationTarget{StoreID: 4, NodeID: 4},                          /* dest */
+	// 	)
+	// 	require.NoError(t, err)
+	// }
+
+	// g := ctxgroup.WithContext(ctx)
+	// g.GoCtx(func(ctx context.Context) error {
+
+	// 	return nil
+	// })
+
+	//require.NoError(t, tc.AddAndStartServerE(base.TestServerArgs{}))
+
+	// Decommission n3.
+	// const decomNodeID = 3
+	// const decomNodeIdx = 2
+	// adminSrv := tc.Server(decomNodeIdx)
+	// for _, status := range []livenesspb.MembershipStatus{
+	// 	livenesspb.MembershipStatus_DECOMMISSIONING,
+	// } {
+	// 	require.NoError(t, adminSrv.Decommission(ctx, status, []roachpb.NodeID{decomNodeID}))
+	// }
+
+	// scratchKey := tc.ScratchRange(t)
+	// tc.AddVotersOrFatal(t, scratchKey, tc.Target(decommissioningSrvIdx))
+	// tc.ToggleReplicateQueues(true /* active */)
+
+	// // For the first half of ranges(n1, n2, n3), rebalance from n1 to n5.
+	// for i := 0; i < numRanges/2; i++ {
+	// 	_, err := tc.RebalanceVoter(
+	// 		ctx,
+	// 		keys[i],
+	// 		roachpb.ReplicationTarget{StoreID: 1, NodeID: 1}, /* src */
+	// 		roachpb.ReplicationTarget{StoreID: 5, NodeID: 5}, /* dest */
+	// 	)
+	// 	require.NoError(t, err)
+	// }
+
+	// For the second half of ranges(n1, n4, n5), transfer the lease to n5.
+	// for i := numRanges / 2; i < numRanges; i++ {
+	// 	err := tc.TransferRangeLease(
+	// 		ranges[i],
+	// 		roachpb.ReplicationTarget{StoreID: 5, NodeID: 5},
+	// 	)
+	// 	require.NoError(t, err)
+	// }
+
+	// Wait for node 3 to be fully decommissioned
+	// testutils.SucceedsSoon(t, func() error {
+	// 	var descs []*roachpb.RangeDescriptor
+	// 	tc.GetFirstStoreFromServer(t, decomNodeIdx).VisitReplicas(func(r *kvserver.Replica) bool {
+	// 		descs = append(descs, r.Desc())
+	// 		return true
+	// 	})
+	// 	if len(descs) != 0 {
+	// 		rangeIDs := make([]int64, len(descs))
+	// 		for i, desc := range descs {
+	// 			rangeIDs[i] = int64(desc.RangeID)
+	// 		}
+	// 		return errors.Errorf("expected no replicas on decommissioning node, found %d: %v\n, ranges: %v", len(descs), rangeIDs, ranges)
+	// 	}
+	// 	return nil
+	// })
+	// testutils.SucceedsSoon(t, func() error {
+	// 	livenesses, err := adminSrv.NodeLiveness().(*liveness.NodeLiveness).ScanNodeVitalityFromKV(ctx)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// 	for nodeID, nodeLiveness := range livenesses {
+	// 		if nodeID == decomNodeID {
+	// 			if nodeLiveness.IsDecommissioned() {
+	// 				return nil
+	// 			}
+	// 			return errors.Errorf("n%d has membership: %s", nodeID, nodeLiveness.MembershipStatus())
+	// 		}
+	// 	}
+	// 	return errors.Errorf("n%d liveness not found", decomNodeID)
+	// })
+
+	// Now add a replica to the decommissioning node and then enable the
+	// replicate queue. We expect that the replica will be removed after the
+	// decommissioning replica is noticed via maybeEnqueueProblemRange.
+
+	// Verify no ranges are left on the decommissioned node
+
+	fmt.Println("test has failed: ", time.Now())
+	time.Sleep(10 * time.Second)
+	// // Verify all ranges are properly replicated
+	// for i := 0; i < numRanges; i++ {
+	// 	desc := tc.LookupRangeOrFatal(t, keys[i])
+	// 	require.Equal(t, 3, len(desc.InternalReplicas),
+	// 		"Range %d should have 3 replicas", i)
+
+	// 	// Ensure no replicas are on the decommissioned node
+	// 	for _, replica := range desc.InternalReplicas {
+	// 		require.NotEqual(t, decomNodeID, replica.NodeID,
+	// 			"Range %d should not have replicas on decommissioned node", i)
+	// 	}
+	// }
+}
+
+// addNodeHelper adds a new node to the test cluster and returns the node ID.
+// It follows the pattern used in decommission tests.
+func addNodeHelper(t *testing.T, tc *testcluster.TestCluster, ctx context.Context) int {
+	// Add a new server to the cluster
+	require.NoError(t, tc.AddAndStartServerE(base.TestServerArgs{}))
+
+	// Get the new node ID by looking at the number of servers
+	newNodeID := tc.NumServers()
+
+	// Wait for the new node to be ready
+	testutils.SucceedsSoon(t, func() error {
+		// Check if the new node is responding
+		_, err := tc.Server(newNodeID - 1).NodeLiveness().(*liveness.NodeLiveness).ScanNodeVitalityFromKV(ctx)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+
+	t.Logf("Added new node %d to cluster", newNodeID)
+	return newNodeID
+}
+
+// addNodeWithReplicasHelper adds a new node and optionally moves replicas to it.
+// This is useful for testing scenarios where you want to control replica placement.
+func addNodeWithReplicasHelper(
+	t *testing.T,
+	tc *testcluster.TestCluster,
+	ctx context.Context,
+	keys []roachpb.Key,
+	replicaCount int,
+) int {
+	newNodeID := addNodeHelper(t, tc, ctx)
+
+	// Move some replicas to the new node
+	for i := 0; i < replicaCount && i < len(keys); i++ {
+		desc := tc.LookupRangeOrFatal(t, keys[i])
+
+		// Find a source node (not the new node)
+		var sourceNode int
+		for _, replica := range desc.InternalReplicas {
+			if replica.NodeID != roachpb.NodeID(newNodeID) {
+				sourceNode = int(replica.NodeID)
+				break
+			}
+		}
+
+		if sourceNode > 0 {
+			_, err := tc.RebalanceVoter(
+				ctx,
+				keys[i],
+				roachpb.ReplicationTarget{StoreID: roachpb.StoreID(sourceNode), NodeID: roachpb.NodeID(sourceNode)},
+				roachpb.ReplicationTarget{StoreID: roachpb.StoreID(newNodeID), NodeID: roachpb.NodeID(newNodeID)},
+			)
+			require.NoError(t, err)
+		}
+	}
+
+	t.Logf("Moved %d replicas to new node %d", replicaCount, newNodeID)
+	return newNodeID
 }

@@ -233,7 +233,7 @@ func (rp ReplicaPlanner) PlanOneChange(
 	// NB: the replication layer ensures that the below operations don't cause
 	// unavailability; see kvserver.execChangeReplicasTxn.
 	action, allocatorPrio := rp.allocator.ComputeAction(ctx, rp.storePool, conf, desc)
-	log.KvDistribution.VEventf(ctx, 1, "next replica action: %s", action)
+	log.KvDistribution.Infof(ctx, "next replica action: %s, priority: %v at node: %v", action, action.Priority(), repl.NodeID())
 
 	var err error
 	var op AllocationOp
