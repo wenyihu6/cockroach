@@ -348,6 +348,7 @@ func registerDecommissionBenchSpec(r registry.Registry, benchSpec decommissionBe
 			} else {
 				runDecommissionBench(ctx, t, c, benchSpec, timeout)
 			}
+			t.Fatalf("test passed but still fail to collect logs")
 		},
 	})
 }
@@ -713,7 +714,7 @@ func runDecommissionBench(
 			}
 
 			// Include an additional minute of buffer time before starting decommission.
-			time.Sleep(1 * time.Minute)
+			time.Sleep(5 * time.Minute)
 		}
 
 		m.ExpectDeath()
