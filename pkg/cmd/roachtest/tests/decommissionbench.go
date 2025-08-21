@@ -140,7 +140,6 @@ func registerDecommissionBench(r registry.Registry) {
 			skip:    manualBenchmarkingOnly,
 		},
 		{
-			// Drain before decommission, and add a new node.
 			nodes:              8,
 			warehouses:         3000,
 			whileUpreplicating: true,
@@ -149,6 +148,14 @@ func registerDecommissionBench(r registry.Registry) {
 			// we extend the timeout to let it complete.
 			timeout: 4 * time.Hour,
 			skip:    manualBenchmarkingOnly,
+		},
+		{
+			// Drain before decommission, and add a new node.
+			nodes:              4,
+			warehouses:         1000,
+			whileUpreplicating: true,
+			drainFirst:         false,
+			snapshotRate:       2 << 20,
 		},
 		{
 			nodes:      4,
