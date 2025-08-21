@@ -156,6 +156,7 @@ func registerDecommissionBench(r registry.Registry) {
 			whileUpreplicating: true,
 			drainFirst:         false,
 			snapshotRate:       2 << 20,
+			slowWrites:         true,
 		},
 		{
 			nodes:      4,
@@ -627,7 +628,7 @@ func runDecommissionBench(
 	// to run a write-heavy workload known to be difficult for compactions to keep
 	// pace with.
 	if benchSpec.slowWrites {
-		workloadCmd = fmt.Sprintf("./cockroach workload run kv --init --concurrency=%d --splits=1000 "+
+		workloadCmd = fmt.Sprintf("./cockroach workload run kv --init --concurrency=%d --splits=5000 "+
 			"--read-percent=50 --min-block-bytes=8192 --max-block-bytes=8192 --duration=%s "+
 			"%s --ramp=%s --tolerate-errors {pgurl:1-%d}", benchSpec.nodes*64,
 			testTimeout, roachtestutil.GetWorkloadHistogramString(t, c, nil, true), rampDuration, benchSpec.nodes)
