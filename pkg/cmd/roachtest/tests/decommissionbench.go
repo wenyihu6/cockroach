@@ -155,7 +155,7 @@ func registerDecommissionBench(r registry.Registry) {
 			warehouses:         1000,
 			whileUpreplicating: true,
 			drainFirst:         false,
-			snapshotRate:       2 << 20,
+			snapshotRate:       1 << 20,
 			slowWrites:         true,
 		},
 		{
@@ -433,7 +433,7 @@ func setupDecommissionBench(
 		startOpts := option.NewStartOpts(option.NoBackupSchedule)
 		startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
 			fmt.Sprintf("--attrs=node%d", i),
-			"--vmodule=store_rebalancer=5,allocator=5,allocator_scorer=5,replicate_queue=5")
+			"--vmodule=store_rebalancer=5,allocator=5,allocator_scorer=5,replicate_queue=5,queue=5,replica_command=5")
 		c.Start(ctx, t.L(), startOpts, install.MakeClusterSettings(), c.Node(i))
 	}
 	{
@@ -462,6 +462,7 @@ func setupDecommissionBench(
 			for _, stmt := range []string{
 				fmt.Sprintf(`SET CLUSTER SETTING kv.snapshot_rebalance.max_rate='%dMiB'`,
 					benchSpec.snapshotRate),
+				"SET CLUSTER SETTING kv.snapshot_receiver.reservation_queue_timeout_fraction=0.05",
 			} {
 				t.Status(stmt)
 				_, err := db.ExecContext(ctx, stmt)

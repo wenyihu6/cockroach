@@ -141,7 +141,7 @@ var snapshotReservationQueueTimeoutFraction = settings.RegisterFloatSetting(
 	"the fraction of a snapshot's total timeout that it is allowed to spend "+
 		"queued on the receiver waiting for a reservation",
 	0.25,
-	settings.FloatInRange(0.25, 1.0),
+	settings.FloatInRange(0.05, 1.0),
 )
 
 // snapshotSSTWriteSyncRate is the size of chunks to write before fsync-ing.
