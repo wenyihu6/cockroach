@@ -2974,7 +2974,7 @@ func (r *Replica) maybeEnqueueProblemRange(
 	} else {
 		// TODO(dodeca12): Figure out a better way to track the
 		// decommissioning nudger enqueue failures/errors.
-		r.store.replicateQueue.AddAsync(ctx, r,
+		r.store.replicateQueue.AddAsyncWithTracing(ctx, r,
 			allocatorimpl.AllocatorReplaceDecommissioningVoter.Priority())
 	}
 }

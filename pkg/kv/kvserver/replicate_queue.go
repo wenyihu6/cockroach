@@ -989,10 +989,16 @@ func (rq *replicateQueue) processOneChangeWithTracing(
 		}
 	}
 	if err != nil {
-		log.KvDistribution.Infof(ctx, "error processing replica: %v%s", err, traceOutput)
+		log.KvDistribution.Infof(ctx, "error processing replica: %v%s (priority at enqueue: %v)",
+			err, traceOutput, priorityAtEnqueue)
 	} else if exceededDuration {
-		log.KvDistribution.Infof(ctx, "processing replica took %s, exceeding threshold of %s%s",
-			processDuration, loggingThreshold, traceOutput)
+		log.KvDistribution.Infof(ctx,
+			"processing replica took %s, exceeding threshold of %s%s (priority at enqueue: %v)",
+			processDuration, loggingThreshold, traceOutput, priorityAtEnqueue)
+	} else if isDecommissioning {
+		log.KvDistribution.Infof(ctx,
+			"decommissioning range enqueued %s (priority at enqueue: %v)",
+			traceOutput, priorityAtEnqueue)
 	}
 
 	return requeue, err
