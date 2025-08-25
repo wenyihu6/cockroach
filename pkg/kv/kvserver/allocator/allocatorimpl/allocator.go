@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"time"
 
@@ -139,6 +140,7 @@ const (
 	AllocatorConsiderRebalance
 	AllocatorRangeUnavailable
 	AllocatorFinalizeAtomicReplicationChange
+	AllocatorMaxSentinel
 )
 
 // Add indicates an action adding a replica.
@@ -280,6 +282,32 @@ func (a AllocatorAction) Priority() float64 {
 	}
 }
 
+// AllocatorActionPriorities contains all allocator actions ordered by priority
+// from highest to lowest. AllocatorActionToIdx maps each action to its index in
+// AllocatorActionPriorities.
+var (
+	AllocatorActionPriorities, AllocatorActionToIdx = func() (actionsByPriority []AllocatorAction, actionToIdx map[AllocatorAction]int) {
+		// NB: AllocatorMaxSentinel is one more than the number of actions since
+		// AllocatorAction has a placeholder value at 0.
+		actionsByPriority = make([]AllocatorAction, 0, AllocatorMaxSentinel-1)
+		for action := AllocatorNoop; action < AllocatorMaxSentinel; action++ {
+			actionsByPriority = append(actionsByPriority, action)
+		}
+		// Sort actions by priority in descending order.
+		sort.Slice(actionsByPriority, func(i, j int) bool {
+			return actionsByPriority[i].Priority() > actionsByPriority[j].Priority()
+		})
+		// Create index map. All valid actions should be a key in the map. It
+		// corresponds to the index of the action in the actions slice. The action
+		// slice is sorted by priority in descending order.
+		actionToIdx = make(map[AllocatorAction]int, len(actionsByPriority))
+		for i, action := range actionsByPriority {
+			actionToIdx[action] = i
+		}
+		return actionsByPriority, actionToIdx
+	}()
+)
+
 // GetAllocatorActionFromPriority returns an AllocatorAction that approximately matches
 // the given priority value. Since priorities may be adjusted, it finds the closest match
 // within a tolerance of 100.
@@ -291,6 +319,8 @@ func GetAllocatorActionFromPriority(ctx context.Context, priority float64) Alloc
 		return diff <= tolerance
 	}
 	switch priority {
+	case 1e5:
+		return AllocatorReplaceDecommissioningVoter
 	case 12002:
 		return AllocatorFinalizeAtomicReplicationChange
 	case 12001:
