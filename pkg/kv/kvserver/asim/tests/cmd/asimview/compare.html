@@ -167,6 +167,10 @@
       color: #17a2b8;
     }
     
+    .file-item-status.corresponding {
+      color: #6f42c1;
+    }
+    
     .comparison-container {
       display: flex;
       flex-direction: column;
@@ -203,7 +207,7 @@
       padding: 1rem;
     }
     
-    .comparison-side.head {
+    .comparison-side.prev {
       border-right: 1px solid #dee2e6;
     }
     
@@ -374,12 +378,12 @@
     // Initialize on page load
     window.addEventListener('DOMContentLoaded', async () => {
       await loadCommitInfo();
-      await detectChangedFiles();
+      await detectChangedFiles(); // This will now auto-select and auto-load corresponding files
     });
     
     // Event listeners
     document.getElementById('refreshButton').addEventListener('click', async () => {
-      await detectChangedFiles();
+      await detectChangedFiles(); // This will now auto-select and auto-load corresponding files
     });
     
     document.getElementById('showAllButton').addEventListener('click', async () => {
@@ -427,12 +431,31 @@
         }
         
         changedFiles = result.files || [];
+        
+        // Auto-select all corresponding generated files
+        selectedFiles.clear();
+        changedFiles.forEach(file => {
+          if (file.status === 'corresponding') {
+            selectedFiles.add(file.path);
+          }
+        });
+        
         updateFileList();
         
         if (changedFiles.length === 0) {
           showStatus('No changed ASIM test files found between HEAD and HEAD~1. Try "Show All Generated Files" to see available files.', 'warning');
         } else {
-          showStatus(`Found ${changedFiles.length} changed files`, 'info');
+          const correspondingCount = changedFiles.filter(f => f.status === 'corresponding').length;
+          showStatus(`Found ${changedFiles.length} changed files (${correspondingCount} auto-selected generated files)`, 'info');
+          
+          // Auto-load comparison if we have corresponding files
+          if (correspondingCount > 0) {
+            statusDiv.innerHTML = `<div class="alert alert-info">✅ Auto-selected ${correspondingCount} generated files. Loading comparison in 2 seconds...</div>`;
+            setTimeout(() => {
+              statusDiv.innerHTML = `<div class="alert alert-info">🔄 Loading comparison data...</div>`;
+              loadComparison();
+            }, 2000); // Increased delay to show status
+          }
         }
       } catch (error) {
         showStatus('Error detecting changed files: ' + error.message + '. Try "Show All Generated Files" to see available files.', 'error');
@@ -497,9 +520,14 @@
         
         const textDiv = document.createElement('div');
         textDiv.className = 'file-item-text';
+        let statusText = file.status.toUpperCase();
+        if (file.status === 'corresponding') {
+          statusText = 'AUTO-INCLUDED (from config change)';
+        }
+        
         textDiv.innerHTML = `
           <div class="file-item-name">${file.testName}</div>
-          <div class="file-item-status ${file.status}">${file.status.toUpperCase()}: ${file.path}</div>
+          <div class="file-item-status ${file.status}">${statusText}: ${file.path}</div>
         `;
         
         item.appendChild(checkbox);
@@ -528,6 +556,7 @@
     
     // Load comparison data
     async function loadComparison() {
+      console.log('loadComparison called with selectedFiles:', Array.from(selectedFiles));
       if (selectedFiles.size === 0) {
         showStatus('Please select files to compare', 'warning');
         return;
@@ -651,28 +680,7 @@
         const grid = document.createElement('div');
         grid.className = 'comparison-grid';
         
-        // HEAD side
-        const headSide = document.createElement('div');
-        headSide.className = 'comparison-side head';
-        headSide.innerHTML = `
-          <div class="side-header head">
-            <span class="side-title">HEAD (Current)</span>
-          </div>
-        `;
-        
-        if (hasHeadData) {
-          const headCanvas = document.createElement('canvas');
-          const headContainer = document.createElement('div');
-          headContainer.className = 'chart-container';
-          headContainer.appendChild(headCanvas);
-          headSide.appendChild(headContainer);
-          
-          createChart(headCanvas, headFileData, metricName, 'HEAD');
-        } else {
-          headSide.innerHTML += '<div class="no-data">No data available</div>';
-        }
-        
-        // HEAD~1 side
+        // HEAD~1 side (LEFT)
         const prevSide = document.createElement('div');
         prevSide.className = 'comparison-side prev';
         prevSide.innerHTML = `
@@ -693,8 +701,29 @@
           prevSide.innerHTML += '<div class="no-data">No data available</div>';
         }
         
-        grid.appendChild(headSide);
+        // HEAD side (RIGHT)
+        const headSide = document.createElement('div');
+        headSide.className = 'comparison-side head';
+        headSide.innerHTML = `
+          <div class="side-header head">
+            <span class="side-title">HEAD (Current)</span>
+          </div>
+        `;
+        
+        if (hasHeadData) {
+          const headCanvas = document.createElement('canvas');
+          const headContainer = document.createElement('div');
+          headContainer.className = 'chart-container';
+          headContainer.appendChild(headCanvas);
+          headSide.appendChild(headContainer);
+          
+          createChart(headCanvas, headFileData, metricName, 'HEAD');
+        } else {
+          headSide.innerHTML += '<div class="no-data">No data available</div>';
+        }
+        
         grid.appendChild(prevSide);
+        grid.appendChild(headSide);
         fileSection.appendChild(grid);
         section.appendChild(fileSection);
       });

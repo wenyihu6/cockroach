@@ -1,0 +1,5 @@
+Serving files from: /Users/wenyihu/go/src/github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/tests/testdata/generated
+Viewer available at: http://localhost:8080
+Comparison tool available at: http://localhost:8080/compare
+2025/09/10 14:07:59 listen tcp :8080: bind: address already in use
+exit status 1

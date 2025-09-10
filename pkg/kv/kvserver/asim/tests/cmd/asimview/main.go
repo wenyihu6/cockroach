@@ -294,7 +294,15 @@ func makeChangedFilesHandler(baseDir string) http.HandlerFunc {
 			})
 		}
 
-		// 2. Also check for recently modified files in the generated directory (since they're .gitignored)
+		// 2. For any changed .txt config files, find corresponding generated JSON files
+		correspondingFiles, err := findCorrespondingGeneratedFiles(repoRoot, changedFiles)
+		if err != nil {
+			fmt.Printf("Warning: failed to find corresponding generated files: %v\n", err)
+		} else {
+			changedFiles = append(changedFiles, correspondingFiles...)
+		}
+
+		// 3. Also check for recently modified files in the generated directory (since they're .gitignored)
 		generatedFiles, err := findRecentlyModifiedGeneratedFiles(repoRoot)
 		if err != nil {
 			// Log error but don't fail the request
@@ -330,7 +338,46 @@ func makeFileAtCommitHandler(baseDir string) http.HandlerFunc {
 			return
 		}
 
-		// Get file content at specific commit
+		// Special handling for generated files that are gitignored
+		if strings.Contains(filePath, "testdata/generated") && strings.HasSuffix(filePath, ".json") {
+			// For generated files, we need to checkout the commit and read from disk
+			repoRoot, err := getGitRepoRoot()
+			if err != nil {
+				http.Error(w, "Failed to find git repository root", http.StatusInternalServerError)
+				return
+			}
+
+			if commit == "HEAD" {
+				// Serve current file from disk (no checkout needed)
+				fullPath := filepath.Join(repoRoot, filePath)
+				content, err := readGeneratedFile(fullPath)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to read current generated file: %v", err), http.StatusNotFound)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Write(content)
+				return
+			} else {
+				// For previous commits, gitignored files remain on disk so we can read them directly
+				// No checkout needed since these files aren't tracked by git
+				fullPath := filepath.Join(repoRoot, filePath)
+				content, err := readGeneratedFile(fullPath)
+				if err != nil {
+					http.Error(w, fmt.Sprintf("Failed to read generated file: %v", err), http.StatusNotFound)
+					return
+				}
+
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Write(content)
+				return
+			}
+		}
+
+		// For non-generated files, use git
 		cmd := exec.Command("git", "show", fmt.Sprintf("%s:%s", commit, filePath))
 		output, err := cmd.Output()
 		if err != nil {
@@ -431,6 +478,189 @@ func findRecentlyModifiedGeneratedFiles(repoRoot string) ([]ChangedFile, error) 
 	}
 
 	return changedFiles, nil
+}
+
+// findCorrespondingGeneratedFiles finds JSON files in the generated directory that correspond to changed config files
+func findCorrespondingGeneratedFiles(repoRoot string, changedConfigFiles []ChangedFile) ([]ChangedFile, error) {
+	var correspondingFiles []ChangedFile
+	generatedDir := filepath.Join(repoRoot, "pkg/kv/kvserver/asim/tests/testdata/generated")
+
+	for _, configFile := range changedConfigFiles {
+		// Only process .txt files from non_rand directory
+		if !strings.HasSuffix(configFile.Path, ".txt") || !strings.Contains(configFile.Path, "non_rand") {
+			continue
+		}
+
+		// Extract the base name without extension (e.g., "example_skewed_cpu_even_ranges_mma")
+		baseName := strings.TrimSuffix(filepath.Base(configFile.Path), ".txt")
+
+		// Look for a directory with this name in the generated folder
+		correspondingDir := filepath.Join(generatedDir, baseName)
+
+		if _, err := os.Stat(correspondingDir); os.IsNotExist(err) {
+			fmt.Printf("No corresponding generated directory found for %s\n", baseName)
+			continue
+		}
+
+		// Find all JSON files in the corresponding directory
+		err := filepath.Walk(correspondingDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			// Skip directories and non-JSON files
+			if info.IsDir() || !strings.HasSuffix(strings.ToLower(path), ".json") {
+				return nil
+			}
+
+			// Get relative path from repo root
+			relPath, err := filepath.Rel(repoRoot, path)
+			if err != nil {
+				return err
+			}
+
+			fileName := filepath.Base(path)
+			testName := strings.TrimSuffix(fileName, ".json")
+
+			correspondingFiles = append(correspondingFiles, ChangedFile{
+				Path:     relPath,
+				Name:     fileName,
+				TestName: testName,
+				Status:   "corresponding", // Special status for files corresponding to changed configs
+			})
+
+			return nil
+		})
+
+		if err != nil {
+			fmt.Printf("Error walking directory %s: %v\n", correspondingDir, err)
+			continue
+		}
+	}
+
+	return correspondingFiles, nil
+}
+
+// readGeneratedFile reads and validates a JSON file from disk
+func readGeneratedFile(fullPath string) ([]byte, error) {
+	file, err := os.Open(fullPath)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	content, err := io.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+
+	// Validate JSON
+	var jsonData interface{}
+	if err := json.Unmarshal(content, &jsonData); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	return content, nil
+}
+
+// readGeneratedFileAtCommit temporarily checks out a commit, reads a generated file, then returns to original state
+func readGeneratedFileAtCommit(repoRoot, filePath, commit string) ([]byte, error) {
+	fmt.Printf("DEBUG: Attempting to read %s at commit %s\n", filePath, commit)
+
+	// Get current HEAD to restore later
+	getCurrentCmd := exec.Command("git", "rev-parse", "HEAD")
+	getCurrentCmd.Dir = repoRoot
+	currentHead, err := getCurrentCmd.Output()
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to get current HEAD: %v\n", err)
+		return nil, fmt.Errorf("failed to get current HEAD: %v", err)
+	}
+	currentHeadStr := strings.TrimSpace(string(currentHead))
+	fmt.Printf("DEBUG: Current HEAD is %s\n", currentHeadStr)
+
+	// Check if working directory is clean
+	fmt.Printf("DEBUG: Checking if working directory is clean...\n")
+	statusCmd := exec.Command("git", "status", "--porcelain")
+	statusCmd.Dir = repoRoot
+	statusOutput, err := statusCmd.Output()
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to check git status: %v\n", err)
+		return nil, fmt.Errorf("failed to check git status: %v", err)
+	}
+
+	statusStr := strings.TrimSpace(string(statusOutput))
+	needsStash := len(statusStr) > 0
+
+	if needsStash {
+		fmt.Printf("DEBUG: Working directory is not clean, will stash changes temporarily\n")
+		// Stash changes temporarily
+		stashCmd := exec.Command("git", "stash", "push", "-m", "temp stash for asimview comparison")
+		stashCmd.Dir = repoRoot
+		if err := stashCmd.Run(); err != nil {
+			fmt.Printf("DEBUG: Failed to stash changes: %v\n", err)
+			return nil, fmt.Errorf("failed to stash changes: %v", err)
+		}
+		fmt.Printf("DEBUG: Successfully stashed changes\n")
+
+		// Add stash pop to defer
+		defer func() {
+			fmt.Printf("DEBUG: Restoring stashed changes\n")
+			popCmd := exec.Command("git", "stash", "pop")
+			popCmd.Dir = repoRoot
+			if popErr := popCmd.Run(); popErr != nil {
+				fmt.Printf("WARNING: Failed to restore stashed changes: %v\n", popErr)
+			} else {
+				fmt.Printf("DEBUG: Successfully restored stashed changes\n")
+			}
+		}()
+	} else {
+		fmt.Printf("DEBUG: Working directory is clean\n")
+	}
+
+	// Skip checkout if we're already at the target commit
+	if currentHeadStr == commit || strings.HasPrefix(currentHeadStr, commit) {
+		fmt.Printf("DEBUG: Already at target commit %s, reading file directly\n", commit)
+		fullPath := filepath.Join(repoRoot, filePath)
+		content, err := readGeneratedFile(fullPath)
+		if err != nil {
+			return nil, fmt.Errorf("file not found or invalid at current commit: %v", err)
+		}
+		return content, nil
+	}
+
+	// Checkout the target commit with timeout
+	fmt.Printf("DEBUG: Checking out commit %s\n", commit)
+	checkoutCmd := exec.Command("git", "checkout", commit)
+	checkoutCmd.Dir = repoRoot
+	if err := checkoutCmd.Run(); err != nil {
+		fmt.Printf("DEBUG: Failed to checkout %s: %v\n", commit, err)
+		return nil, fmt.Errorf("failed to checkout %s: %v", commit, err)
+	}
+	fmt.Printf("DEBUG: Successfully checked out %s\n", commit)
+
+	// Ensure we restore the original state even if reading fails
+	defer func() {
+		fmt.Printf("DEBUG: Restoring to %s\n", currentHeadStr)
+		restoreCmd := exec.Command("git", "checkout", currentHeadStr)
+		restoreCmd.Dir = repoRoot
+		if restoreErr := restoreCmd.Run(); restoreErr != nil {
+			fmt.Printf("WARNING: Failed to restore to %s: %v\n", currentHeadStr, restoreErr)
+		} else {
+			fmt.Printf("DEBUG: Successfully restored to %s\n", currentHeadStr)
+		}
+	}()
+
+	// Read the generated file from disk at this commit
+	fullPath := filepath.Join(repoRoot, filePath)
+	fmt.Printf("DEBUG: Reading file %s\n", fullPath)
+	content, err := readGeneratedFile(fullPath)
+	if err != nil {
+		fmt.Printf("DEBUG: Failed to read file: %v\n", err)
+		return nil, fmt.Errorf("file not found or invalid at commit %s: %v", commit, err)
+	}
+
+	fmt.Printf("DEBUG: Successfully read %d bytes from file\n", len(content))
+	return content, nil
 }
 
 // makeAllGeneratedFilesHandler returns all JSON files in the generated directory as a fallback
