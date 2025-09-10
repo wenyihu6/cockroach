@@ -159,6 +159,14 @@
       color: #e74c3c;
     }
     
+    .file-item-status.generated {
+      color: #8e44ad;
+    }
+    
+    .file-item-status.available {
+      color: #17a2b8;
+    }
+    
     .comparison-container {
       display: flex;
       flex-direction: column;
@@ -332,6 +340,7 @@
   <div class="controls">
     <div class="control-buttons">
       <button id="refreshButton" class="refresh">🔄 Refresh Changes</button>
+      <button id="showAllButton">📁 Show All Generated Files</button>
       <button id="loadButton" disabled>📊 Load Comparison</button>
       <button id="resetZoom">Reset Zoom</button>
       <button id="undoZoom">Undo Zoom</button>
@@ -371,6 +380,10 @@
     // Event listeners
     document.getElementById('refreshButton').addEventListener('click', async () => {
       await detectChangedFiles();
+    });
+    
+    document.getElementById('showAllButton').addEventListener('click', async () => {
+      await showAllGeneratedFiles();
     });
     
     document.getElementById('loadButton').addEventListener('click', async () => {
@@ -417,12 +430,39 @@
         updateFileList();
         
         if (changedFiles.length === 0) {
-          showStatus('No changed ASIM test files found between HEAD and HEAD~1', 'warning');
+          showStatus('No changed ASIM test files found between HEAD and HEAD~1. Try "Show All Generated Files" to see available files.', 'warning');
         } else {
           showStatus(`Found ${changedFiles.length} changed files`, 'info');
         }
       } catch (error) {
-        showStatus('Error detecting changed files: ' + error.message, 'error');
+        showStatus('Error detecting changed files: ' + error.message + '. Try "Show All Generated Files" to see available files.', 'error');
+        changedFiles = [];
+        updateFileList();
+      }
+    }
+    
+    // Show all generated files as a fallback
+    async function showAllGeneratedFiles() {
+      try {
+        showStatus('Loading all generated files...', 'info');
+        
+        const response = await fetch('/api/all-generated-files');
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to load generated files');
+        }
+        
+        changedFiles = result.files || [];
+        updateFileList();
+        
+        if (changedFiles.length === 0) {
+          showStatus('No generated files found', 'warning');
+        } else {
+          showStatus(`Found ${changedFiles.length} generated files available for comparison`, 'info');
+        }
+      } catch (error) {
+        showStatus('Error loading generated files: ' + error.message, 'error');
         changedFiles = [];
         updateFileList();
       }
