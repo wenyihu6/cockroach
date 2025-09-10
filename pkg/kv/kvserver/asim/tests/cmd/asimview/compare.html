@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ASIM Test Results Comparison (HEAD vs HEAD~1)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom"></script>
+  <style>
+    body { 
+      font-family: sans-serif; 
+      margin: 2rem; 
+      background-color: #fafafa;
+    }
+    
+    .header {
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+    }
+    
+    .header h1 {
+      margin: 0 0 1rem 0;
+      color: #333;
+    }
+    
+    .commit-info {
+      display: flex;
+      gap: 2rem;
+      margin: 1rem 0;
+      font-family: monospace;
+      font-size: 0.9rem;
+    }
+    
+    .commit-info div {
+      padding: 0.5rem;
+      background: #f5f5f5;
+      border-radius: 4px;
+    }
+    
+    .status-message {
+      margin: 1rem 0;
+      padding: 1rem;
+      border-radius: 4px;
+      background: #f0f8ff;
+      color: #333;
+    }
+    
+    .status-message.error {
+      background: #ffe0e0;
+      color: #c00;
+    }
+    
+    .status-message.warning {
+      background: #fff3cd;
+      color: #856404;
+    }
+    
+    .controls {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+    }
+    
+    .control-buttons {
+      display: flex;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+    
+    .control-buttons button {
+      padding: 0.75rem 1.5rem;
+      background: #007acc;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 1rem;
+      transition: background-color 0.2s;
+    }
+    
+    .control-buttons button:hover {
+      background: #005a9e;
+    }
+    
+    .control-buttons button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    
+    .control-buttons button.refresh {
+      background: #28a745;
+    }
+    
+    .control-buttons button.refresh:hover {
+      background: #218838;
+    }
+    
+    .file-selector {
+      margin-top: 1rem;
+    }
+    
+    .file-list {
+      max-height: 200px;
+      overflow-y: auto;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background: white;
+    }
+    
+    .file-item {
+      display: flex;
+      align-items: center;
+      padding: 0.75rem;
+      border-bottom: 1px solid #f0f0f0;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    .file-item:hover {
+      background: #f8f8f8;
+    }
+    
+    .file-item.selected {
+      background: #e8f4ff;
+    }
+    
+    .file-item input[type="checkbox"] {
+      margin-right: 0.75rem;
+    }
+    
+    .file-item-text {
+      flex: 1;
+    }
+    
+    .file-item-name {
+      font-weight: 500;
+      color: #333;
+    }
+    
+    .file-item-status {
+      font-size: 0.85rem;
+      color: #666;
+      margin-top: 2px;
+    }
+    
+    .file-item-status.modified {
+      color: #f39c12;
+    }
+    
+    .file-item-status.added {
+      color: #27ae60;
+    }
+    
+    .file-item-status.deleted {
+      color: #e74c3c;
+    }
+    
+    .comparison-container {
+      display: flex;
+      flex-direction: column;
+      gap: 2rem;
+    }
+    
+    .metric-comparison {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      overflow: hidden;
+    }
+    
+    .metric-header {
+      background: #f8f9fa;
+      padding: 1rem;
+      border-bottom: 1px solid #dee2e6;
+    }
+    
+    .metric-title {
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #333;
+      margin: 0;
+    }
+    
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+    
+    .comparison-side {
+      padding: 1rem;
+    }
+    
+    .comparison-side.head {
+      border-right: 1px solid #dee2e6;
+    }
+    
+    .side-header {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      margin-bottom: 1rem;
+      padding: 0.5rem;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    
+    .side-header.head {
+      background: #d4edda;
+    }
+    
+    .side-header.prev {
+      background: #f8d7da;
+    }
+    
+    .side-title {
+      font-weight: bold;
+      font-size: 0.9rem;
+    }
+    
+    .chart-container {
+      position: relative;
+      height: 300px;
+    }
+    
+    .no-data {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 300px;
+      color: #666;
+      font-style: italic;
+    }
+    
+    .diff-indicator {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: bold;
+    }
+    
+    .diff-indicator.significant {
+      background: #dc3545;
+      color: white;
+    }
+    
+    .diff-indicator.minor {
+      background: #ffc107;
+      color: #212529;
+    }
+    
+    .diff-indicator.none {
+      background: #28a745;
+      color: white;
+    }
+    
+    .summary-stats {
+      background: white;
+      padding: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 2rem;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    
+    .stat-item {
+      text-align: center;
+      padding: 1rem;
+      background: #f8f9fa;
+      border-radius: 4px;
+    }
+    
+    .stat-value {
+      font-size: 2rem;
+      font-weight: bold;
+      color: #007acc;
+    }
+    
+    .stat-label {
+      font-size: 0.9rem;
+      color: #666;
+      margin-top: 0.5rem;
+    }
+    
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      color: #666;
+    }
+    
+    .loading::before {
+      content: "";
+      width: 20px;
+      height: 20px;
+      border: 2px solid #f3f3f3;
+      border-top: 2px solid #007acc;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-right: 0.5rem;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>ASIM Test Results Comparison</h1>
+    <p>Compare ASIM test results between current HEAD and the previous commit (HEAD~1)</p>
+    <div class="commit-info" id="commitInfo">
+      <div>Loading commit information...</div>
+    </div>
+  </div>
+  
+  <div class="controls">
+    <div class="control-buttons">
+      <button id="refreshButton" class="refresh">🔄 Refresh Changes</button>
+      <button id="loadButton" disabled>📊 Load Comparison</button>
+      <button id="resetZoom">Reset Zoom</button>
+      <button id="undoZoom">Undo Zoom</button>
+    </div>
+    
+    <div class="file-selector">
+      <h3>Changed Files</h3>
+      <div id="fileList" class="file-list">
+        <div class="loading">Detecting changed files...</div>
+      </div>
+    </div>
+  </div>
+  
+  <div id="statusMessage" class="status-message" style="display: none;"></div>
+  
+  <div id="summaryStats" class="summary-stats" style="display: none;">
+    <h3>Comparison Summary</h3>
+    <div class="stats-grid" id="statsGrid"></div>
+  </div>
+  
+  <div id="comparisonContainer" class="comparison-container"></div>
+
+  <script>
+    let changedFiles = [];
+    let selectedFiles = new Set();
+    let headData = new Map();
+    let prevData = new Map();
+    let charts = [];
+    let commitInfo = null;
+    
+    // Initialize on page load
+    window.addEventListener('DOMContentLoaded', async () => {
+      await loadCommitInfo();
+      await detectChangedFiles();
+    });
+    
+    // Event listeners
+    document.getElementById('refreshButton').addEventListener('click', async () => {
+      await detectChangedFiles();
+    });
+    
+    document.getElementById('loadButton').addEventListener('click', async () => {
+      await loadComparison();
+    });
+    
+    document.getElementById('resetZoom').addEventListener('click', () => {
+      resetAllZoom();
+    });
+    
+    document.getElementById('undoZoom').addEventListener('click', () => {
+      undoAllZoom();
+    });
+    
+    // Load commit information
+    async function loadCommitInfo() {
+      try {
+        const response = await fetch('/api/commits');
+        commitInfo = await response.json();
+        
+        const commitInfoDiv = document.getElementById('commitInfo');
+        commitInfoDiv.innerHTML = `
+          <div><strong>HEAD:</strong> ${commitInfo.head.hash} - ${commitInfo.head.message}</div>
+          <div><strong>HEAD~1:</strong> ${commitInfo.prev.hash} - ${commitInfo.prev.message}</div>
+        `;
+      } catch (error) {
+        showStatus('Error loading commit info: ' + error.message, 'error');
+      }
+    }
+    
+    // Detect changed files between HEAD and HEAD~1
+    async function detectChangedFiles() {
+      try {
+        showStatus('Detecting changed files...', 'info');
+        
+        const response = await fetch('/api/changed-files');
+        const result = await response.json();
+        
+        if (!response.ok) {
+          throw new Error(result.error || 'Failed to detect changes');
+        }
+        
+        changedFiles = result.files || [];
+        updateFileList();
+        
+        if (changedFiles.length === 0) {
+          showStatus('No changed ASIM test files found between HEAD and HEAD~1', 'warning');
+        } else {
+          showStatus(`Found ${changedFiles.length} changed files`, 'info');
+        }
+      } catch (error) {
+        showStatus('Error detecting changed files: ' + error.message, 'error');
+        changedFiles = [];
+        updateFileList();
+      }
+    }
+    
+    // Update file list UI
+    function updateFileList() {
+      const fileListDiv = document.getElementById('fileList');
+      
+      if (changedFiles.length === 0) {
+        fileListDiv.innerHTML = '<div class="no-data">No changed files found</div>';
+        document.getElementById('loadButton').disabled = true;
+        return;
+      }
+      
+      fileListDiv.innerHTML = '';
+      
+      changedFiles.forEach(file => {
+        const item = document.createElement('div');
+        item.className = 'file-item';
+        if (selectedFiles.has(file.path)) {
+          item.classList.add('selected');
+        }
+        
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selectedFiles.has(file.path);
+        checkbox.onclick = (e) => {
+          e.stopPropagation();
+          toggleFileSelection(file);
+        };
+        
+        const textDiv = document.createElement('div');
+        textDiv.className = 'file-item-text';
+        textDiv.innerHTML = `
+          <div class="file-item-name">${file.testName}</div>
+          <div class="file-item-status ${file.status}">${file.status.toUpperCase()}: ${file.path}</div>
+        `;
+        
+        item.appendChild(checkbox);
+        item.appendChild(textDiv);
+        
+        item.onclick = () => {
+          toggleFileSelection(file);
+        };
+        
+        fileListDiv.appendChild(item);
+      });
+      
+      document.getElementById('loadButton').disabled = selectedFiles.size === 0;
+    }
+    
+    // Toggle file selection
+    function toggleFileSelection(file) {
+      if (selectedFiles.has(file.path)) {
+        selectedFiles.delete(file.path);
+      } else {
+        selectedFiles.add(file.path);
+      }
+      
+      updateFileList();
+    }
+    
+    // Load comparison data
+    async function loadComparison() {
+      if (selectedFiles.size === 0) {
+        showStatus('Please select files to compare', 'warning');
+        return;
+      }
+      
+      try {
+        showStatus('Loading comparison data...', 'info');
+        
+        // Clear existing data
+        headData.clear();
+        prevData.clear();
+        
+        // Load data for selected files from both commits
+        const loadPromises = Array.from(selectedFiles).flatMap(path => [
+          loadFileData(path, 'HEAD').then(data => ({ path, commit: 'HEAD', data })),
+          loadFileData(path, 'HEAD~1').then(data => ({ path, commit: 'HEAD~1', data }))
+        ]);
+        
+        const results = await Promise.all(loadPromises);
+        
+        // Organize data by commit
+        results.forEach(result => {
+          if (result.data) {
+            if (result.commit === 'HEAD') {
+              headData.set(result.path, result.data);
+            } else {
+              prevData.set(result.path, result.data);
+            }
+          }
+        });
+        
+        if (headData.size === 0 && prevData.size === 0) {
+          showStatus('No data could be loaded for comparison', 'error');
+          return;
+        }
+        
+        showStatus(`Loaded data for comparison (${headData.size} HEAD files, ${prevData.size} HEAD~1 files)`, 'info');
+        renderComparison();
+        
+      } catch (error) {
+        showStatus('Error loading comparison data: ' + error.message, 'error');
+      }
+    }
+    
+    // Load file data from specific commit
+    async function loadFileData(path, commit) {
+      try {
+        const response = await fetch(`/api/file-at-commit?path=${encodeURIComponent(path)}&commit=${encodeURIComponent(commit)}`);
+        if (!response.ok) {
+          if (response.status === 404) {
+            return null; // File doesn't exist at this commit
+          }
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return await response.json();
+      } catch (error) {
+        console.warn(`Failed to load ${path} at ${commit}: ${error.message}`);
+        return null;
+      }
+    }
+    
+    // Render comparison charts
+    function renderComparison() {
+      // Destroy existing charts
+      charts.forEach(chart => chart.destroy());
+      charts.length = 0;
+      
+      const container = document.getElementById('comparisonContainer');
+      container.innerHTML = '';
+      
+      // Get all unique metrics across all files and commits
+      const allMetrics = new Set();
+      
+      [...headData.values(), ...prevData.values()].forEach(data => {
+        if (data && data.metrics) {
+          Object.keys(data.metrics).forEach(metric => allMetrics.add(metric));
+        }
+      });
+      
+      if (allMetrics.size === 0) {
+        container.innerHTML = '<div class="no-data">No metrics found in the loaded data</div>';
+        return;
+      }
+      
+      // Create comparison for each metric
+      Array.from(allMetrics).sort().forEach(metricName => {
+        createMetricComparison(metricName, container);
+      });
+      
+      // Update summary stats
+      updateSummaryStats();
+    }
+    
+    // Create comparison for a single metric
+    function createMetricComparison(metricName, container) {
+      const section = document.createElement('div');
+      section.className = 'metric-comparison';
+      
+      const header = document.createElement('div');
+      header.className = 'metric-header';
+      header.innerHTML = `<h3 class="metric-title">${metricName}</h3>`;
+      section.appendChild(header);
+      
+      // Create comparison for each selected file
+      selectedFiles.forEach(filePath => {
+        const file = changedFiles.find(f => f.path === filePath);
+        if (!file) return;
+        
+        const headFileData = headData.get(filePath);
+        const prevFileData = prevData.get(filePath);
+        
+        // Skip if neither commit has data for this metric
+        const hasHeadData = headFileData?.metrics?.[metricName];
+        const hasPrevData = prevFileData?.metrics?.[metricName];
+        
+        if (!hasHeadData && !hasPrevData) return;
+        
+        const fileSection = document.createElement('div');
+        fileSection.innerHTML = `<h4 style="padding: 1rem; margin: 0; background: #f1f3f4; border-top: 1px solid #dee2e6;">${file.testName}</h4>`;
+        
+        const grid = document.createElement('div');
+        grid.className = 'comparison-grid';
+        
+        // HEAD side
+        const headSide = document.createElement('div');
+        headSide.className = 'comparison-side head';
+        headSide.innerHTML = `
+          <div class="side-header head">
+            <span class="side-title">HEAD (Current)</span>
+          </div>
+        `;
+        
+        if (hasHeadData) {
+          const headCanvas = document.createElement('canvas');
+          const headContainer = document.createElement('div');
+          headContainer.className = 'chart-container';
+          headContainer.appendChild(headCanvas);
+          headSide.appendChild(headContainer);
+          
+          createChart(headCanvas, headFileData, metricName, 'HEAD');
+        } else {
+          headSide.innerHTML += '<div class="no-data">No data available</div>';
+        }
+        
+        // HEAD~1 side
+        const prevSide = document.createElement('div');
+        prevSide.className = 'comparison-side prev';
+        prevSide.innerHTML = `
+          <div class="side-header prev">
+            <span class="side-title">HEAD~1 (Previous)</span>
+          </div>
+        `;
+        
+        if (hasPrevData) {
+          const prevCanvas = document.createElement('canvas');
+          const prevContainer = document.createElement('div');
+          prevContainer.className = 'chart-container';
+          prevContainer.appendChild(prevCanvas);
+          prevSide.appendChild(prevContainer);
+          
+          createChart(prevCanvas, prevFileData, metricName, 'HEAD~1');
+        } else {
+          prevSide.innerHTML += '<div class="no-data">No data available</div>';
+        }
+        
+        grid.appendChild(headSide);
+        grid.appendChild(prevSide);
+        fileSection.appendChild(grid);
+        section.appendChild(fileSection);
+      });
+      
+      container.appendChild(section);
+    }
+    
+    // Create individual chart
+    function createChart(canvas, fileData, metricName, commitLabel) {
+      if (!fileData?.metrics?.[metricName]) return;
+      
+      const storeData = fileData.metrics[metricName];
+      const labelCount = Math.max(...Object.values(storeData).map(arr => arr.length));
+      
+      const tickInterval = fileData.tickInterval || 500000000;
+      const totalDurationNs = (labelCount - 1) * tickInterval;
+      const timeUnit = getTimeUnit(totalDurationNs);
+      const timeScale = getTimeScale(timeUnit);
+      
+      const labels = Array.from({ length: labelCount }, (_, i) => {
+        const timeValue = (i * tickInterval / timeScale).toFixed(timeUnit === 's' ? 1 : 0);
+        return `${timeValue}${timeUnit}`;
+      });
+      
+      const datasets = Object.entries(storeData).map(([store, values]) => ({
+        label: store,
+        data: values,
+        fill: false,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        tension: 0.1
+      }));
+      
+      const chart = new Chart(canvas, {
+        type: 'line',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { font: { size: 10 } }
+            },
+            zoom: {
+              pan: { enabled: true, mode: 'x' },
+              zoom: {
+                drag: { enabled: true, backgroundColor: 'rgba(225,225,225,0.3)' },
+                mode: 'x'
+              }
+            }
+          },
+          scales: {
+            x: { 
+              title: { display: true, text: `Time (${timeUnit})` },
+              ticks: { font: { size: 10 } }
+            },
+            y: { 
+              title: { display: true, text: metricName },
+              ticks: { font: { size: 10 } }
+            }
+          }
+        }
+      });
+      
+      charts.push(chart);
+    }
+    
+    // Update summary statistics
+    function updateSummaryStats() {
+      const statsDiv = document.getElementById('summaryStats');
+      const statsGrid = document.getElementById('statsGrid');
+      
+      const totalFiles = selectedFiles.size;
+      const headFiles = headData.size;
+      const prevFiles = prevData.size;
+      const bothFiles = Array.from(selectedFiles).filter(path => 
+        headData.has(path) && prevData.has(path)
+      ).length;
+      
+      statsGrid.innerHTML = `
+        <div class="stat-item">
+          <div class="stat-value">${totalFiles}</div>
+          <div class="stat-label">Selected Files</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">${headFiles}</div>
+          <div class="stat-label">HEAD Files Loaded</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">${prevFiles}</div>
+          <div class="stat-label">HEAD~1 Files Loaded</div>
+        </div>
+        <div class="stat-item">
+          <div class="stat-value">${bothFiles}</div>
+          <div class="stat-label">Complete Comparisons</div>
+        </div>
+      `;
+      
+      statsDiv.style.display = 'block';
+    }
+    
+    // Utility functions
+    function getTimeUnit(totalDurationNs) {
+      if (totalDurationNs >= 60000000000) return 's';
+      if (totalDurationNs >= 10000000000) return 's';
+      if (totalDurationNs >= 10000000) return 'ms';
+      if (totalDurationNs >= 10000) return 'μs';
+      return 'ns';
+    }
+    
+    function getTimeScale(unit) {
+      switch (unit) {
+        case 's': return 1000000000;
+        case 'ms': return 1000000;
+        case 'μs': return 1000;
+        case 'ns': return 1;
+        default: return 1000000;
+      }
+    }
+    
+    function resetAllZoom() {
+      charts.forEach(chart => {
+        chart.resetZoom();
+      });
+    }
+    
+    function undoAllZoom() {
+      charts.forEach(chart => {
+        if (chart.resetZoom) {
+          chart.resetZoom();
+        }
+      });
+    }
+    
+    function showStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('statusMessage');
+      statusDiv.textContent = message;
+      statusDiv.className = `status-message ${type}`;
+      statusDiv.style.display = 'block';
+      
+      if (type === 'info') {
+        setTimeout(() => {
+          statusDiv.style.display = 'none';
+        }, 5000);
+      }
+    }
+  </script>
+</body>
+</html>

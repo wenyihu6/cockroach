@@ -1,6 +1,6 @@
 # ASIM Test Results Viewer
 
-Interactive web viewer for ASIM test JSON output files with fuzzy search and multi-file comparison.
+Interactive web viewer for ASIM test JSON output files with fuzzy search, multi-file comparison, and git-based change detection.
 
 ## Usage
 
@@ -15,13 +15,32 @@ go run . /path/to/json/files
 go run . -port 8081
 ```
 
-Then open http://localhost:8080 in your browser.
+Then open:
+- **Main Viewer**: http://localhost:8080 
+- **Git Comparison Tool**: http://localhost:8080/compare
 
 ## Features
 
+### Main Viewer (`/`)
 - **Fuzzy Search**: Type any part of test name or file name to filter
 - **Multiple Selection**: Select multiple test files to compare side-by-side
 - **Synchronized Zoom**: Drag to zoom on any chart, all charts sync automatically
 - **Copy Data**: Click the clipboard button on any chart to copy its timeseries data as JSON
 - **Auto-discovery**: Recursively finds all JSON files in the specified directory
-- **Local Storage**: Remembers your last selection and zoom state. (Can refresh the browser window to update loaded files).
+- **Local Storage**: Remembers your last selection and zoom state
+
+### Git Comparison Tool (`/compare`)
+- **Change Detection**: Automatically detects ASIM test files that changed between HEAD and HEAD~1
+- **Side-by-Side Comparison**: Compare metrics between current and previous commit
+- **Commit Information**: Shows commit hashes and messages for context
+- **Selective Loading**: Choose which changed files to compare
+- **Synchronized Views**: Zoom and pan work across all comparison charts
+
+## Git Integration
+
+The comparison tool requires the application to be run from within a git repository. It uses:
+- `git diff --name-status HEAD~1 HEAD` to detect changed files
+- `git show <commit>:<path>` to load file content from specific commits
+- `git log` to display commit information
+
+Only files matching the pattern `pkg/kv/kvserver/asim/tests/testdata/generated/*.json` are considered for comparison.
