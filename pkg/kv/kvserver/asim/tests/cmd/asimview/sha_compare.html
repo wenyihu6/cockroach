@@ -55,6 +55,7 @@
                 </div>
                 <button id="generate-btn" class="btn">Generate Comparison</button>
                 <button id="refresh-btn" class="btn">Refresh Available SHAs</button>
+                <button id="clear-btn" class="btn" style="background: #6c757d;">Clear Selection</button>
             </div>
             
             <div id="status" class="status hidden"></div>
@@ -112,6 +113,7 @@
             setupEventListeners() {
                 document.getElementById('generate-btn').addEventListener('click', () => this.generateComparison());
                 document.getElementById('refresh-btn').addEventListener('click', () => this.loadAvailableShas());
+                document.getElementById('clear-btn').addEventListener('click', () => this.clearSelection());
             }
 
             async loadRecentCommits() {
@@ -156,6 +158,7 @@
                         `).join('')}
                     </div>
                 `;
+                this.updateSelectionHighlights();
             }
 
             updateAvailableComparisons() {
@@ -184,20 +187,57 @@
                         `).join('')}
                     </div>
                 `;
+                this.updateSelectionHighlights();
+            }
+
+            clearSelection() {
+                this.selectedSha1 = null;
+                this.selectedSha2 = null;
+                document.getElementById('sha1').value = '';
+                document.getElementById('sha2').value = '';
+                document.getElementById('file-selection').classList.add('hidden');
+                document.getElementById('comparison-view').classList.add('hidden');
+                this.showStatus('Selection cleared', 'info');
+                this.updateSelectionHighlights();
             }
 
             selectSha(sha) {
                 if (!this.selectedSha1) {
                     this.selectedSha1 = sha;
-                    document.getElementById('sha1').value = sha;
-                    this.showStatus(`Selected SHA 1: ${sha}`, 'info');
+                    document.getElementById('sha1').value = sha.substring(0, 12);
+                    this.showStatus(`Selected SHA 1: ${sha.substring(0, 12)}`, 'info');
                 } else if (!this.selectedSha2 && sha !== this.selectedSha1) {
                     this.selectedSha2 = sha;
-                    document.getElementById('sha2').value = sha;
-                    this.showStatus(`Selected SHA 2: ${sha}. Ready to compare!`, 'success');
+                    document.getElementById('sha2').value = sha.substring(0, 12);
+                    this.showStatus(`Selected SHA 2: ${sha.substring(0, 12)}. Ready to compare!`, 'success');
                     this.loadComparisonFiles();
                 } else {
-                    this.showStatus('Please clear selections to choose different SHAs', 'info');
+                    this.showStatus('Both SHAs selected. Use Clear Selection to choose different SHAs', 'info');
+                }
+                this.updateSelectionHighlights();
+            }
+
+            updateSelectionHighlights() {
+                // Remove all existing selection highlights
+                document.querySelectorAll('.sha-selected').forEach(el => {
+                    el.classList.remove('sha-selected');
+                    el.style.border = '1px solid #ddd';
+                });
+
+                // Add highlights for selected SHAs
+                if (this.selectedSha1) {
+                    const sha1Elements = document.querySelectorAll(`[onclick*="${this.selectedSha1}"]`);
+                    sha1Elements.forEach(el => {
+                        el.classList.add('sha-selected');
+                        el.style.border = '2px solid #007bff';
+                    });
+                }
+                if (this.selectedSha2) {
+                    const sha2Elements = document.querySelectorAll(`[onclick*="${this.selectedSha2}"]`);
+                    sha2Elements.forEach(el => {
+                        el.classList.add('sha-selected');
+                        el.style.border = '2px solid #28a745';
+                    });
                 }
             }
 
@@ -276,8 +316,13 @@
                 if (!this.selectedSha1 || !this.selectedSha2 || !this.selectedFile) return;
 
                 document.getElementById('comparison-view').classList.remove('hidden');
-                document.getElementById('sha1-title').textContent = `SHA: ${this.selectedSha1.substring(0, 12)}...`;
-                document.getElementById('sha2-title').textContent = `SHA: ${this.selectedSha2.substring(0, 12)}...`;
+                
+                // Get commit info for better titles
+                const sha1Info = this.getCommitInfo(this.selectedSha1);
+                const sha2Info = this.getCommitInfo(this.selectedSha2);
+                
+                document.getElementById('sha1-title').textContent = `${sha1Info.short} ${sha1Info.subject}`;
+                document.getElementById('sha2-title').textContent = `${sha2Info.short} ${sha2Info.subject}`;
 
                 try {
                     const [data1, data2] = await Promise.all([
@@ -290,6 +335,26 @@
                     console.error('Failed to load comparison data:', error);
                     this.showStatus('Failed to load comparison data', 'error');
                 }
+            }
+
+            getCommitInfo(sha) {
+                // First check recent commits
+                if (this.recentCommits) {
+                    const found = this.recentCommits.find(commit => commit.sha === sha);
+                    if (found) return found;
+                }
+                
+                // Then check available comparisons
+                if (this.availableShaInfos) {
+                    const found = this.availableShaInfos.find(shaInfo => shaInfo.sha === sha);
+                    if (found) return found;
+                }
+                
+                // Fallback to just the short SHA
+                return {
+                    short: sha.substring(0, 7),
+                    subject: 'Unknown commit'
+                };
             }
 
             renderCharts(data1, data2) {
@@ -323,13 +388,17 @@
                 charts1.innerHTML = html1;
                 charts2.innerHTML = html2;
                 
+                // Get commit info for chart titles
+                const sha1Info = this.getCommitInfo(this.selectedSha1);
+                const sha2Info = this.getCommitInfo(this.selectedSha2);
+                
                 // Now render all charts
                 metrics.forEach((metric, index) => {
                     const chartId1 = `chart1-${index}`;
                     const chartId2 = `chart2-${index}`;
                     
-                    this.renderChart(chartId1, data1, metric, `${metric} - SHA1`);
-                    this.renderChart(chartId2, data2, metric, `${metric} - SHA2`);
+                    this.renderChart(chartId1, data1, metric, `${metric} - ${sha1Info.short} ${sha1Info.subject}`);
+                    this.renderChart(chartId2, data2, metric, `${metric} - ${sha2Info.short} ${sha2Info.subject}`);
                 });
             }
 
@@ -361,9 +430,7 @@
                                 mode: 'lines',
                                 name: `${storeName}`,  // Keep simple name for legend
                                 line: { width: 2 },
-                                hovertemplate: `<b>${storeName}</b><br>` +
-                                             `${metric}: %{y}<br>` +
-                                             `<extra></extra>`
+                                hovertemplate: `${storeName}: %{y}<extra></extra>`
                             });
                         }
                     });
