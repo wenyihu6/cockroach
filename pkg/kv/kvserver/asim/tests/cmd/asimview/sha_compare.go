@@ -50,8 +50,14 @@ func NewShaComparer() (*ShaComparer, error) {
 func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 	fmt.Printf("Generating test data for SHA: %s\n", sha)
 
+	// Resolve partial SHA to full SHA if needed
+	fullSha, err := sc.resolveSha(sha)
+	if err != nil {
+		return fmt.Errorf("failed to resolve SHA %s: %w", sha, err)
+	}
+	
 	// Create directory for this SHA
-	shaDir := filepath.Join(sc.TempDir, sha)
+	shaDir := filepath.Join(sc.TempDir, fullSha)
 	if err := os.MkdirAll(shaDir, 0755); err != nil {
 		return fmt.Errorf("failed to create SHA directory: %w", err)
 	}
@@ -59,7 +65,7 @@ func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 	// Check if data already exists for this SHA
 	generatedPath := filepath.Join(shaDir, "generated")
 	if _, err := os.Stat(generatedPath); err == nil {
-		fmt.Printf("Test data already exists for SHA %s, skipping generation\n", sha)
+		fmt.Printf("Test data already exists for SHA %s, skipping generation\n", fullSha)
 		return nil
 	}
 
@@ -84,8 +90,8 @@ func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 	}
 
 	// Checkout the target SHA
-	if err := sc.runGitCommand("checkout", sha); err != nil {
-		return fmt.Errorf("failed to checkout SHA %s: %w", sha, err)
+	if err := sc.runGitCommand("checkout", fullSha); err != nil {
+		return fmt.Errorf("failed to checkout SHA %s: %w", fullSha, err)
 	}
 
 	// Ensure we restore the original state
@@ -108,9 +114,9 @@ func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 	testCmd.Stdout = os.Stdout
 	testCmd.Stderr = os.Stderr
 	
-	fmt.Printf("Running test command for SHA %s...\n", sha)
+	fmt.Printf("Running test command for SHA %s...\n", fullSha)
 	if err := testCmd.Run(); err != nil {
-		return fmt.Errorf("test command failed for SHA %s: %w", sha, err)
+		return fmt.Errorf("test command failed for SHA %s: %w", fullSha, err)
 	}
 
 	// Copy generated files to SHA directory
@@ -118,7 +124,7 @@ func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 		return fmt.Errorf("failed to copy generated files: %w", err)
 	}
 
-	fmt.Printf("Successfully generated test data for SHA %s\n", sha)
+	fmt.Printf("Successfully generated test data for SHA %s\n", fullSha)
 	return nil
 }
 
@@ -157,6 +163,30 @@ func (sc *ShaComparer) GetComparisons() ([]string, error) {
 }
 
 // Helper functions
+
+func (sc *ShaComparer) resolveSha(partialSha string) (string, error) {
+	// If it's already a full SHA (40 chars), return as-is
+	if len(partialSha) == 40 {
+		return partialSha, nil
+	}
+	
+	// Try to resolve partial SHA using git
+	cmd := exec.Command("git", "rev-parse", partialSha)
+	cmd.Dir = sc.RepoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("SHA %s not found in git repository", partialSha)
+	}
+	
+	fullSha := strings.TrimSpace(string(output))
+	
+	// Validate it's a proper SHA
+	if len(fullSha) != 40 {
+		return "", fmt.Errorf("invalid SHA resolved: %s", fullSha)
+	}
+	
+	return fullSha, nil
+}
 
 func (sc *ShaComparer) getCurrentHead() (string, error) {
 	cmd := exec.Command("git", "rev-parse", "HEAD")
