@@ -173,7 +173,7 @@ func serveShaCompareViewer(w http.ResponseWriter, r *http.Request) {
 }
 
 func getShaComparisons(w http.ResponseWriter, r *http.Request) {
-	shas, err := shaComparer.GetComparisons()
+	shaInfos, err := shaComparer.GetComparisons()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -181,7 +181,7 @@ func getShaComparisons(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(shas)
+	json.NewEncoder(w).Encode(shaInfos)
 }
 
 func generateComparison(w http.ResponseWriter, r *http.Request) {

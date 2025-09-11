@@ -113,7 +113,7 @@
             async loadAvailableShas() {
                 try {
                     const response = await fetch('/api/sha-comparisons');
-                    this.availableShas = await response.json();
+                    this.availableShaInfos = await response.json();
                     this.updateAvailableComparisons();
                 } catch (error) {
                     console.error('Failed to load available SHAs:', error);
@@ -123,7 +123,7 @@
 
             updateAvailableComparisons() {
                 const container = document.getElementById('available-comparisons');
-                if (this.availableShas.length === 0) {
+                if (!this.availableShaInfos || this.availableShaInfos.length === 0) {
                     container.innerHTML = '<p>No SHA comparisons available. Generate some first!</p>';
                     return;
                 }
@@ -132,14 +132,17 @@
                     <div class="legend">
                         <div class="legend-item">
                             <div class="legend-color" style="background: #007bff;"></div>
-                            <span>Available SHAs (${this.availableShas.length})</span>
+                            <span>Available SHAs (${this.availableShaInfos.length})</span>
                         </div>
                     </div>
-                    <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-                        ${this.availableShas.map(sha => `
-                            <div class="file-item" onclick="viewer.selectSha('${sha}')" 
-                                 style="border: 1px solid #ddd; border-radius: 4px; background: white;">
-                                ${sha.substring(0, 7)}
+                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                        ${this.availableShaInfos.map(shaInfo => `
+                            <div class="file-item" onclick="viewer.selectSha('${shaInfo.sha}')" 
+                                 style="border: 1px solid #ddd; border-radius: 4px; background: white; padding: 8px; cursor: pointer;">
+                                <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; margin-right: 10px;">
+                                    ${shaInfo.short}
+                                </code>
+                                <span style="color: #333;">${shaInfo.subject}</span>
                             </div>
                         `).join('')}
                     </div>

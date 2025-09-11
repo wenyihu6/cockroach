@@ -146,23 +146,70 @@ func (sc *ShaComparer) CompareShAs(sha1, sha2 string) error {
 	return nil
 }
 
-// GetComparisons returns the list of available SHA comparisons
-func (sc *ShaComparer) GetComparisons() ([]string, error) {
+// ShaInfo represents SHA with commit information
+type ShaInfo struct {
+	Sha     string `json:"sha"`
+	Short   string `json:"short"`
+	Subject string `json:"subject"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+}
+
+// GetComparisons returns the list of available SHA comparisons with commit info
+func (sc *ShaComparer) GetComparisons() ([]ShaInfo, error) {
 	entries, err := os.ReadDir(sc.TempDir)
 	if err != nil {
 		return nil, err
 	}
 
-	var shas []string
+	var shaInfos []ShaInfo
 	for _, entry := range entries {
 		if entry.IsDir() && len(entry.Name()) >= 7 { // SHA should be at least 7 chars
-			shas = append(shas, entry.Name())
+			sha := entry.Name()
+			info, err := sc.getCommitInfo(sha)
+			if err != nil {
+				log.Printf("Warning: Failed to get commit info for %s: %v", sha, err)
+				// Still include it with just the SHA
+				shaInfos = append(shaInfos, ShaInfo{
+					Sha:     sha,
+					Short:   sha[:7],
+					Subject: "Unknown commit",
+					Author:  "",
+					Date:    "",
+				})
+			} else {
+				shaInfos = append(shaInfos, info)
+			}
 		}
 	}
-	return shas, nil
+	return shaInfos, nil
 }
 
 // Helper functions
+
+func (sc *ShaComparer) getCommitInfo(sha string) (ShaInfo, error) {
+	// Get single commit information
+	cmd := exec.Command("git", "log", "-1", "--pretty=format:%H|%h|%s|%an|%ad", "--date=short", sha)
+	cmd.Dir = sc.RepoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return ShaInfo{}, fmt.Errorf("failed to get commit info: %w", err)
+	}
+
+	parts := strings.Split(strings.TrimSpace(string(output)), "|")
+	if len(parts) < 5 {
+		return ShaInfo{}, fmt.Errorf("unexpected git log output format")
+	}
+
+	return ShaInfo{
+		Sha:     parts[0],
+		Short:   parts[1],
+		Subject: parts[2],
+		Author:  parts[3],
+		Date:    parts[4],
+	}, nil
+}
+
 
 func (sc *ShaComparer) resolveSha(partialSha string) (string, error) {
 	// If it's already a full SHA (40 chars), return as-is
