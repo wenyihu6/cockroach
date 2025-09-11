@@ -127,6 +127,17 @@
                 }
             }
 
+            async loadRecentCommits() {
+                try {
+                    const response = await fetch('/api/recent-commits');
+                    this.recentCommits = await response.json();
+                    this.updateRecentCommits();
+                } catch (error) {
+                    console.error('Failed to load recent commits:', error);
+                    document.getElementById('recent-commits').innerHTML = '<p>Failed to load recent commits</p>';
+                }
+            }
+
             async loadAvailableShas() {
                 try {
                     const response = await fetch('/api/sha-comparisons');
@@ -370,6 +381,10 @@
                     return;
                 }
 
+                // Get commit subjects for the selected SHAs
+                const sha1Subject = this.getCommitSubject(this.selectedSha1);
+                const sha2Subject = this.getCommitSubject(this.selectedSha2);
+
                 // Extract metrics that can be plotted
                 const metrics = this.extractMetrics(data1);
                 
@@ -411,6 +426,29 @@
                     });
                 }
                 return metrics.length > 0 ? metrics : ['no_data'];
+            }
+
+            getCommitSubject(sha) {
+                if (!sha) return 'Unknown';
+                
+                // First check available SHAs (from temp directory)
+                if (this.availableShaInfos) {
+                    const shaInfo = this.availableShaInfos.find(info => info.sha === sha || info.sha.startsWith(sha));
+                    if (shaInfo && shaInfo.subject) {
+                        return shaInfo.subject;
+                    }
+                }
+                
+                // Then check recent commits
+                if (this.recentCommits) {
+                    const commit = this.recentCommits.find(commit => commit.sha === sha || commit.sha.startsWith(sha));
+                    if (commit && commit.subject) {
+                        return commit.subject;
+                    }
+                }
+                
+                // Fallback to short SHA
+                return sha.substring(0, 7);
             }
 
             renderChart(elementId, data, metric, title) {
