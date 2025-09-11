@@ -495,7 +495,7 @@ func TestDataDriven(t *testing.T) {
 							event.SetSimulationSettingsEvent{
 								IsClusterSetting: true,
 								Key:              "LBRebalancingMode",
-								Value:            int64(kvserverbase.LBRebalancingMultiMetric),
+								Value:            int64(kvserverbase.LBRebalancingLeasesAndReplicas),
 							})
 					},
 					// Both the replicate/lease queues and the MMA are enabled.

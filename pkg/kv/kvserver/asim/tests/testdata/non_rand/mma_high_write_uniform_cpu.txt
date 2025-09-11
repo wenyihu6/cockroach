@@ -27,13 +27,13 @@ setting split_queue_enabled=false
 
 eval duration=20m samples=1 seed=42 cfgs=(mma-only,both) metrics=(cpu,write_bytes_per_second,replicas,leases)
 ----
-cpu#1: last:  [s1=50109583, s2=49628333, s3=50182500, s4=49952500, s5=49919166, s6=49699166, s7=49752916, s8=50564583, s9=50066250, s10=50125000] (stddev=261258.69, mean=49999999.70, sum=499999997)
+cpu#1: last:  [s1=50153381, s2=49628333, s3=16625860, s4=16620757, s5=0, s6=116316061, s7=66525432, s8=50564583, s9=66858652, s10=66809768] (stddev=31569255.20, mean=50010282.70, sum=500102827)
 leases#1: first: [s1=19, s2=11, s3=6, s4=3, s5=3, s6=3, s7=4, s8=3, s9=4, s10=4] (stddev=4.92, mean=6.00, sum=60)
-leases#1: last:  [s1=10, s2=6, s3=6, s4=3, s5=6, s6=4, s7=4, s8=6, s9=9, s10=6] (stddev=2.05, mean=6.00, sum=60)
+leases#1: last:  [s1=6, s2=6, s3=4, s4=4, s5=3, s6=10, s7=7, s8=6, s9=7, s10=7] (stddev=1.90, mean=6.00, sum=60)
 replicas#1: first: [s1=39, s2=33, s3=23, s4=16, s5=13, s6=12, s7=11, s8=11, s9=11, s10=11] (stddev=9.76, mean=18.00, sum=180)
-replicas#1: last:  [s1=18, s2=18, s3=18, s4=18, s5=18, s6=18, s7=18, s8=18, s9=18, s10=18] (stddev=0.00, mean=18.00, sum=180)
-write_bytes_per_second#1: last:  [s1=5987983, s2=5994822, s3=5992147, s4=6010824, s5=5991846, s6=5993816, s7=5993780, s8=6013651, s9=5996138, s10=6012394] (stddev=9123.97, mean=5998740.10, sum=59987401)
-artifacts[mma-only]: d1dfa3825f5aa113
+replicas#1: last:  [s1=35, s2=28, s3=20, s4=14, s5=12, s6=12, s7=17, s8=13, s9=13, s10=16] (stddev=7.32, mean=18.00, sum=180)
+write_bytes_per_second#1: last:  [s1=17334270, s2=12649439, s3=7342076, s4=3328132, s5=1999304, s6=2017077, s7=5328602, s8=2665433, s9=2665508, s10=4662153] (stddev=4878204.42, mean=5999199.40, sum=59991994)
+artifacts[mma-only]: 59bcb17e514ee43c
 cpu#1: last:  [s1=49766856, s2=49962142, s3=49944178, s4=49861368, s5=49856608, s6=50176752, s7=49997572, s8=50324179, s9=50047522, s10=49969265] (stddev=154062.46, mean=49990644.20, sum=499906442)
 leases#1: first: [s1=19, s2=11, s3=6, s4=3, s5=3, s6=3, s7=4, s8=3, s9=4, s10=4] (stddev=4.92, mean=6.00, sum=60)
 leases#1: last:  [s1=10, s2=5, s3=3, s4=3, s5=5, s6=6, s7=8, s8=4, s9=9, s10=7] (stddev=2.32, mean=6.00, sum=60)
