@@ -233,16 +233,33 @@ func getComparisonFiles(w http.ResponseWriter, r *http.Request) {
 		if !info.IsDir() && strings.HasSuffix(path, ".json") {
 			relPath, _ := filepath.Rel(sha1Dir, path)
 			baseName := filepath.Base(path)
-			testName := strings.TrimSuffix(baseName, ".json")
-
-			// Check if corresponding file exists in sha2
-			sha2File := filepath.Join(shaComparer.TempDir, sha2, "generated", relPath)
-			if _, err := os.Stat(sha2File); err == nil {
+			
+			// Use the directory name as the test name instead of just the filename
+			// e.g., for "example_rebalancing/example_rebalancing_default_1.json" 
+			// use "example_rebalancing" as the test name
+			dir := filepath.Dir(relPath)
+			if dir == "." {
+				// If no subdirectory, use filename without extension
+				testName := strings.TrimSuffix(baseName, ".json")
 				files = append(files, FileInfo{
 					Path:     relPath,
 					Name:     baseName,
 					TestName: testName,
 				})
+			} else {
+				// Use directory name as test name
+				testName := dir
+				displayName := fmt.Sprintf("%s (%s)", testName, baseName)
+				
+				// Check if corresponding file exists in sha2
+				sha2File := filepath.Join(shaComparer.TempDir, sha2, "generated", relPath)
+				if _, err := os.Stat(sha2File); err == nil {
+					files = append(files, FileInfo{
+						Path:     relPath,
+						Name:     displayName,
+						TestName: testName,
+					})
+				}
 			}
 		}
 		return nil

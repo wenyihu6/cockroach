@@ -218,12 +218,12 @@
             updateFileList() {
                 const fileList = document.getElementById('file-list');
                 fileList.innerHTML = this.availableFiles.map(file => `
-                    <div class="file-item" onclick="viewer.selectFile('${file.name}')">${file.name}</div>
+                    <div class="file-item" onclick="viewer.selectFile('${file.path}')" data-path="${file.path}">${file.name}</div>
                 `).join('');
             }
 
-            async selectFile(fileName) {
-                this.selectedFile = fileName;
+            async selectFile(filePath) {
+                this.selectedFile = filePath;
                 document.querySelectorAll('#file-list .file-item').forEach(item => {
                     item.classList.remove('selected');
                 });
@@ -282,56 +282,53 @@
 
             extractMetrics(data) {
                 const metrics = [];
-                if (data.events && Array.isArray(data.events)) {
-                    // Look for numeric metrics in events
-                    const sampleEvent = data.events.find(e => e && typeof e === 'object');
-                    if (sampleEvent) {
-                        Object.keys(sampleEvent).forEach(key => {
-                            if (typeof sampleEvent[key] === 'number') {
-                                metrics.push(key);
-                            }
-                        });
-                    }
+                if (data.metrics && typeof data.metrics === 'object') {
+                    // Get metric names from the metrics object
+                    Object.keys(data.metrics).forEach(metricName => {
+                        metrics.push(metricName);
+                    });
                 }
-                return metrics.length > 0 ? metrics : ['default'];
+                return metrics.length > 0 ? metrics : ['no_data'];
             }
 
             renderChart(elementId, data, metric, title) {
                 let traces = [];
 
-                if (data.events && Array.isArray(data.events)) {
-                    const values = data.events.map((event, index) => {
-                        if (metric === 'default') {
-                            return index; // Just plot indices if no specific metric
+                if (data.metrics && data.metrics[metric] && typeof data.metrics[metric] === 'object') {
+                    const metricData = data.metrics[metric];
+                    
+                    // Each store (s1, s2, etc.) becomes a separate trace
+                    Object.keys(metricData).forEach(storeName => {
+                        const values = metricData[storeName];
+                        if (Array.isArray(values)) {
+                            traces.push({
+                                x: values.map((_, index) => index),
+                                y: values,
+                                type: 'scatter',
+                                mode: 'lines',
+                                name: storeName,
+                                line: { width: 2 }
+                            });
                         }
-                        return event && typeof event[metric] === 'number' ? event[metric] : 0;
-                    });
-
-                    traces.push({
-                        x: data.events.map((_, index) => index),
-                        y: values,
-                        type: 'scatter',
-                        mode: 'lines+markers',
-                        name: metric,
-                        line: { width: 2 }
                     });
                 } else {
-                    // Handle other data structures
+                    // Handle case where no data is available
                     traces.push({
                         x: [0, 1, 2],
                         y: [0, 0, 0],
                         type: 'scatter',
-                        mode: 'lines+markers',
+                        mode: 'lines',
                         name: 'No Data'
                     });
                 }
 
                 const layout = {
                     title: title,
-                    xaxis: { title: 'Time/Index' },
+                    xaxis: { title: 'Time Step' },
                     yaxis: { title: metric },
                     margin: { t: 50, r: 50, b: 50, l: 50 },
-                    height: 400
+                    height: 400,
+                    showlegend: true
                 };
 
                 Plotly.newPlot(elementId, traces, layout, { responsive: true });
