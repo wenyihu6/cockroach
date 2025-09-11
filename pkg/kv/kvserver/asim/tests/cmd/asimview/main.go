@@ -26,6 +26,16 @@ type FileInfo struct {
 	TestName string `json:"testName"`
 }
 
+type FileComparison struct {
+	Path        string `json:"path"`
+	Name        string `json:"name"`
+	TestName    string `json:"testName"`
+	HasDiff     bool   `json:"hasDiff"`
+	Identical   bool   `json:"identical"`
+	OnlyInSha1  bool   `json:"onlyInSha1"`
+	OnlyInSha2  bool   `json:"onlyInSha2"`
+}
+
 func main() {
 	var port int
 	var shaCompare bool
@@ -166,6 +176,7 @@ func setupShaComparisonRoutes() {
 	http.HandleFunc("/api/generate-comparison", generateComparison)
 	http.HandleFunc("/api/comparison-files/", getComparisonFiles)
 	http.HandleFunc("/api/sha-file/", getShaFile)
+	http.HandleFunc("/api/compare-files/", compareFiles)
 }
 
 func serveShaCompareViewer(w http.ResponseWriter, r *http.Request) {
@@ -325,4 +336,170 @@ func getShaFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	io.Copy(w, file)
+}
+
+func compareFiles(w http.ResponseWriter, r *http.Request) {
+	// Extract sha1/sha2 from URL path like /api/compare-files/sha1/sha2
+	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/compare-files/"), "/")
+	if len(pathParts) != 2 {
+		http.Error(w, "Invalid path format", http.StatusBadRequest)
+		return
+	}
+
+	sha1, sha2 := pathParts[0], pathParts[1]
+	
+	// Resolve partial SHAs to full SHAs if needed
+	fullSha1, err := shaComparer.resolveSha(sha1)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Invalid SHA1: %s", sha1), http.StatusBadRequest)
+		return
+	}
+	
+	fullSha2, err := shaComparer.resolveSha(sha2)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Invalid SHA2: %s", sha2), http.StatusBadRequest)
+		return
+	}
+	
+	// Get files from both SHA directories
+	sha1Dir := filepath.Join(shaComparer.TempDir, fullSha1, "generated")
+	sha2Dir := filepath.Join(shaComparer.TempDir, fullSha2, "generated")
+	
+	fileComparisons := make(map[string]*FileComparison)
+	
+	// Walk through SHA1 files
+	err = filepath.Walk(sha1Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".json") {
+			relPath, _ := filepath.Rel(sha1Dir, path)
+			baseName := filepath.Base(path)
+			
+			dir := filepath.Dir(relPath)
+			var testName string
+			var displayName string
+			
+			if dir == "." {
+				testName = strings.TrimSuffix(baseName, ".json")
+				displayName = baseName
+			} else {
+				testName = dir
+				displayName = fmt.Sprintf("%s (%s)", testName, baseName)
+			}
+			
+			// Check if corresponding file exists in sha2
+			sha2File := filepath.Join(sha2Dir, relPath)
+			
+			comparison := &FileComparison{
+				Path:     relPath,
+				Name:     displayName,
+				TestName: testName,
+			}
+			
+			if _, err := os.Stat(sha2File); err == nil {
+				// Both files exist, compare them
+				identical, err := compareJSONFiles(path, sha2File)
+				if err != nil {
+					log.Printf("Error comparing files %s and %s: %v", path, sha2File, err)
+					comparison.HasDiff = true // Assume different if we can't compare
+				} else {
+					comparison.Identical = identical
+					comparison.HasDiff = !identical
+				}
+			} else {
+				// File only exists in SHA1
+				comparison.OnlyInSha1 = true
+				comparison.HasDiff = true
+			}
+			
+			fileComparisons[relPath] = comparison
+		}
+		return nil
+	})
+	
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Walk through SHA2 files to find files only in SHA2
+	err = filepath.Walk(sha2Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".json") {
+			relPath, _ := filepath.Rel(sha2Dir, path)
+			
+			// If we haven't seen this file in SHA1, it's only in SHA2
+			if _, exists := fileComparisons[relPath]; !exists {
+				baseName := filepath.Base(path)
+				dir := filepath.Dir(relPath)
+				var testName string
+				var displayName string
+				
+				if dir == "." {
+					testName = strings.TrimSuffix(baseName, ".json")
+					displayName = baseName
+				} else {
+					testName = dir
+					displayName = fmt.Sprintf("%s (%s)", testName, baseName)
+				}
+				
+				fileComparisons[relPath] = &FileComparison{
+					Path:       relPath,
+					Name:       displayName,
+					TestName:   testName,
+					OnlyInSha2: true,
+					HasDiff:    true,
+				}
+			}
+		}
+		return nil
+	})
+	
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	
+	// Convert map to slice for JSON response
+	var comparisons []FileComparison
+	for _, comp := range fileComparisons {
+		comparisons = append(comparisons, *comp)
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(comparisons)
+}
+
+func compareJSONFiles(file1, file2 string) (bool, error) {
+	// Read both files
+	data1, err := os.ReadFile(file1)
+	if err != nil {
+		return false, err
+	}
+	
+	data2, err := os.ReadFile(file2)
+	if err != nil {
+		return false, err
+	}
+	
+	// Parse JSON to normalize formatting
+	var json1, json2 interface{}
+	
+	if err := json.Unmarshal(data1, &json1); err != nil {
+		return false, err
+	}
+	
+	if err := json.Unmarshal(data2, &json2); err != nil {
+		return false, err
+	}
+	
+	// Compare the parsed JSON structures
+	normalized1, _ := json.Marshal(json1)
+	normalized2, _ := json.Marshal(json2)
+	
+	return string(normalized1) == string(normalized2), nil
 }

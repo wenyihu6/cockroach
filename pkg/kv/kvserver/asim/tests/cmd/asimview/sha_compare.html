@@ -247,7 +247,7 @@
                     const sha2Elements = document.querySelectorAll(`[onclick*="${this.selectedSha2}"]`);
                     sha2Elements.forEach(el => {
                         el.classList.add('sha-selected');
-                        el.style.border = '2px solid #28a745';
+                        el.style.border = '2px solid #007bff';
                     });
                 }
             }
@@ -296,8 +296,8 @@
                 if (!this.selectedSha1 || !this.selectedSha2) return;
 
                 try {
-                    const response = await fetch(`/api/comparison-files/${this.selectedSha1}/${this.selectedSha2}`);
-                    this.availableFiles = await response.json();
+                    const response = await fetch(`/api/compare-files/${this.selectedSha1}/${this.selectedSha2}`);
+                    this.fileComparisons = await response.json();
                     this.updateFileList();
                     document.getElementById('file-selection').classList.remove('hidden');
                 } catch (error) {
@@ -308,9 +308,55 @@
 
             updateFileList() {
                 const fileList = document.getElementById('file-list');
-                fileList.innerHTML = this.availableFiles.map(file => `
-                    <div class="file-item" onclick="viewer.selectFile('${file.path}')" data-path="${file.path}">${file.name}</div>
-                `).join('');
+                
+                // Add legend first
+                const legend = `
+                    <div style="padding: 10px; border-bottom: 2px solid #eee; margin-bottom: 10px;">
+                        <div style="display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.9em;">
+                            <div style="display: flex; align-items: center; gap: 5px;">
+                                <div style="width: 12px; height: 12px; background: #ff6b6b; border-radius: 3px;"></div>
+                                <span>Different</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 5px;">
+                                <div style="width: 12px; height: 12px; background: #51cf66; border-radius: 3px;"></div>
+                                <span>Identical</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 5px;">
+                                <div style="width: 12px; height: 12px; background: #ffd43b; border-radius: 3px;"></div>
+                                <span>Only in SHA1</span>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 5px;">
+                                <div style="width: 12px; height: 12px; background: #74c0fc; border-radius: 3px;"></div>
+                                <span>Only in SHA2</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                fileList.innerHTML = legend + this.fileComparisons.map(file => {
+                    let backgroundColor = '#51cf66'; // Default: identical (green)
+                    let borderColor = '#51cf66';
+                    
+                    if (file.hasDiff) {
+                        if (file.onlyInSha1) {
+                            backgroundColor = '#ffd43b'; // Only in SHA1 (yellow)
+                            borderColor = '#ffd43b';
+                        } else if (file.onlyInSha2) {
+                            backgroundColor = '#74c0fc'; // Only in SHA2 (blue)
+                            borderColor = '#74c0fc';
+                        } else {
+                            backgroundColor = '#ff6b6b'; // Different (red)
+                            borderColor = '#ff6b6b';
+                        }
+                    }
+                    
+                    return `
+                        <div class="file-item" onclick="viewer.selectFile('${file.path}')" data-path="${file.path}"
+                             style="border-left: 4px solid ${borderColor}; background: linear-gradient(90deg, ${backgroundColor}20 0%, white 15%);">
+                            ${file.name}
+                        </div>
+                    `;
+                }).join('');
             }
 
             async selectFile(filePath) {
