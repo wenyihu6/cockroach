@@ -185,6 +185,41 @@ func (sc *ShaComparer) GetComparisons() ([]ShaInfo, error) {
 	return shaInfos, nil
 }
 
+// GetRecentCommits returns the most recent commits from the current branch
+func (sc *ShaComparer) GetRecentCommits(count int) ([]ShaInfo, error) {
+	cmd := exec.Command("git", "log", "-n", fmt.Sprintf("%d", count), "--pretty=format:%H|%h|%s")
+	cmd.Dir = sc.RepoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get recent commits: %w", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var commits []ShaInfo
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		parts := strings.Split(line, "|")
+		if len(parts) < 3 {
+			continue
+		}
+
+		commits = append(commits, ShaInfo{
+			Sha:     parts[0],
+			Short:   parts[1],
+			Subject: parts[2],
+			Author:  "",
+			Date:    "",
+		})
+	}
+
+	return commits, nil
+}
+
 // Helper functions
 
 func (sc *ShaComparer) getCommitInfo(sha string) (ShaInfo, error) {

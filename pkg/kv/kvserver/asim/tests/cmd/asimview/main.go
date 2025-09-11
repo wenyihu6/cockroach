@@ -162,6 +162,7 @@ func setupShaComparisonRoutes() {
 
 	http.HandleFunc("/", serveShaCompareViewer)
 	http.HandleFunc("/api/sha-comparisons", getShaComparisons)
+	http.HandleFunc("/api/recent-commits", getRecentCommits)
 	http.HandleFunc("/api/generate-comparison", generateComparison)
 	http.HandleFunc("/api/comparison-files/", getComparisonFiles)
 	http.HandleFunc("/api/sha-file/", getShaFile)
@@ -182,6 +183,18 @@ func getShaComparisons(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	json.NewEncoder(w).Encode(shaInfos)
+}
+
+func getRecentCommits(w http.ResponseWriter, r *http.Request) {
+	commits, err := shaComparer.GetRecentCommits(5)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(commits)
 }
 
 func generateComparison(w http.ResponseWriter, r *http.Request) {

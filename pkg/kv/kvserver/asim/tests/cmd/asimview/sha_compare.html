@@ -21,7 +21,7 @@
         .status.success { background: #d4edda; color: #155724; }
         .comparison-controls { background: white; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .file-selector { display: flex; gap: 20px; align-items: center; }
-        .file-list { flex: 1; max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
+        .file-list { flex: 1; max-height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; }
         .file-item { padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #eee; }
         .file-item:hover { background: #f8f9fa; }
         .file-item.selected { background: #e7f3ff; }
@@ -61,7 +61,10 @@
         </div>
 
         <div class="comparison-controls">
-            <h3>Available Comparisons</h3>
+            <h3>Recent Commits</h3>
+            <div id="recent-commits" class="loading">Loading recent commits...</div>
+            
+            <h3 style="margin-top: 20px;">Available Comparisons</h3>
             <div id="available-comparisons" class="loading">Loading available SHAs...</div>
             
             <div id="file-selection" class="hidden">
@@ -102,12 +105,24 @@
                 this.availableFiles = [];
                 this.selectedFile = null;
                 this.setupEventListeners();
+                this.loadRecentCommits();
                 this.loadAvailableShas();
             }
 
             setupEventListeners() {
                 document.getElementById('generate-btn').addEventListener('click', () => this.generateComparison());
                 document.getElementById('refresh-btn').addEventListener('click', () => this.loadAvailableShas());
+            }
+
+            async loadRecentCommits() {
+                try {
+                    const response = await fetch('/api/recent-commits');
+                    this.recentCommits = await response.json();
+                    this.updateRecentCommits();
+                } catch (error) {
+                    console.error('Failed to load recent commits:', error);
+                    document.getElementById('recent-commits').innerHTML = '<p>Failed to load recent commits</p>';
+                }
             }
 
             async loadAvailableShas() {
@@ -119,6 +134,28 @@
                     console.error('Failed to load available SHAs:', error);
                     this.showStatus('Failed to load available SHAs', 'error');
                 }
+            }
+
+            updateRecentCommits() {
+                const container = document.getElementById('recent-commits');
+                if (!this.recentCommits || this.recentCommits.length === 0) {
+                    container.innerHTML = '<p>No recent commits found</p>';
+                    return;
+                }
+
+                container.innerHTML = `
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+                        ${this.recentCommits.map(commit => `
+                            <div class="file-item" onclick="viewer.selectSha('${commit.sha}')" 
+                                 style="border: 1px solid #ddd; border-radius: 4px; background: white; padding: 4px 8px; cursor: pointer; display: inline-block; width: fit-content;">
+                                <code style="background: #f8f9fa; padding: 1px 4px; border-radius: 3px; font-family: monospace; margin-right: 8px; font-size: 0.9em;">
+                                    ${commit.short}
+                                </code>
+                                <span style="color: #333; font-size: 0.9em;">${commit.subject}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
             }
 
             updateAvailableComparisons() {
@@ -135,14 +172,14 @@
                             <span>Available SHAs (${this.availableShaInfos.length})</span>
                         </div>
                     </div>
-                    <div style="display: flex; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 8px;">
                         ${this.availableShaInfos.map(shaInfo => `
                             <div class="file-item" onclick="viewer.selectSha('${shaInfo.sha}')" 
-                                 style="border: 1px solid #ddd; border-radius: 4px; background: white; padding: 8px; cursor: pointer;">
-                                <code style="background: #f8f9fa; padding: 2px 6px; border-radius: 3px; font-family: monospace; margin-right: 10px;">
+                                 style="border: 1px solid #ddd; border-radius: 4px; background: white; padding: 4px 8px; cursor: pointer; display: inline-block; width: fit-content;">
+                                <code style="background: #f8f9fa; padding: 1px 4px; border-radius: 3px; font-family: monospace; margin-right: 8px; font-size: 0.9em;">
                                     ${shaInfo.short}
                                 </code>
-                                <span style="color: #333;">${shaInfo.subject}</span>
+                                <span style="color: #333; font-size: 0.9em;">${shaInfo.subject}</span>
                             </div>
                         `).join('')}
                     </div>
