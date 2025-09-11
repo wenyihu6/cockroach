@@ -31,6 +31,15 @@ func NewShaComparer() (*ShaComparer, error) {
 		return nil, fmt.Errorf("failed to create temp directory: %w", err)
 	}
 
+	// Create a .gitignore file in the temp directory to prevent tracking
+	gitignorePath := filepath.Join(tempDir, ".gitignore")
+	if _, err := os.Stat(gitignorePath); os.IsNotExist(err) {
+		gitignoreContent := "# Temporary SHA comparison data\n*\n!.gitignore\n"
+		if err := os.WriteFile(gitignorePath, []byte(gitignoreContent), 0644); err != nil {
+			log.Printf("Warning: Failed to create .gitignore in temp directory: %v", err)
+		}
+	}
+
 	return &ShaComparer{
 		RepoRoot: repoRoot,
 		TempDir:  tempDir,
@@ -47,20 +56,50 @@ func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 		return fmt.Errorf("failed to create SHA directory: %w", err)
 	}
 
-	// Get current branch to restore later
-	currentBranch, err := sc.getCurrentBranch()
-	if err != nil {
-		return fmt.Errorf("failed to get current branch: %w", err)
+	// Check if data already exists for this SHA
+	generatedPath := filepath.Join(shaDir, "generated")
+	if _, err := os.Stat(generatedPath); err == nil {
+		fmt.Printf("Test data already exists for SHA %s, skipping generation\n", sha)
+		return nil
 	}
 
-	// Stash any current changes
-	if err := sc.runGitCommand("stash", "push", "-m", "Temporary stash for SHA comparison"); err != nil {
-		log.Printf("Warning: Failed to stash changes: %v", err)
+	// Get current HEAD to restore later (safer than branch name)
+	currentHead, err := sc.getCurrentHead()
+	if err != nil {
+		return fmt.Errorf("failed to get current HEAD: %w", err)
+	}
+
+	// Check if working directory is clean before proceeding
+	if !sc.isWorkingDirectoryClean() {
+		fmt.Printf("Working directory has changes, stashing them...\n")
+		if err := sc.runGitCommand("stash", "push", "-m", "Temporary stash for SHA comparison"); err != nil {
+			return fmt.Errorf("failed to stash changes: %w", err)
+		}
+		defer func() {
+			fmt.Printf("Restoring stashed changes...\n")
+			if err := sc.runGitCommand("stash", "pop"); err != nil {
+				log.Printf("Warning: Failed to restore stashed changes: %v", err)
+			}
+		}()
 	}
 
 	// Checkout the target SHA
 	if err := sc.runGitCommand("checkout", sha); err != nil {
 		return fmt.Errorf("failed to checkout SHA %s: %w", sha, err)
+	}
+
+	// Ensure we restore the original state
+	defer func() {
+		fmt.Printf("Restoring original HEAD (%s)...\n", currentHead[:12])
+		if err := sc.runGitCommand("checkout", currentHead); err != nil {
+			log.Printf("Error: Failed to restore HEAD %s: %v", currentHead, err)
+		}
+	}()
+
+	// Clean any existing generated files to ensure fresh test run
+	generatedDir := filepath.Join(sc.RepoRoot, "pkg/kv/kvserver/asim/tests/testdata/generated")
+	if err := sc.cleanGeneratedDir(generatedDir); err != nil {
+		log.Printf("Warning: Failed to clean generated directory: %v", err)
 	}
 
 	// Run the test to generate data
@@ -71,24 +110,12 @@ func (sc *ShaComparer) GenerateTestDataForSha(sha string) error {
 	
 	fmt.Printf("Running test command for SHA %s...\n", sha)
 	if err := testCmd.Run(); err != nil {
-		// Don't fail immediately, try to restore state first
-		log.Printf("Warning: Test command failed for SHA %s: %v", sha, err)
+		return fmt.Errorf("test command failed for SHA %s: %w", sha, err)
 	}
 
 	// Copy generated files to SHA directory
-	generatedDir := filepath.Join(sc.RepoRoot, "pkg/kv/kvserver/asim/tests/testdata/generated")
-	if err := sc.copyDir(generatedDir, filepath.Join(shaDir, "generated")); err != nil {
+	if err := sc.copyDir(generatedDir, generatedPath); err != nil {
 		return fmt.Errorf("failed to copy generated files: %w", err)
-	}
-
-	// Restore original branch
-	if err := sc.runGitCommand("checkout", currentBranch); err != nil {
-		return fmt.Errorf("failed to restore branch %s: %w", currentBranch, err)
-	}
-
-	// Try to restore stashed changes
-	if err := sc.runGitCommand("stash", "pop"); err != nil {
-		log.Printf("Warning: Failed to restore stashed changes: %v", err)
 	}
 
 	fmt.Printf("Successfully generated test data for SHA %s\n", sha)
@@ -131,6 +158,16 @@ func (sc *ShaComparer) GetComparisons() ([]string, error) {
 
 // Helper functions
 
+func (sc *ShaComparer) getCurrentHead() (string, error) {
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = sc.RepoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
 func (sc *ShaComparer) getCurrentBranch() (string, error) {
 	cmd := exec.Command("git", "branch", "--show-current")
 	cmd.Dir = sc.RepoRoot
@@ -139,6 +176,41 @@ func (sc *ShaComparer) getCurrentBranch() (string, error) {
 		return "", err
 	}
 	return strings.TrimSpace(string(output)), nil
+}
+
+func (sc *ShaComparer) isWorkingDirectoryClean() bool {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = sc.RepoRoot
+	output, err := cmd.Output()
+	if err != nil {
+		log.Printf("Warning: Failed to check git status: %v", err)
+		return false
+	}
+	return len(strings.TrimSpace(string(output))) == 0
+}
+
+func (sc *ShaComparer) cleanGeneratedDir(dir string) error {
+	// Only clean files that are gitignored or untracked to avoid data loss
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subDir := filepath.Join(dir, entry.Name())
+			if err := sc.cleanGeneratedDir(subDir); err != nil {
+				log.Printf("Warning: Failed to clean subdirectory %s: %v", subDir, err)
+			}
+		} else if strings.HasSuffix(entry.Name(), ".json") {
+			// Only remove JSON files to be safe
+			filePath := filepath.Join(dir, entry.Name())
+			if err := os.Remove(filePath); err != nil {
+				log.Printf("Warning: Failed to remove %s: %v", filePath, err)
+			}
+		}
+	}
+	return nil
 }
 
 func (sc *ShaComparer) runGitCommand(args ...string) error {

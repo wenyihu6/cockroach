@@ -66,3 +66,5 @@ pkg/testutils/serverutils/*_generated.go
 .DS_Store
 .idea/
 .vscode/
+# ASIM SHA comparison temp directory
+asim_sha_compare_temp/
