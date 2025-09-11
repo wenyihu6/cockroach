@@ -268,12 +268,25 @@
                 // Extract metrics that can be plotted
                 const metrics = this.extractMetrics(data1);
                 
+                // Build all HTML first
+                let html1 = '';
+                let html2 = '';
                 metrics.forEach((metric, index) => {
                     const chartId1 = `chart1-${index}`;
                     const chartId2 = `chart2-${index}`;
                     
-                    charts1.innerHTML += `<div id="${chartId1}" class="chart-container"></div>`;
-                    charts2.innerHTML += `<div id="${chartId2}" class="chart-container"></div>`;
+                    html1 += `<div id="${chartId1}" class="chart-container"></div>`;
+                    html2 += `<div id="${chartId2}" class="chart-container"></div>`;
+                });
+                
+                // Set all HTML at once
+                charts1.innerHTML = html1;
+                charts2.innerHTML = html2;
+                
+                // Now render all charts
+                metrics.forEach((metric, index) => {
+                    const chartId1 = `chart1-${index}`;
+                    const chartId2 = `chart2-${index}`;
                     
                     this.renderChart(chartId1, data1, metric, `${metric} - SHA1`);
                     this.renderChart(chartId2, data2, metric, `${metric} - SHA2`);
@@ -306,8 +319,11 @@
                                 y: values,
                                 type: 'scatter',
                                 mode: 'lines',
-                                name: storeName,
-                                line: { width: 2 }
+                                name: `${storeName}`,  // Keep simple name for legend
+                                line: { width: 2 },
+                                hovertemplate: `<b>${storeName}</b><br>` +
+                                             `${metric}: %{y}<br>` +
+                                             `<extra></extra>`
                             });
                         }
                     });
