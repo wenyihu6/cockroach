@@ -17,6 +17,9 @@ import (
 //go:embed viewer.html
 var viewerHTML string
 
+//go:embed sha_compare.html
+var shaCompareHTML string
+
 type FileInfo struct {
 	Path     string `json:"path"`
 	Name     string `json:"name"`
@@ -25,36 +28,45 @@ type FileInfo struct {
 
 func main() {
 	var port int
+	var shaCompare bool
 	flag.IntVar(&port, "port", 8080, "Port to serve on")
+	flag.BoolVar(&shaCompare, "sha-compare", false, "Enable SHA comparison mode")
 	flag.Parse()
 
-	dir := flag.Arg(0)
-	if dir == "" {
-		// Find git repo root and default to generated testdata
-		cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-		output, err := cmd.Output()
-		if err != nil {
-			log.Fatal("Failed to find git repo root:", err)
+	if shaCompare {
+		// SHA comparison mode
+		fmt.Printf("SHA Comparison Viewer available at: http://localhost:%d\n", port)
+		setupShaComparisonRoutes()
+	} else {
+		// Regular file viewing mode
+		dir := flag.Arg(0)
+		if dir == "" {
+			// Find git repo root and default to generated testdata
+			cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+			output, err := cmd.Output()
+			if err != nil {
+				log.Fatal("Failed to find git repo root:", err)
+			}
+			repoRoot := strings.TrimSpace(string(output))
+			dir = filepath.Join(repoRoot, "pkg/kv/kvserver/asim/tests/testdata/generated")
 		}
-		repoRoot := strings.TrimSpace(string(output))
-		dir = filepath.Join(repoRoot, "pkg/kv/kvserver/asim/tests/testdata/generated")
+
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			log.Fatal("Failed to resolve directory:", err)
+		}
+
+		if _, err := os.Stat(absDir); os.IsNotExist(err) {
+			log.Fatalf("Directory does not exist: %s", absDir)
+		}
+
+		fmt.Printf("Serving files from: %s\n", absDir)
+		fmt.Printf("Viewer available at: http://localhost:%d\n", port)
+
+		http.HandleFunc("/", serveViewer)
+		http.HandleFunc("/api/files", makeFileListHandler(absDir))
+		http.HandleFunc("/api/file/", makeFileHandler(absDir))
 	}
-
-	absDir, err := filepath.Abs(dir)
-	if err != nil {
-		log.Fatal("Failed to resolve directory:", err)
-	}
-
-	if _, err := os.Stat(absDir); os.IsNotExist(err) {
-		log.Fatalf("Directory does not exist: %s", absDir)
-	}
-
-	fmt.Printf("Serving files from: %s\n", absDir)
-	fmt.Printf("Viewer available at: http://localhost:%d\n", port)
-
-	http.HandleFunc("/", serveViewer)
-	http.HandleFunc("/api/files", makeFileListHandler(absDir))
-	http.HandleFunc("/api/file/", makeFileHandler(absDir))
 
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
@@ -130,4 +142,157 @@ func makeFileHandler(baseDir string) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		io.Copy(w, file)
 	}
+}
+
+// SHA comparison handlers
+
+type ShaComparisonRequest struct {
+	Sha1 string `json:"sha1"`
+	Sha2 string `json:"sha2"`
+}
+
+var shaComparer *ShaComparer
+
+func setupShaComparisonRoutes() {
+	var err error
+	shaComparer, err = NewShaComparer()
+	if err != nil {
+		log.Fatal("Failed to initialize SHA comparer:", err)
+	}
+
+	http.HandleFunc("/", serveShaCompareViewer)
+	http.HandleFunc("/api/sha-comparisons", getShaComparisons)
+	http.HandleFunc("/api/generate-comparison", generateComparison)
+	http.HandleFunc("/api/comparison-files/", getComparisonFiles)
+	http.HandleFunc("/api/sha-file/", getShaFile)
+}
+
+func serveShaCompareViewer(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+	w.Write([]byte(shaCompareHTML))
+}
+
+func getShaComparisons(w http.ResponseWriter, r *http.Request) {
+	shas, err := shaComparer.GetComparisons()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(shas)
+}
+
+func generateComparison(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ShaComparisonRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Sha1 == "" || req.Sha2 == "" {
+		http.Error(w, "Both sha1 and sha2 are required", http.StatusBadRequest)
+		return
+	}
+
+	err := shaComparer.CompareShAs(req.Sha1, req.Sha2)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(map[string]string{"status": "success"})
+}
+
+func getComparisonFiles(w http.ResponseWriter, r *http.Request) {
+	// Extract sha1/sha2 from URL path like /api/comparison-files/sha1/sha2
+	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/comparison-files/"), "/")
+	if len(pathParts) != 2 {
+		http.Error(w, "Invalid path format", http.StatusBadRequest)
+		return
+	}
+
+	sha1, sha2 := pathParts[0], pathParts[1]
+	
+	// Get files from the first SHA directory
+	sha1Dir := filepath.Join(shaComparer.TempDir, sha1, "generated")
+	var files []FileInfo
+
+	err := filepath.Walk(sha1Dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() && strings.HasSuffix(path, ".json") {
+			relPath, _ := filepath.Rel(sha1Dir, path)
+			baseName := filepath.Base(path)
+			testName := strings.TrimSuffix(baseName, ".json")
+
+			// Check if corresponding file exists in sha2
+			sha2File := filepath.Join(shaComparer.TempDir, sha2, "generated", relPath)
+			if _, err := os.Stat(sha2File); err == nil {
+				files = append(files, FileInfo{
+					Path:     relPath,
+					Name:     baseName,
+					TestName: testName,
+				})
+			}
+		}
+		return nil
+	})
+
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	json.NewEncoder(w).Encode(files)
+}
+
+func getShaFile(w http.ResponseWriter, r *http.Request) {
+	// Extract sha/filename from URL path like /api/sha-file/sha/filename.json
+	pathParts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/sha-file/"), "/")
+	if len(pathParts) < 2 {
+		http.Error(w, "Invalid path format", http.StatusBadRequest)
+		return
+	}
+
+	sha := pathParts[0]
+	filename := strings.Join(pathParts[1:], "/")
+
+	// Prevent directory traversal
+	cleanFilename := filepath.Clean(filename)
+	if strings.Contains(cleanFilename, "..") {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+
+	filePath := filepath.Join(shaComparer.TempDir, sha, "generated", cleanFilename)
+
+	// Check if file exists and is within expected directory
+	expectedBase := filepath.Join(shaComparer.TempDir, sha, "generated")
+	if !strings.HasPrefix(filePath, expectedBase) {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return
+	}
+
+	file, err := os.Open(filePath)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+	defer file.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	io.Copy(w, file)
 }
