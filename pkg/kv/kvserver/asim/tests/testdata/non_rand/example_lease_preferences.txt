@@ -30,10 +30,4 @@ assertion type=conformance lease-violating=1 lease-less-preferred=1
 
 eval duration=10m cfgs=(mma-only)
 ----
-artifacts[mma-only]: 5e547c16df1eecac
-failed assertion sample 1
-  conformance lease-violating=1 lease-less-preferred=1 
-  actual unavailable=0 under=0, over=0 violating=3 lease-violating=2 lease-less-preferred=0
-violating lease preferences:
-  r1:000000{0000-1000} [(n1,s1):1, (n2,s2):2, (n3,s3):3] applying num_voters=3 constraints=[+region=b:3] lease_preferences=[{[+region=b]}]
-  r3:00000{02000-10000} [(n1,s1):1, (n2,s2):2, (n3,s3):3] applying num_voters=3 constraints=[+region=b:3] lease_preferences=[{[+region=c]}]
+artifacts[mma-only]: aff3a3eeb0838864

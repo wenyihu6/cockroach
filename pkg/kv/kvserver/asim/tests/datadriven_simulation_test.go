@@ -496,8 +496,6 @@ func TestDataDriven(t *testing.T) {
 							})
 					},
 					"mma-only": func(eg *gen.StaticEvents) {
-						settingsGen.Settings.ReplicateQueueEnabled = false
-						settingsGen.Settings.LeaseQueueEnabled = false
 						eg.ScheduleEvent(settingsGen.Settings.StartTime, 0,
 							event.SetSimulationSettingsEvent{
 								IsClusterSetting: true,
