@@ -20,6 +20,12 @@ set_span_config
 assertion type=conformance unavailable=0 under=0 over=0  violating=0
 ----
 
-eval duration=2m samples=1 seed=42
+eval duration=2m samples=1 seed=42 cfgs=(mma-only)
 ----
-artifacts[default]: 33ad9dff027a296a
+artifacts[mma-only]: 3368935954b382da
+failed assertion sample 1
+  conformance unavailable=0 under=0 over=0 violating=0 
+  actual unavailable=0 under=0, over=0 violating=2 lease-violating=0 lease-less-preferred=0
+violating constraints:
+  r1:00000{00000-10000} [(n1,s1):1, (n2,s2):2, (n3,s3):3, (n4,s4):4, (n5,s5):5] applying num_replicas=5 num_voters=5 constraints=[+region=EU:1 +region=US_East:3 +region=US_West:1] voter_constraints=[+region=EU:1 +region=US_East:3 +region=US_West:1]
+  r1:00000{00000-10000} [(n1,s1):1, (n2,s2):2, (n3,s3):3, (n4,s4):4, (n5,s5):5] applying num_replicas=5 num_voters=5 constraints=[+region=EU:1 +region=US_East:3 +region=US_West:1] voter_constraints=[+region=EU:1 +region=US_East:3 +region=US_West:1]
