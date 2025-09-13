@@ -444,6 +444,7 @@ func TestDataDriven(t *testing.T) {
 				return ""
 			case "eval":
 				samples := 1
+				full := false
 				// We use a fixed seed to ensure determinism in the simulated data.
 				// Multiple samples can be used for more coverage.
 				seed := int64(42)
@@ -459,6 +460,7 @@ func TestDataDriven(t *testing.T) {
 				scanIfExists(t, d, "samples", &samples)
 				scanIfExists(t, d, "seed", &seed)
 				scanIfExists(t, d, "cfgs", &cfgs)
+				scanIfExists(t, d, "full", &full)
 				scanIfExists(t, d, "metrics", &metrics)
 
 				t.Logf("running eval for %s", name)
@@ -514,6 +516,11 @@ func TestDataDriven(t *testing.T) {
 					},
 				}
 				var buf strings.Builder
+				// stateStrForOnce stores the string representation of the cluster and
+				// workload setup used in this test setup. The event will only include
+				// the first LBRebalancingMode configuration since this string is only
+				// generated for once at the start.
+				var stateStrForOnce string
 				for _, mv := range cfgs {
 					t.Run(mv, func(t *testing.T) {
 						ctx := logtags.AddTag(context.Background(), "name", name+"/"+mv)
@@ -533,11 +540,18 @@ func TestDataDriven(t *testing.T) {
 
 						for sample := 0; sample < samples; sample++ {
 							assertionFailures := []string{}
+							var tmpStrB *strings.Builder = nil
+							if stateStrForOnce == "" {
+								tmpStrB = &strings.Builder{}
+							}
 							simulator := gen.GenerateSimulation(
 								duration, clusterGen, rangeGen, loadGen,
-								settingsGen, eventGen, seedGen.Int63(),
+								settingsGen, eventGen, seedGen.Int63(), tmpStrB,
 							)
 							run.stateStrAcrossSamples = append(run.stateStrAcrossSamples, simulator.State().String())
+							if stateStrForOnce == "" {
+								stateStrForOnce = tmpStrB.String()
+							}
 							simulator.RunSim(ctx)
 							h := simulator.History()
 							run.hs = append(run.hs, h)
@@ -581,6 +595,7 @@ func TestDataDriven(t *testing.T) {
 						_, _ = fmt.Fprintf(&buf, "==========================\n")
 					})
 				}
+				writeStateStrToFile(t, filepath.Join(plotDir, fmt.Sprintf("%s_setup.txt", name)), stateStrForOnce, rewrite)
 				return buf.String()
 			case "assertion":
 				var stat string
@@ -698,5 +713,12 @@ func generateTopology(
 	_, _ = fmt.Fprint(hasher, s)
 	if rewrite {
 		require.NoError(t, os.WriteFile(topFile, []byte(s), 0644))
+	}
+}
+
+// writeStateStrToFile writes the state string to the given file.
+func writeStateStrToFile(t *testing.T, topFile string, stateStr string, rewrite bool) {
+	if rewrite {
+		require.NoError(t, os.WriteFile(topFile, []byte(stateStr), 0644))
 	}
 }
