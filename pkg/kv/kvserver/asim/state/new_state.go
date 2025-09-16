@@ -272,14 +272,22 @@ func ClusterInfoWithDistribution(
 	return ret
 }
 
+var defaultRegion, defaultZone = "AU_EAST", defaultRegion + "_1"
+var DefaultLocalityForNewNode = roachpb.Locality{
+	Tiers: []roachpb.Tier{
+		{Key: "region", Value: defaultRegion},
+		{Key: "zone", Value: defaultZone},
+	},
+}
+
 // ClusterInfoWithStoreCount returns a new ClusterInfo with the specified number of
 // stores. There will be storesPerNode stores per node and a single region and zone.
 func ClusterInfoWithStoreCount(nodeCount int, storesPerNode int) ClusterInfo {
 	return ClusterInfoWithDistribution(
 		nodeCount,
 		storesPerNode,
-		[]string{"AU_EAST"}, /* regions */
-		[]float64{1},        /* regionNodeWeights */
+		[]string{defaultRegion}, /* regions */
+		[]float64{1},            /* regionNodeWeights */
 	)
 }
 

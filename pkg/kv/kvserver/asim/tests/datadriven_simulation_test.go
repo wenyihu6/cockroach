@@ -349,7 +349,7 @@ func TestDataDriven(t *testing.T) {
 			case "add_node":
 				var delay time.Duration
 				var numStores = 1
-				var localityString string
+				localityString := state.DefaultLocalityForNewNode.String()
 				scanIfExists(t, d, "delay", &delay)
 				scanIfExists(t, d, "stores", &numStores)
 				scanIfExists(t, d, "locality", &localityString)
@@ -711,7 +711,7 @@ func generateTopology(
 	// that we can only access the structured topology after the
 	// simulation has run.
 	top := h.S.Topology()
-	s := top.String()
+	s := fmt.Sprintf("%v\n", top.String())
 	_, _ = fmt.Fprint(hasher, s)
 	if rewrite {
 		require.NoError(t, os.WriteFile(topFile, []byte(s), 0644))

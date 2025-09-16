@@ -528,6 +528,9 @@ func (t *Topology) stringHelper(buf *bytes.Buffer, prefix string, isLast bool) {
 
 		sort.Strings(keys)
 		for i, key := range keys {
+			if i != 0 {
+				buf.WriteString("\n")
+			}
 			buf.WriteString(fmt.Sprintf("%s%s\n", prefix, t.formatKey(key)))
 			child := t.children[key]
 			if i == len(keys)-1 {
@@ -540,7 +543,7 @@ func (t *Topology) stringHelper(buf *bytes.Buffer, prefix string, isLast bool) {
 	}
 
 	if len(t.nodes) > 0 {
-		buf.WriteString(fmt.Sprintf("%s└── %v\n", prefix, t.nodes))
+		buf.WriteString(fmt.Sprintf("%s└── %v", prefix, t.nodes))
 	}
 }
 

@@ -714,8 +714,7 @@ func TestTopology(t *testing.T) {
   US_2
     └── [6 7 8 9 10]
   US_3
-    └── [11 12 13 14 15]
-`, singleRegionTopology.String())
+    └── [11 12 13 14 15]`, singleRegionTopology.String())
 
 	multiRegionTopology := LoadClusterInfo(MultiRegionConfig, config.DefaultSimulationSettings()).Topology()
 	require.Equal(t, `EU
@@ -738,8 +737,7 @@ US_West
   US_West_2
     └── [17 18 19 20]
   US_West_3
-    └── [21 22 23 24]
-`, multiRegionTopology.String())
+    └── [21 22 23 24]`, multiRegionTopology.String())
 
 	complexTopology := LoadClusterInfo(ComplexConfig, config.DefaultSimulationSettings()).Topology()
 	require.Equal(t, `EU
@@ -760,8 +758,7 @@ US_East
   │ └── [7 8 9 10 11 12 13 14 15 16]
 US_West
   US_West_1
-    └── [17 18]
-`, complexTopology.String())
+    └── [17 18]`, complexTopology.String())
 
 }
 

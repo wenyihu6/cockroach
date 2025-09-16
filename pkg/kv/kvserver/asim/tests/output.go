@@ -160,7 +160,7 @@ func (tr testResultsReport) String() string {
 		}
 		if failed || tr.flags.Has(OutputTopology) {
 			topology := output.history.S.Topology()
-			buf.WriteString(fmt.Sprintf("topology:\n%s", topology.String()))
+			buf.WriteString(fmt.Sprintf("topology:\n%s\n", topology.String()))
 		}
 		if failed || tr.flags.Has(OutputEvents) {
 			buf.WriteString(fmt.Sprintf("%v\n", output.eventExecutor.PrintEventsExecuted()))
