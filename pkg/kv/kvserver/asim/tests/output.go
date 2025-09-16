@@ -151,19 +151,19 @@ func (tr testResultsReport) String() string {
 			buf.WriteString(fmt.Sprintf("configurations generated using seed %d\n", output.seed))
 			buf.WriteString(fmt.Sprintf("\t%v\n", output.clusterGen))
 			buf.WriteString(fmt.Sprintf("\t%v\n", output.rangeGen))
-			buf.WriteString(fmt.Sprintf("%v", output.loadGen))
+			buf.WriteString(fmt.Sprintf("\t%v\n", output.loadGen))
 			buf.WriteString(fmt.Sprintf("\t%v\n", output.eventGen))
 		}
 		if failed || tr.flags.Has(OutputInitialState) {
 			buf.WriteString(fmt.Sprintf("initial state at %s:\n", output.initialTime.Format("2006-01-02 15:04:05")))
-			buf.WriteString(fmt.Sprintf("%v\n", output.initialStateStr))
+			buf.WriteString(fmt.Sprintf("\t%v\n", output.initialStateStr))
 		}
 		if failed || tr.flags.Has(OutputTopology) {
 			topology := output.history.S.Topology()
 			buf.WriteString(fmt.Sprintf("topology:\n%s", topology.String()))
 		}
 		if failed || tr.flags.Has(OutputEvents) {
-			buf.WriteString(output.eventExecutor.PrintEventsExecuted())
+			buf.WriteString(fmt.Sprintf("%v\n", output.eventExecutor.PrintEventsExecuted()))
 		}
 		if failed {
 			buf.WriteString(fmt.Sprintf("sample%d: failed assertion\n%s\n", nthSample, output.reason))

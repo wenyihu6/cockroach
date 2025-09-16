@@ -596,7 +596,7 @@ func TestDataDriven(t *testing.T) {
 				}
 				writeStateStrToFile(t, filepath.Join(plotDir, fmt.Sprintf("%s_setup.txt", name)), stateStrForOnce, rewrite)
 				if full {
-					_, _ = fmt.Fprintf(&buf, stateStrForOnce)
+					_, _ = fmt.Fprintf(&buf, "%v\n", stateStrForOnce)
 					_, _ = fmt.Fprintf(&buf, "==========================\n")
 				}
 				return buf.String()

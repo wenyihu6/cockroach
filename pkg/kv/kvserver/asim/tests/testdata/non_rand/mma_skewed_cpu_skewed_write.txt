@@ -67,8 +67,7 @@ Key Space
 Event
 	set LBRebalancingMode to 4
 Workload Set Up
-	[1,10000): read-only high-cpu [500.00cpu-us/op, 1B/op, 1000ops/s]
-	[10001,20000): write-only large-block [0.00cpu-us/write(raft), 1000B/op, 20000ops/s]
+	[1,10000): read-only high-cpu [500.00cpu-us/op, 1B/op, 1000ops/s]	[10001,20000): write-only large-block [0.00cpu-us/write(raft), 1000B/op, 20000ops/s]
 Changed Settings
 	ReplicateQueueEnabled: false (default: true)
 	LeaseQueueEnabled: false (default: true)
