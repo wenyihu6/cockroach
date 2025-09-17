@@ -763,20 +763,19 @@ func (o LoadAwareRangeCountScorerOptions) rebalanceFromConvergesScore(
 	eqClass equivalenceClass,
 ) int {
 	// If this store does not need to be rebalanced, giving a boost.
-	rangeCountScore := 0
 	if !rebalanceConvergesRangeCountOnMean(
 		eqClass.candidateSL, eqClass.existing.Capacity, eqClass.existing.Capacity.RangeCount-1,
 	) {
-		rangeCountScore = 1
+		return 1
 	}
 	if !o.AllocatorSync.HasOverloadedDim() {
-		rangeCountScore += 1
+		return 1
 	}
 	// this can need a help to shed more ranges away, when this is being compared
 	// with another pair. mma can decide whether we should give it another boost
 	// to make this target less likely (if this store is underloaded, mma wants to
 	// make this less likely compared to another 1).
-	return rangeCountScore
+	return 0
 }
 
 // TODO: is it okay for balanceScore and rebalanceFromConvergesScore to stay
@@ -788,14 +787,13 @@ func (o LoadAwareRangeCountScorerOptions) rebalanceFromConvergesScore(
 func (o LoadAwareRangeCountScorerOptions) rebalanceToConvergesScore(
 	eqClass equivalenceClass, candidate roachpb.StoreDescriptor,
 ) int {
-	rangeCountScore := 0
-	if rebalanceConvergesRangeCountOnMean(eqClass.candidateSL, candidate.Capacity, candidate.Capacity.RangeCount+1) {
-		rangeCountScore = 1
+	if !rebalanceConvergesRangeCountOnMean(eqClass.candidateSL, candidate.Capacity, candidate.Capacity.RangeCount+1) {
+		return 0
 	}
 	if !o.AllocatorSync.HasOverloadedDim() {
-		rangeCountScore += 1
+		return 2
 	}
-	return rangeCountScore
+	return 1
 }
 
 // DiskCapacityOptions is the scorer options for disk fullness. It is used to
