@@ -38,13 +38,13 @@ setting split_queue_enabled=false
 
 eval duration=60m samples=1 seed=42 cfgs=(mma-only,mma-and-count) metrics=(cpu,write_bytes_per_second,replicas,leases)
 ----
-cpu#1: last:  [s1=83373599, s2=82955301, s3=83154536, s4=83182126, s5=83144874, s6=84444013] (stddev=492899.15, mean=83375741.50, sum=500254449)
+cpu#1: last:  [s1=84404667, s2=83342482, s3=83284638, s4=83223773, s5=83120410, s6=82928924] (stddev=475325.17, mean=83384149.00, sum=500304894)
 leases#1: first: [s1=36, s2=0, s3=0, s4=36, s5=0, s6=0] (stddev=16.97, mean=12.00, sum=72)
-leases#1: last:  [s1=6, s2=14, s3=15, s4=25, s5=6, s6=6] (stddev=6.95, mean=12.00, sum=72)
+leases#1: last:  [s1=10, s2=11, s3=13, s4=16, s5=12, s6=10] (stddev=2.08, mean=12.00, sum=72)
 replicas#1: first: [s1=36, s2=36, s3=36, s4=36, s5=36, s6=36] (stddev=0.00, mean=36.00, sum=216)
-replicas#1: last:  [s1=35, s2=54, s3=53, s4=25, s5=25, s6=24] (stddev=12.91, mean=36.00, sum=216)
-write_bytes_per_second#1: last:  [s1=7810763, s2=10583352, s3=10582678, s4=10533730, s5=10534887, s6=9975971] (stddev=1003663.69, mean=10003563.50, sum=60021381)
-artifacts[mma-only]: 7429169245b4ae6f
+replicas#1: last:  [s1=35, s2=36, s3=36, s4=36, s5=36, s6=37] (stddev=0.58, mean=36.00, sum=216)
+write_bytes_per_second#1: last:  [s1=8920924, s2=10032104, s3=10032073, s4=10530618, s5=10529804, s6=9972666] (stddev=536874.30, mean=10003031.50, sum=60018189)
+artifacts[mma-only]: 69d5ea73505d556b
 cpu#1: last:  [s1=83248327, s2=83210584, s3=83163956, s4=84314390, s5=83287653, s6=83089142] (stddev=420065.93, mean=83385675.33, sum=500314052)
 leases#1: first: [s1=36, s2=0, s3=0, s4=36, s5=0, s6=0] (stddev=16.97, mean=12.00, sum=72)
 leases#1: last:  [s1=15, s2=10, s3=15, s4=12, s5=10, s6=10] (stddev=2.24, mean=12.00, sum=72)
