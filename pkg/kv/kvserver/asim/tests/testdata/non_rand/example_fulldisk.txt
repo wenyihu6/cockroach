@@ -31,10 +31,10 @@ replicas#1: thrash_pct: [s1=262%, s2=221%, s3=253%, s4=256%, s5=72%]  (sum=1063%
 artifacts[sma-count]: f36a73f72b67ff15
 ==========================
 disk_fraction_used#1: first: [s1=0.20, s2=0.20, s3=0.20, s4=0.20, s5=1.05] (stddev=0.34, mean=0.37, sum=2)
-disk_fraction_used#1: last:  [s1=0.30, s2=0.31, s3=0.30, s4=0.30, s5=0.90] (stddev=0.24, mean=0.42, sum=2)
-disk_fraction_used#1: thrash_pct: [s1=37%, s2=32%, s3=39%, s4=35%, s5=168%]  (sum=312%)
+disk_fraction_used#1: last:  [s1=0.30, s2=0.30, s3=0.30, s4=0.30, s5=0.93] (stddev=0.25, mean=0.43, sum=2)
+disk_fraction_used#1: thrash_pct: [s1=37%, s2=34%, s3=40%, s4=37%, s5=146%]  (sum=293%)
 replicas#1: first: [s1=300, s2=300, s3=300, s4=300, s5=300] (stddev=0.00, mean=300.00, sum=1500)
-replicas#1: last:  [s1=327, s2=329, s3=325, s4=328, s5=191] (stddev=54.52, mean=300.00, sum=1500)
-replicas#1: thrash_pct: [s1=278%, s2=231%, s3=295%, s4=258%, s5=163%]  (sum=1225%)
-artifacts[mma-only]: f8bfb4ea620f1874
+replicas#1: last:  [s1=325, s2=326, s3=324, s4=328, s5=197] (stddev=51.52, mean=300.00, sum=1500)
+replicas#1: thrash_pct: [s1=292%, s2=259%, s3=310%, s4=282%, s5=140%]  (sum=1284%)
+artifacts[mma-only]: 1567b5f7fb75ee99
 ==========================

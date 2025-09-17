@@ -39,15 +39,15 @@ replicas#1: last:  [s1=69, s2=67, s3=64, s4=100, s5=100, s6=100, s7=0, s8=0, s9=
 replicas#1: thrash_pct: [s1=8%, s2=6%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=14%)
 artifacts[sma-count]: cb26954cf324c27d
 ==========================
-cpu#1: last:  [s1=63388396, s2=17343869, s3=20321254, s4=500061, s5=500061, s6=500061, s7=0, s8=0, s9=0] (stddev=19899797.44, mean=11394855.78, sum=102553702)
-cpu#1: thrash_pct: [s1=13%, s2=14%, s3=26%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=54%)
+cpu#1: last:  [s1=61375470, s2=17352594, s3=22319328, s4=500160, s5=500160, s6=500160, s7=0, s8=0, s9=0] (stddev=19432252.50, mean=11394208.00, sum=102547872)
+cpu#1: thrash_pct: [s1=13%, s2=14%, s3=25%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=53%)
 cpu_util#1: last:  [s1=0.01, s2=0.00, s3=0.00, s4=0.00, s5=0.00, s6=0.00, s7=0.00, s8=0.00, s9=0.00] (stddev=0.00, mean=0.00, sum=0)
-cpu_util#1: thrash_pct: [s1=13%, s2=14%, s3=26%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=54%)
+cpu_util#1: thrash_pct: [s1=13%, s2=14%, s3=25%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=53%)
 leases#1: first: [s1=100, s2=0, s3=0, s4=0, s5=0, s6=0, s7=0, s8=0, s9=0] (stddev=31.43, mean=11.11, sum=100)
-leases#1: last:  [s1=63, s2=17, s3=20, s4=0, s5=0, s6=0, s7=0, s8=0, s9=0] (stddev=19.85, mean=11.11, sum=100)
+leases#1: last:  [s1=61, s2=17, s3=22, s4=0, s5=0, s6=0, s7=0, s8=0, s9=0] (stddev=19.39, mean=11.11, sum=100)
 leases#1: thrash_pct: [s1=0%, s2=0%, s3=16%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=16%)
 replicas#1: first: [s1=100, s2=100, s3=0, s4=100, s5=100, s6=100, s7=0, s8=0, s9=0] (stddev=49.69, mean=55.56, sum=500)
 replicas#1: last:  [s1=69, s2=69, s3=62, s4=100, s5=100, s6=100, s7=0, s8=0, s9=0] (stddev=41.62, mean=55.56, sum=500)
-replicas#1: thrash_pct: [s1=3%, s2=0%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=3%)
-artifacts[mma-only]: 4b1641f08901035f
+replicas#1: thrash_pct: [s1=6%, s2=3%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%, s8=0%, s9=0%]  (sum=9%)
+artifacts[mma-only]: 225fe4cb653be0d9
 ==========================

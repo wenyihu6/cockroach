@@ -868,6 +868,25 @@ func (a *allocatorState) AdjustPendingChangesDisposition(changeIDs []ChangeID, s
 	}
 }
 
+func (a *allocatorState) IsInConflictWithMMA(
+	existing roachpb.StoreID, cand roachpb.StoreID, cands []roachpb.StoreID, cpuOnly bool,
+) bool {
+	var means meansForStoreSet
+	scratchNodes := map[roachpb.NodeID]*NodeLoad{}
+	storeIDs := makeStoreIDPostingList(cands)
+	storeIDs.insert(existing)
+	means.stores = storeIDs
+	computeMeansForStoreSet(a.cs, &means, scratchNodes)
+	candSLS := a.cs.computeLoadSummary(context.Background(), cand, &means.storeLoad, &means.nodeLoad)
+	existingSLS := a.cs.computeLoadSummary(context.Background(), existing, &means.storeLoad, &means.nodeLoad)
+	log.Dev.Infof(context.Background(), "checking if s%d is overloaded with respect to %v: %v (res=%t)",
+		cand, cands, candSLS.sls, candSLS.sls >= overloadSlow)
+	if cpuOnly {
+		return candSLS.dimSummary[CPURate] > existingSLS.dimSummary[CPURate]
+	}
+	return candSLS.sls > existingSLS.sls
+}
+
 // RegisterExternalChanges implements the Allocator interface. All changes should
 // correspond to the same range, panic otherwise.
 func (a *allocatorState) RegisterExternalChanges(changes []ReplicaChange) []ChangeID {
