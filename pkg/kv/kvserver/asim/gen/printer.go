@@ -89,7 +89,7 @@ func generateClusterVisualization(
 	}
 	clusterSetUp := emptyIfBlank(s.NodesStringWithTag("\t"))
 	rangeState := emptyIfBlank(rangeStateStr)
-	event := emptyIfBlank(eventGen.String())
+	event := emptyIfBlank(eventGen.StringWithTag("\t"))
 	workloadSetUp := emptyIfBlank(loadGen.StringWithTag("\t"))
 	settingsChanges := emptyIfBlank(compareSettingsToDefault(settings))
 	_, _ = fmt.Fprintf(buf, "Cluster Set Up\n%s\n", clusterSetUp)

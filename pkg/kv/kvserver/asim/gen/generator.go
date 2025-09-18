@@ -357,6 +357,11 @@ type BaseRanges struct {
 	ReplicaPlacement  state.ReplicaPlacement
 }
 
+func (br BaseRanges) String() string {
+	return fmt.Sprintf("[%d,%d): %d(rf=%d), %dMiB",
+		br.MinKey, br.MaxKey, br.Ranges, br.ReplicationFactor, br.Bytes>>20)
+}
+
 // GetRangesInfo generates and distributes ranges across stores based on
 // PlacementType while using other BaseRanges fields for range configuration.
 func (b BaseRanges) GetRangesInfo(
