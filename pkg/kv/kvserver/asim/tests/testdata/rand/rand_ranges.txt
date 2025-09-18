@@ -42,8 +42,8 @@ configurations generated using seed 1926012586526624009
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {305 0 1015 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample1: pass
 ----------------------------------
 sample2: start running
@@ -51,8 +51,8 @@ configurations generated using seed 2643318057788968173
 	cluster: region:US [zone=US_1(nodes=5,stores=1), zone=US_2(nodes=5,stores=1), zone=US_3(nodes=5,stores=1)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {944 0 1357 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample2: pass
 ----------------------------------
 sample3: start running
@@ -60,8 +60,8 @@ configurations generated using seed 6972490225919430754
 	cluster: region:US [zone=US_1(nodes=5,stores=1), zone=US_2(nodes=5,stores=1), zone=US_3(nodes=5,stores=1)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {479 0 1003 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample3: pass
 ----------------------------------
 sample4: start running
@@ -69,8 +69,8 @@ configurations generated using seed 8427801741804500990
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {487 0 2171 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample4: pass
 ----------------------------------
 sample5: start running
@@ -78,8 +78,8 @@ configurations generated using seed 8063729658764635782
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {285 0 1060 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample5: pass
 ----------------------------------
 sample6: start running
@@ -87,8 +87,8 @@ configurations generated using seed 3814222400681984302
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {611 0 1000 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample6: pass
 ----------------------------------
 sample7: start running
@@ -96,8 +96,8 @@ configurations generated using seed 13013938835543503
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {271 0 1439 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample7: pass
 ----------------------------------
 sample8: start running
@@ -105,8 +105,8 @@ configurations generated using seed 2207144605302255518
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {502 0 1198 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample8: pass
 ----------------------------------
 sample9: start running
@@ -114,8 +114,8 @@ configurations generated using seed 5888461606762344739
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {865 0 1427 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample9: pass
 ----------------------------------
 sample10: start running
@@ -123,8 +123,8 @@ configurations generated using seed 6738330972202035110
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {787 0 1001 3 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample10: pass
 ----------------------------------
 
@@ -158,8 +158,8 @@ configurations generated using seed 1926012586526624009
 	cluster: region:US [zone=US_1(nodes=1,stores=5), zone=US_2(nodes=1,stores=5), zone=US_3(nodes=1,stores=5)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {305 0 96760 1 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample1: pass
 ----------------------------------
 sample2: start running
@@ -167,8 +167,8 @@ configurations generated using seed 2643318057788968173
 	cluster: region:US [zone=US_1(nodes=5,stores=1), zone=US_2(nodes=5,stores=1), zone=US_3(nodes=5,stores=1)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {944 0 150098 1 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample2: pass
 ----------------------------------
 sample3: start running
@@ -176,7 +176,7 @@ configurations generated using seed 6972490225919430754
 	cluster: region:US [zone=US_1(nodes=5,stores=1), zone=US_2(nodes=5,stores=1), zone=US_3(nodes=5,stores=1)]
 store_disk_capacity=1099511627776 bytes, node_cpu_rate_capacity=0 cpu-ns/sec
 	randomized ranges with placement_type=random, {479 0 199954 1 0 }
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample3: pass
 ----------------------------------

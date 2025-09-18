@@ -110,7 +110,7 @@ func (e *eventExecutor) PrintEventsExecuted() string {
 		buf := strings.Builder{}
 		buf.WriteString(fmt.Sprintf("%d events executed:\n", len(e.scheduledEvents)))
 		for i, event := range e.scheduledEvents {
-			_, _ = fmt.Fprintf(&buf, "%v", event.String())
+			_, _ = fmt.Fprintf(&buf, "%v", event.StringWithTag("\t"))
 			if i != len(e.scheduledEvents)-1 {
 				_, _ = fmt.Fprintf(&buf, "\n")
 			}

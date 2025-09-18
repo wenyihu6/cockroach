@@ -75,24 +75,24 @@ sample1: start running
 configurations generated using seed 3440579354231278675
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample1: pass
 ----------------------------------
 sample2: start running
 configurations generated using seed 608747136543856411
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample2: pass
 ----------------------------------
 sample3: start running
 configurations generated using seed 5571782338101878760
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 sample3: pass
 ----------------------------------
 
@@ -106,17 +106,17 @@ eval verbose=(initial_state)
 ----------------------------------
 sample1: start running
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 sample1: pass
 ----------------------------------
 sample2: start running
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 sample2: pass
 ----------------------------------
 sample3: start running
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 sample3: pass
 ----------------------------------
 
@@ -173,30 +173,30 @@ sample1: start running
 configurations generated using seed 3440579354231278675
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 sample1: pass
 ----------------------------------
 sample2: start running
 configurations generated using seed 608747136543856411
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 sample2: pass
 ----------------------------------
 sample3: start running
 configurations generated using seed 5571782338101878760
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 sample3: pass
 ----------------------------------
 
@@ -223,10 +223,10 @@ sample1: start running
 configurations generated using seed 3440579354231278675
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 topology:
 AU_EAST
   AU_EAST_1
@@ -238,10 +238,10 @@ sample2: start running
 configurations generated using seed 608747136543856411
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 topology:
 AU_EAST
   AU_EAST_1
@@ -253,10 +253,10 @@ sample3: start running
 configurations generated using seed 5571782338101878760
 	[nodes: 3, stores_per_node:1, store_disk_capacity: 256GiB, node_capacity: 0cpu-sec/sec]
 	[0,200000): 10(rf=3), 0MiB
-	[0,200000): write-only [1B/op, 0ops/s]
-	empty
+[0,200000): write-only [1B/op, 0ops/s]
+	scheduled_event: empty
 initial state at 2022-03-21 11:00:00:
-	stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
+stores(3)=[s1n1=(replicas(10)),s2n2=(replicas(10)),s3n3=(replicas(10))]
 topology:
 AU_EAST
   AU_EAST_1
