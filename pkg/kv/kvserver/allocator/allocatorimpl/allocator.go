@@ -2218,16 +2218,14 @@ func (a *Allocator) nonIOOverloadedLeaseTargets(
 	leaseStoreID roachpb.StoreID,
 	ioOverloadOptions IOOverloadOptions,
 ) (candidates []roachpb.ReplicaDescriptor) {
-	// We return early to avoid unnecessary work when IO overload is set to be
-	// ignored anyway.
-	if ioOverloadOptions.LeaseEnforcementLevel == IOOverloadThresholdIgnore {
-		return existingReplicas
-	}
-
 	sl, _, _ := storePool.GetStoreListFromIDs(replDescsToStoreIDs(existingReplicas), storepool.StoreFilterSuspect)
 
-	for _, replDesc := range existingReplicas {
-		store, ok := sl.FindStoreByID(replDesc.StoreID)
+	excludedDueToIOOverload := func(candStoreID roachpb.StoreID) bool {
+		// TODO(wenyihu6): should we exclude the candidate if it is suspect
+		// regardless?
+		if ioOverloadOptions.LeaseEnforcementLevel == IOOverloadThresholdIgnore {
+			return false
+		}
 		// If the replica is the current leaseholder, don't include it as a
 		// candidate and if it is filtered out of the store list due to being
 		// suspect; or the leaseholder store doesn't pass the leaseholder IO
@@ -2238,19 +2236,25 @@ func (a *Allocator) nonIOOverloadedLeaseTargets(
 		// same point a candidate becomes ineligible as it could lead to thrashing.
 		// Instead, we create a buffer between the two to avoid leases moving back
 		// and forth.
-		if (replDesc.StoreID == leaseStoreID) &&
+		store, ok := sl.FindStoreByID(candStoreID)
+		if (candStoreID == leaseStoreID) &&
 			(!ok || !ioOverloadOptions.ExistingLeaseCheck(ctx, store, sl)) {
-			continue
+			return true
 		}
-
 		// If the replica is not the leaseholder, don't include it as a candidate
 		// if it is filtered out similar to above, or the replica store doesn't
 		// pass the lease transfer IO overload check.
-		if replDesc.StoreID != leaseStoreID &&
+		if candStoreID != leaseStoreID &&
 			(!ok || !ioOverloadOptions.transferLeaseToCheck(ctx, store, sl)) {
+			return true
+		}
+		return false
+	}
+
+	for _, replDesc := range existingReplicas {
+		if excludedDueToIOOverload(replDesc.StoreID) {
 			continue
 		}
-
 		candidates = append(candidates, replDesc)
 	}
 
