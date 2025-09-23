@@ -6,12 +6,15 @@
 package mmaintegration
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvserverbase"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 )
 
@@ -128,12 +131,14 @@ func (as *AllocatorSync) getTrackedChange(syncChangeID SyncChangeID) trackedAllo
 // identifier that can be used to call PostApply to apply the change to the
 // store pool upon success.
 func (as *AllocatorSync) NonMMAPreTransferLease(
+	ctx context.Context,
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	transferFrom, transferTo roachpb.ReplicationTarget,
 ) SyncChangeID {
 	var changeIDs []mmaprototype.ChangeID
 	if kvserverbase.LoadBasedRebalancingModeIsMMA(&as.st.SV) {
+		log.VEventf(ctx, 5, "NonMMAPreTransferLease: transferFrom=s%s, transferTo=s%s", transferFrom.StoreID, transferTo.StoreID)
 		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertLeaseTransferToMMA(desc, usage, transferFrom, transferTo))
 	}
 	trackedChange := trackedAllocatorChange{
@@ -152,6 +157,7 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 // identifier that can be used to call PostApply to apply the change to the
 // store pool upon success.
 func (as *AllocatorSync) NonMMAPreChangeReplicas(
+	ctx context.Context,
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	changes kvpb.ReplicationChanges,
@@ -159,6 +165,9 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 ) SyncChangeID {
 	var changeIDs []mmaprototype.ChangeID
 	if kvserverbase.LoadBasedRebalancingModeIsMMA(&as.st.SV) {
+		for _, chg := range changes {
+			log.VEventf(ctx, 5, "NonMMAPreChangeReplicas: change=%s, target=s%s", chg.ChangeType, chg.Target.StoreID)
+		}
 		changeIDs = as.mmaAllocator.RegisterExternalChanges(convertReplicaChangeToMMA(desc, usage, changes, leaseholderStoreID))
 	}
 	trackedChange := trackedAllocatorChange{
@@ -176,8 +185,9 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 // caller. It is an identifier that can be used to call PostApply to apply the
 // change to the store pool upon success.
 func (as *AllocatorSync) MMAPreApply(
-	usage allocator.RangeUsageInfo, pendingChange mmaprototype.PendingRangeChange,
+	ctx context.Context, usage allocator.RangeUsageInfo, pendingChange mmaprototype.PendingRangeChange,
 ) SyncChangeID {
+	log.VEventf(context.Background(), 5, "MMAPreApply: changeIDs=%v", pendingChange.ChangeIDs())
 	trackedChange := trackedAllocatorChange{
 		changeIDs: pendingChange.ChangeIDs(),
 		usage:     usage,

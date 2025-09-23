@@ -1129,6 +1129,7 @@ func (rq *replicateQueue) TransferLease(
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
 	changeID := rq.as.NonMMAPreTransferLease(
+		ctx,
 		rlm.Desc(),
 		rangeUsageInfo,
 		source,
@@ -1173,6 +1174,7 @@ func (rq *replicateQueue) changeReplicas(
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
 	changeID := rq.as.NonMMAPreChangeReplicas(
+		ctx,
 		desc,
 		rangeUsageInfo,
 		chgs,
