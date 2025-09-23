@@ -46,7 +46,7 @@ type mmaState interface {
 	// AdjustPendingChangesDisposition is called by the allocator sync to adjust
 	// the disposition of pending changes.
 	AdjustPendingChangesDisposition(changeIDs []mmaprototype.ChangeID, success bool)
-	IsInConflictWithMMA(existing roachpb.StoreID, cand roachpb.StoreID, cands []roachpb.StoreID, cpuOnly bool) bool
+	IsInConflictWithMMA(rangeUsageInfo allocator.RangeUsageInfo, existing roachpb.StoreID, cand roachpb.StoreID, cands []roachpb.StoreID, cpuOnly bool) bool
 }
 
 // TODO(wenyihu6): make sure allocator sync can tolerate cluster setting
@@ -232,7 +232,11 @@ func (as *AllocatorSync) PostApply(syncChangeID SyncChangeID, success bool) {
 }
 
 func (as *AllocatorSync) IsInConflictWithMMA(
-	existing roachpb.StoreID, cand roachpb.StoreID, cands storepool.StoreList, cpuOnly bool,
+	rangeUsageInfo allocator.RangeUsageInfo,
+	existing roachpb.StoreID,
+	cand roachpb.StoreID,
+	cands storepool.StoreList,
+	cpuOnly bool,
 ) bool {
 	if kvserverbase.LoadBasedRebalancingMode.Get(&as.st.SV) != kvserverbase.LBRebalancingMultiMetricAndCount {
 		return false
@@ -241,5 +245,5 @@ func (as *AllocatorSync) IsInConflictWithMMA(
 	for _, s := range cands.Stores {
 		storeIDs = append(storeIDs, s.StoreID)
 	}
-	return as.mmaAllocator.IsInConflictWithMMA(existing, cand, storeIDs, cpuOnly)
+	return as.mmaAllocator.IsInConflictWithMMA(rangeUsageInfo, existing, cand, storeIDs, cpuOnly)
 }

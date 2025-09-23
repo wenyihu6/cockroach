@@ -1852,6 +1852,7 @@ func (a Allocator) RebalanceTarget(
 	replicaSetForDiversityCalc := getReplicasForDiversityCalc(targetType, existingVoters, existingReplicas)
 	results := rankedCandidateListForRebalancing(
 		ctx,
+		rangeUsageInfo,
 		sl,
 		removalConstraintsChecker,
 		rebalanceConstraintsChecker,
@@ -2116,6 +2117,7 @@ func (a *Allocator) ScorerOptionsForScatter(ctx context.Context) *ScatterScorerO
 // - It excludes replicas that are cpu-overloaded.
 func (a *Allocator) ValidLeaseTargets(
 	ctx context.Context,
+	rangeUsageInfo allocator.RangeUsageInfo,
 	storePool storepool.AllocatorStorePool,
 	desc *roachpb.RangeDescriptor,
 	conf *roachpb.SpanConfig,
@@ -2203,6 +2205,7 @@ func (a *Allocator) ValidLeaseTargets(
 	// or overloaded from mma's perspective.
 	nonOverloadedPreferred := a.nonOverloadedLeaseTargets(
 		ctx,
+		rangeUsageInfo,
 		storePool,
 		candidates,
 		leaseRepl.StoreID(),
@@ -2218,6 +2221,7 @@ func (a *Allocator) ValidLeaseTargets(
 // existing replica stores.
 func (a *Allocator) nonOverloadedLeaseTargets(
 	ctx context.Context,
+	rangeUsageInfo allocator.RangeUsageInfo,
 	storePool storepool.AllocatorStorePool,
 	existingReplicas []roachpb.ReplicaDescriptor,
 	leaseStoreID roachpb.StoreID,
@@ -2225,8 +2229,8 @@ func (a *Allocator) nonOverloadedLeaseTargets(
 ) (candidates []roachpb.ReplicaDescriptor) {
 	sl, _, _ := storePool.GetStoreListFromIDs(replDescsToStoreIDs(existingReplicas), storepool.StoreFilterSuspect)
 
-	excludedDueToOverload := func(candStoreID roachpb.StoreID) bool {
-		if a.as.IsInConflictWithMMA(leaseStoreID, candStoreID, sl, true) {
+	excludedDueToOverload := func(rangeInfo allocator.RangeUsageInfo, candStoreID roachpb.StoreID) bool {
+		if a.as.IsInConflictWithMMA(rangeInfo, leaseStoreID, candStoreID, sl, true) {
 			return true
 		}
 		// Should we exclude the candidate if it is suspect regardless?
@@ -2259,7 +2263,7 @@ func (a *Allocator) nonOverloadedLeaseTargets(
 	}
 
 	for _, replDesc := range existingReplicas {
-		if excludedDueToOverload(replDesc.StoreID) {
+		if excludedDueToOverload(rangeUsageInfo, replDesc.StoreID) {
 			continue
 		}
 		candidates = append(candidates, replDesc)
@@ -2429,7 +2433,7 @@ func (a *Allocator) TransferLeaseTarget(
 		return roachpb.ReplicaDescriptor{}
 	}
 
-	validTargets := a.ValidLeaseTargets(ctx, storePool, desc, conf, existing, leaseRepl, opts)
+	validTargets := a.ValidLeaseTargets(ctx, usageInfo, storePool, desc, conf, existing, leaseRepl, opts)
 
 	// Short-circuit if there are no valid targets out there.
 	if len(validTargets) == 0 || (len(validTargets) == 1 && validTargets[0].StoreID == leaseRepl.StoreID()) {
@@ -2795,6 +2799,7 @@ func (a *Allocator) ShouldTransferLease(
 
 	existing = a.ValidLeaseTargets(
 		ctx,
+		usageInfo,
 		storePool,
 		desc,
 		conf,

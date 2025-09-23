@@ -13,6 +13,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/load"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/constraint"
@@ -328,7 +329,7 @@ type ScorerOptions interface {
 	getIOOverloadOptions() IOOverloadOptions
 	// getDiskOptions returns the scorer options for disk fullness.
 	getDiskOptions() DiskCapacityOptions
-	isInConflictWithMMA(existing roachpb.StoreID, candidate roachpb.StoreID, candidateSL storepool.StoreList) bool
+	isInConflictWithMMA(rangeInfo allocator.RangeUsageInfo, existing roachpb.StoreID, candidate roachpb.StoreID, candidateSL storepool.StoreList) bool
 }
 
 func jittered(val float64, jitter float64, rand allocatorRand) float64 {
@@ -388,7 +389,7 @@ func (bo BaseScorerOptions) deterministicForTesting() bool {
 }
 
 func (bo BaseScorerOptions) isInConflictWithMMA(
-	_ roachpb.StoreID, _ roachpb.StoreID, _ storepool.StoreList,
+	_ allocator.RangeUsageInfo, _ roachpb.StoreID, _ roachpb.StoreID, _ storepool.StoreList,
 ) bool {
 	return false
 }
@@ -593,9 +594,12 @@ func (a *Allocator) LoadAwareRangeCountScorerOptions() LoadAwareRangeCountScorer
 var _ ScorerOptions = BaseScorerOptionsNoConvergence{}
 
 func (lr LoadAwareRangeCountScorerOptions) isInConflictWithMMA(
-	existing roachpb.StoreID, cand roachpb.StoreID, candidateSL storepool.StoreList,
+	rangeUsageInfo allocator.RangeUsageInfo,
+	existing roachpb.StoreID,
+	cand roachpb.StoreID,
+	candidateSL storepool.StoreList,
 ) bool {
-	return lr.IsInConflictWithMMA(existing, cand, candidateSL, false)
+	return lr.IsInConflictWithMMA(rangeUsageInfo, existing, cand, candidateSL, false)
 }
 
 // LoadScorerOptions is used by the StoreRebalancer to tell the Allocator's
@@ -1594,6 +1598,7 @@ func (o *LoadScorerOptions) getRebalanceTargetToMinimizeDelta(
 // details.
 func rankedCandidateListForRebalancing(
 	ctx context.Context,
+	rangeInfo allocator.RangeUsageInfo,
 	allStores storepool.StoreList,
 	removalConstraintsChecker constraintsCheckFn,
 	rebalanceConstraintsChecker rebalanceConstraintsCheckFn,
@@ -1853,7 +1858,7 @@ func rankedCandidateListForRebalancing(
 			if _, ok := existingStores[cand.store.StoreID]; ok {
 				continue
 			}
-			if options.isInConflictWithMMA(existing.store.StoreID, cand.store.StoreID, comparable.candidateSL) {
+			if options.isInConflictWithMMA(rangeInfo, existing.store.StoreID, cand.store.StoreID, comparable.candidateSL) {
 				continue
 			}
 			// We already computed valid, necessary, fullDisk, and diversityScore
