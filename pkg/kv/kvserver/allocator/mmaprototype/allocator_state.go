@@ -914,8 +914,10 @@ func (a *allocatorState) IsInConflictWithMMA(
 	candSLS := a.cs.computeLoadSummary(context.Background(), cand, &means.storeLoad, &means.nodeLoad)
 	existingSLS := a.cs.computeLoadSummary(context.Background(), existing, &means.storeLoad, &means.nodeLoad)
 	if cpuOnly {
+		log.Infof(context.Background(), "cpuOnly: mma checks if moving load from s%d to cand s%d cands %v is in conflict: existing(%v), cand(%v) blocking: %t", existing, cand, cands, existingSLS.dimSummary[CPURate], candSLS.dimSummary[CPURate], candSLS.dimSummary[CPURate] > existingSLS.dimSummary[CPURate])
 		return candSLS.dimSummary[CPURate] > existingSLS.dimSummary[CPURate]
 	}
+	log.Infof(context.Background(), "mma checks if moving load from s%d to cand s%d cands%v is in conflict: existing(%v), cand(%v) blocking: %t", existing, cand, cands, existingSLS.sls, candSLS.sls, candSLS.sls > existingSLS.sls)
 	return candSLS.sls > existingSLS.sls
 }
 

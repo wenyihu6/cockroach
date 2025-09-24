@@ -1968,6 +1968,7 @@ func (a Allocator) RebalanceTarget(
 		NodeID:  removeReplica.NodeID,
 		StoreID: removeReplica.StoreID,
 	}
+	log.Dev.Infof(ctx, "rebalancing from %d to %d", removeTarget.StoreID, addTarget.StoreID)
 	return addTarget, removeTarget, string(detailsBytes), true
 }
 
