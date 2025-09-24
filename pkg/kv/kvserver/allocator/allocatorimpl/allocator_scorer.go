@@ -531,7 +531,11 @@ func (o RangeCountScorerOptions) shouldRebalanceBasedOnThresholds(
 
 func (o *RangeCountScorerOptions) balanceScore(
 	sl storepool.StoreList, sc roachpb.StoreCapacity,
-) balanceStatus {
+) (res balanceStatus) {
+	defer func() {
+		log.Infof(context.Background(), "balanceScore: rangeCount=%d, mean=%.2f, result=%d", sc.RangeCount, sl.CandidateRanges.Mean, res)
+	}()
+
 	maxRangeCount := overfullRangeThreshold(o, sl.CandidateRanges.Mean)
 	minRangeCount := underfullRangeThreshold(o, sl.CandidateRanges.Mean)
 	curRangeCount := float64(sc.RangeCount)
@@ -549,7 +553,13 @@ func (o *RangeCountScorerOptions) balanceScore(
 // rebalance a replica away from a store or not, we want to give it a "boost"
 // (i.e. make it a less likely candidate for removal) if it doesn't further our
 // goal to converge range count towards the mean.
-func (o *RangeCountScorerOptions) rebalanceFromConvergesScore(eqClass equivalenceClass) int {
+func (o *RangeCountScorerOptions) rebalanceFromConvergesScore(
+	eqClass equivalenceClass,
+) (result int) {
+	defer func() {
+		log.Infof(context.Background(), "rebalanceFromConvergesScore: rangeCount=%d, mean=%.2f, result=%d",
+			eqClass.existing.Capacity.RangeCount, eqClass.candidateSL.CandidateRanges.Mean, result)
+	}()
 	if !rebalanceConvergesRangeCountOnMean(
 		eqClass.candidateSL, eqClass.existing.Capacity, eqClass.existing.Capacity.RangeCount-1,
 	) {
@@ -563,7 +573,11 @@ func (o *RangeCountScorerOptions) rebalanceFromConvergesScore(eqClass equivalenc
 // `eqClass`.
 func (o *RangeCountScorerOptions) rebalanceToConvergesScore(
 	eqClass equivalenceClass, candidate roachpb.StoreDescriptor,
-) int {
+) (result int) {
+	defer func() {
+		log.Infof(context.Background(), "rebalanceToConvergesScore: rangeCount=%d, mean=%.2f, result=%d",
+			candidate.Capacity.RangeCount, eqClass.candidateSL.CandidateRanges.Mean, result)
+	}()
 	if rebalanceConvergesRangeCountOnMean(eqClass.candidateSL, candidate.Capacity, candidate.Capacity.RangeCount+1) {
 		return 1
 	}
@@ -1805,6 +1819,17 @@ func rankedCandidateListForRebalancing(
 		// diversity, disk fullness and constraints conformance. These stores are
 		// all in the same equivalence class with regards to the range in question.
 		bestCands := comparableCands.best()
+		stores := make([]roachpb.StoreDescriptor, len(bestCands))
+		for i := range bestCands {
+			stores[i] = bestCands[i].store
+		}
+		tempCands := bestCands
+		for _, cand := range bestCands {
+			if options.isInConflictWithMMA(existing.store.StoreID, cand.store.StoreID, storepool.MakeStoreList(stores)) {
+				tempCands = tempCands.removeCandidate(cand)
+			}
+		}
+		bestCands = tempCands
 
 		bestStores := make([]roachpb.StoreDescriptor, len(bestCands))
 		for i := range bestCands {
@@ -1878,9 +1903,6 @@ func rankedCandidateListForRebalancing(
 			// conflict with MMA's goal early. We should consider following the same
 			// pattern as overloaded by adding a field to candidate and filter out in
 			// the end
-			if options.isInConflictWithMMA(existing.store.StoreID, cand.store.StoreID, comparable.candidateSL) {
-				continue
-			}
 			// We already computed valid, necessary, fullDisk, and diversityScore
 			// above, but recompute fullDisk using special rebalanceTo logic for
 			// rebalance candidates.
@@ -1920,8 +1942,13 @@ func rankedCandidateListForRebalancing(
 			existing:   existing,
 			candidates: improvementCandidates,
 		})
-		log.KvDistribution.VEventf(ctx, 5, "rebalance candidates #%d: %s\nexisting replicas: %s",
+		log.Infof(ctx, "rebalance candidates #%d: %s\nexisting replicas: %s",
 			len(results), results[len(results)-1].candidates, results[len(results)-1].existing)
+	}
+
+	for _, r := range results {
+		log.Infof(ctx, "rebalance option: existing s%d cands %v",
+			r.existing.store.StoreID, r.candidates)
 	}
 
 	return results
