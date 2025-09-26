@@ -2454,6 +2454,8 @@ func (a *Allocator) TransferLeaseTarget(
 	sl, _, _ := storePool.GetStoreList(storepool.StoreFilterSuspect)
 	sl = sl.ExcludeInvalid(conf.Constraints)
 	sl = sl.ExcludeInvalid(conf.VoterConstraints)
+	// mma for its own lease, we are following the pattern with the lease queue
+	// write a comment on why we are doing this and tradeoffs
 	candidateLeasesMean := sl.CandidateLeases.Mean
 
 	source, ok := storePool.GetStoreDescriptor(leaseRepl.StoreID())
@@ -2519,11 +2521,19 @@ func (a *Allocator) TransferLeaseTarget(
 			return validTargets[a.randGen.Intn(len(validTargets))]
 		}
 
+		targetStores := make([]roachpb.StoreID, len(sl.Stores))
+		for _, s := range sl.Stores {
+			targetStores = append(targetStores, s.StoreID)
+		}
+		handle := a.as.GetHandleForIsInConflictWithMMA(source.StoreID, targetStores)
 		var bestOption roachpb.ReplicaDescriptor
 		candidates := make([]roachpb.ReplicaDescriptor, 0, len(validTargets))
 		bestOptionLeaseCount := int32(math.MaxInt32)
 		for _, repl := range validTargets {
 			if leaseRepl.StoreID() == repl.StoreID {
+				continue
+			}
+			if a.as.IsInConflictWithMMA(repl.StoreID, handle, true /*cpuOnly*/) {
 				continue
 			}
 			storeDesc, ok := storePool.GetStoreDescriptor(repl.StoreID)

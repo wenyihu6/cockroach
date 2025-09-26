@@ -476,7 +476,7 @@ func (a *allocatorState) rebalanceStores(
 				var means meansForStoreSet
 				clear(scratchNodes)
 				means.stores = candsPL
-				computeMeansForStoreSet(a.cs, &means, scratchNodes)
+				_ = computeMeansForStoreSet(a.cs, &means, scratchNodes)
 				sls := a.cs.computeLoadSummary(ctx, store.StoreID, &means.storeLoad, &means.nodeLoad)
 				log.KvDistribution.VInfof(ctx, 2, "considering lease-transfer r%v from s%v: candidates are %v", rangeID, store.StoreID, candsPL)
 				if sls.dimSummary[CPURate] < overloadSlow {
@@ -1318,7 +1318,12 @@ func (a *allocatorState) GetHandleForIsInConflictWithMMA(
 	storeIDs := makeStoreIDPostingList(cands)
 	storeIDs.insert(existing)
 	means.stores = storeIDs
-	computeMeansForStoreSet(a.cs, &means, scratchNodes)
+	if len(storeIDs) <= 1 {
+		return NoopMMAHandler()
+	}
+	if !computeMeansForStoreSet(a.cs, &means, scratchNodes) {
+		return NoopMMAHandler()
+	}
 	existingSLS := a.cs.computeLoadSummary(context.Background(), existing, &means.storeLoad, &means.nodeLoad)
 	return MMAHandle{
 		existingStoreSLS: existingSLS,

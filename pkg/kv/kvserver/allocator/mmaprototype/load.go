@@ -339,7 +339,7 @@ func (mm *meansMemo) getMeans(expr constraintsDisj) *meansForStoreSet {
 	}
 	means.constraintsDisj = expr
 	mm.constraintMatcher.constrainStoresForExpr(expr, &means.stores)
-	computeMeansForStoreSet(mm.loadInfoProvider, means, mm.scratchNodes)
+	_ = computeMeansForStoreSet(mm.loadInfoProvider, means, mm.scratchNodes)
 	return means
 }
 
@@ -366,7 +366,7 @@ func (mm *meansMemo) getStoreLoadSummary(
 // the mean.
 func computeMeansForStoreSet(
 	loadProvider loadInfoProvider, means *meansForStoreSet, scratchNodes map[roachpb.NodeID]*NodeLoad,
-) {
+) bool {
 	n := len(means.stores)
 	if n == 0 {
 		panic(fmt.Sprintf("no stores for meansForStoreSet: %v", *means))
@@ -374,6 +374,9 @@ func computeMeansForStoreSet(
 	clear(scratchNodes)
 	for _, storeID := range means.stores {
 		nodeID, sload := loadProvider.getStoreReportedLoad(storeID)
+		if sload == nil {
+			return false
+		}
 		for j := range sload.reportedLoad {
 			means.storeLoad.load[j] += sload.reportedLoad[j]
 			if sload.capacity[j] == UnknownCapacity {
@@ -413,6 +416,7 @@ func computeMeansForStoreSet(
 		float64(means.nodeLoad.loadCPU) / float64(means.nodeLoad.capacityCPU)
 	means.nodeLoad.loadCPU /= LoadValue(n)
 	means.nodeLoad.capacityCPU /= LoadValue(n)
+	return true
 }
 
 // loadSummary aggregates across all load dimensions for a store, or a node.
