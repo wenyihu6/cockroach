@@ -17,6 +17,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/load"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/constraint"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/kvflowcontrol/rac2"
@@ -1867,15 +1868,52 @@ func (a Allocator) RebalanceTarget(
 	if len(results) == 0 {
 		return zero, zero, "", false
 	}
+
+	// A better (more efficient) alternative is to have two calls to MMA:
+	// GetHandleForIsInConflictWithMMA(existing roachpb.StoreID, cands []roachpb.StoreID) (handle struct{})
+	// IsInConflictWithMMA(handle struct{}, cand roachpb.StoreID)
+	//
+	//Where the first one is called once by bestRebalanceTarget the first time it
+	//considers an options[i] and stashed in rebalanceOptions.mmaHandle. It is
+	//then free to mutate the cands. The handle will contain the means etc. that
+	//MMA needs to do later processing. Which means MMA doesn't need to repeatedly
+	//compute means, and bestRebalanceTarget doesn't need to copy the cands set.
+	//
 	// Keep looping until we either run out of options or find a target that we're
 	// pretty sure we won't want to remove immediately after adding it. If we
 	// would, we don't want to actually rebalance to that target.
 	var target, existingCandidate *candidate
 	var removeReplica roachpb.ReplicationTarget
+	handles := make(map[int]mmaprototype.MMAHandle, len(results))
+	var bestIdx int
+	// for each option that bestRebalancerTarget returns, cache the handler in a
+	// slice
 	for {
-		target, existingCandidate = bestRebalanceTarget(a.randGen, results)
+		target, existingCandidate, bestIdx = bestRebalanceTarget(a.randGen, results, a.as, handles)
 		if target == nil {
 			return zero, zero, "", false
+		}
+
+		// Skip MMA conflict checks for critical rebalances, which handle
+		// constraint, disk-fullness, and diversity repairs. This may conflict
+		// with mma’s load-balancing goals and contribute to rebalancing thrash.
+		// An alternative would be to incorporate load-based goals into the
+		// scoring mechanism, but we want to keep changes less intrusive.
+		if !existingCandidate.isCriticalRebalance(target) {
+			// If the rebalance is not critical, we check if it conflicts with mma's
+			// goal. mma handler for the target are registered in bestRebalanceTarget,
+			// so we expect the target to be present.
+			if handle, ok := handles[bestIdx]; ok {
+				if a.as.IsInConflictWithMMA(target.store.StoreID, handle, false) {
+					continue
+				}
+			} else {
+				if buildutil.CrdbTestBuild {
+					log.KvDistribution.Fatalf(ctx, "expected to find MMA handle for idx %d", bestIdx)
+				} else {
+					log.KvDistribution.Errorf(ctx, "expected to find MMA handle for idx %d", bestIdx)
+				}
+			}
 		}
 
 		// Add a fake new replica to our copy of the replica descriptor so that we can
@@ -2754,6 +2792,14 @@ func (t TransferLeaseDecision) String() string {
 // count-based rebalancing, use LBRebalancingMultiMetricAndCount mode instead.
 func (a *Allocator) CountBasedRebalancingDisabled() bool {
 	return kvserverbase.LoadBasedRebalancingMode.Get(&a.st.SV) == kvserverbase.LBRebalancingMultiMetricOnly
+}
+
+// CountBasedRebalancingOnlyEnabledByMMA returns true if count-based rebalancing
+// should be enabled only when mma (multi-metric store rebalancer) allows the
+// change. This is used to prevent thrashing when both multi-metric and
+// count-based rebalancing are enabled and have conflicting goals.
+func (a *Allocator) CountBasedRebalancingOnlyEnabledByMMA() bool {
+	return kvserverbase.LoadBasedRebalancingMode.Get(&a.st.SV) == kvserverbase.LBRebalancingMultiMetricAndCount
 }
 
 // ShouldTransferLease returns true if the specified store is overfull in terms

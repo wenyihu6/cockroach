@@ -45,6 +45,8 @@ type mmaState interface {
 	// AdjustPendingChangesDisposition is called by the allocator sync to adjust
 	// the disposition of pending changes.
 	AdjustPendingChangesDisposition(changeIDs []mmaprototype.ChangeID, success bool)
+	GetHandleForIsInConflictWithMMA(existing roachpb.StoreID, cands []roachpb.StoreID) mmaprototype.MMAHandle
+	IsInConflictWithMMA(cand roachpb.StoreID, handle mmaprototype.MMAHandle, cpuOnly bool) bool
 }
 
 // TODO(wenyihu6): make sure allocator sync can tolerate cluster setting
@@ -145,6 +147,21 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 		},
 	}
 	return as.addTrackedChange(trackedChange)
+}
+
+func (as *AllocatorSync) GetHandleForIsInConflictWithMMA(
+	existing roachpb.StoreID, cands []roachpb.StoreID,
+) mmaprototype.MMAHandle {
+	if kvserverbase.LoadBasedRebalancingMode.Get(&as.st.SV) != kvserverbase.LBRebalancingMultiMetricAndCount {
+		return mmaprototype.NoopMMAHandler()
+	}
+	return as.mmaAllocator.GetHandleForIsInConflictWithMMA(existing, cands)
+}
+
+func (as *AllocatorSync) IsInConflictWithMMA(
+	cand roachpb.StoreID, handle mmaprototype.MMAHandle, cpuOnly bool,
+) bool {
+	return as.mmaAllocator.IsInConflictWithMMA(cand, handle, cpuOnly)
 }
 
 // NonMMAPreChangeReplicas is called by the replicate queue to register a

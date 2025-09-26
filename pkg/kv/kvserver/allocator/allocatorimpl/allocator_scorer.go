@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/load"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/constraint"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mmaintegration"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/util/admission/admissionpb"
@@ -833,6 +835,30 @@ func (c candidate) compactString() string {
 // less returns true if o is a better fit for some range than c is.
 func (c candidate) less(o candidate) bool {
 	return c.compare(o) < 0
+}
+
+// isCriticalRebalance returns true if the rebalance from source to target is
+// considered as a critical rebalance to repair constraints, disk fullness, or
+// diversity.
+func (source candidate) isCriticalRebalance(target *candidate) bool {
+	if !source.valid && target.valid {
+		return true
+	}
+	if source.fullDisk && !target.fullDisk {
+		return true
+	}
+	if !source.necessary && target.necessary {
+		return true
+	}
+	if !source.voterNecessary && target.voterNecessary {
+		return true
+	}
+	if !scoresAlmostEqual(source.diversityScore, target.diversityScore) {
+		if target.diversityScore > source.diversityScore {
+			return true
+		}
+	}
+	return false
 }
 
 // compare is analogous to strcmp in C or string::compare in C++ -- it returns
@@ -1876,9 +1902,12 @@ func rankedCandidateListForRebalancing(
 // Also returns the existing replicas that the chosen candidate was compared to.
 // Returns nil if there are no more targets worth rebalancing to.
 func bestRebalanceTarget(
-	randGen allocatorRand, options []rebalanceOptions,
-) (target, existingCandidate *candidate) {
-	bestIdx := -1
+	randGen allocatorRand,
+	options []rebalanceOptions,
+	as *mmaintegration.AllocatorSync,
+	handles map[int]mmaprototype.MMAHandle,
+) (target, existingCandidate *candidate, bestIdx int) {
+	bestIdx = -1
 	var bestTarget *candidate
 	var replaces candidate
 	for i, option := range options {
@@ -1897,14 +1926,22 @@ func bestRebalanceTarget(
 		}
 	}
 	if bestIdx == -1 {
-		return nil, nil
+		return nil, nil, -1
 	}
 	// Copy the selected target out of the candidates slice before modifying
 	// the slice. Without this, the returned pointer likely will be pointing
 	// to a different candidate than intended due to movement within the slice.
 	copiedTarget := *bestTarget
+	// pass this options to mma to cache it, mma returns a handler
+	if _, ok := handles[bestIdx]; !ok {
+		stores := make([]roachpb.StoreID, 0, len(options[bestIdx].candidates))
+		for _, cand := range options[bestIdx].candidates {
+			stores = append(stores, cand.store.StoreID)
+		}
+		handles[bestIdx] = as.GetHandleForIsInConflictWithMMA(options[bestIdx].existing.store.StoreID, stores)
+	}
 	options[bestIdx].candidates = options[bestIdx].candidates.removeCandidate(copiedTarget)
-	return &copiedTarget, &options[bestIdx].existing
+	return &copiedTarget, &options[bestIdx].existing, bestIdx
 }
 
 // betterRebalanceTarget returns whichever of target1 or target2 is a larger

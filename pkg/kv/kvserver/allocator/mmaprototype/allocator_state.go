@@ -1296,6 +1296,50 @@ func (a *allocatorState) ensureAnalyzedConstraints(rstate *rangeState) bool {
 	return true
 }
 
+type MMAHandle struct {
+	disabled         bool
+	existingStoreSLS storeLoadSummary
+	means            meansForStoreSet
+}
+
+func NoopMMAHandler() MMAHandle {
+	return MMAHandle{
+		disabled: true,
+	}
+}
+
+func (a *allocatorState) GetHandleForIsInConflictWithMMA(
+	existing roachpb.StoreID, cands []roachpb.StoreID,
+) MMAHandle {
+	// TODO(wenyihu6): for simplicity, we create a new scratchNodes every call. We
+	// should reuse the scratchNodes instead.
+	var means meansForStoreSet
+	scratchNodes := map[roachpb.NodeID]*NodeLoad{}
+	storeIDs := makeStoreIDPostingList(cands)
+	storeIDs.insert(existing)
+	means.stores = storeIDs
+	computeMeansForStoreSet(a.cs, &means, scratchNodes)
+	existingSLS := a.cs.computeLoadSummary(context.Background(), existing, &means.storeLoad, &means.nodeLoad)
+	return MMAHandle{
+		existingStoreSLS: existingSLS,
+		means:            means,
+	}
+}
+
+func (a *allocatorState) IsInConflictWithMMA(
+	cand roachpb.StoreID, handle MMAHandle, cpuOnly bool,
+) bool {
+	if handle.disabled {
+		return false
+	}
+	candSLS := a.cs.computeLoadSummary(context.Background(), cand, &handle.means.storeLoad, &handle.means.nodeLoad)
+	existingSLS := handle.existingStoreSLS
+	if cpuOnly {
+		return candSLS.dimSummary[CPURate] > existingSLS.dimSummary[CPURate]
+	}
+	return candSLS.sls > existingSLS.sls
+}
+
 // Consider the core logic for a change, rebalancing or recovery.
 //
 // - There is a constraint expression for the target: constraintDisj

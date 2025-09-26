@@ -439,7 +439,7 @@ func TestBestRebalanceTarget(t *testing.T) {
 	var i int
 	for {
 		i++
-		target, existing := bestRebalanceTarget(allocRand, candidates)
+		target, existing, _ := bestRebalanceTarget(allocRand, candidates, nil, nil)
 		if len(expectedTargets) == 0 {
 			if target == nil {
 				break
@@ -2144,6 +2144,308 @@ func TestMaxCapacity(t *testing.T) {
 		if e, a := expectedCheck[s.StoreID], do.maxCapacityCheck(s); e != a {
 			t.Errorf("store %d expected max capacity check: %t, actual %t", s.StoreID, e, a)
 		}
+	}
+}
+
+func TestIsCriticalRebalance(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	testCases := []struct {
+		name     string
+		source   candidate
+		target   candidate
+		expected bool
+	}{
+		{
+			name: "invalid source to valid target",
+			source: candidate{
+				valid: false,
+			},
+			target: candidate{
+				valid: true,
+			},
+			expected: true,
+		},
+		{
+			name: "valid source to invalid target",
+			source: candidate{
+				valid: true,
+			},
+			target: candidate{
+				valid: false,
+			},
+			expected: false,
+		},
+		{
+			name: "both valid",
+			source: candidate{
+				valid: true,
+			},
+			target: candidate{
+				valid: true,
+			},
+			expected: false,
+		},
+		{
+			name: "both invalid",
+			source: candidate{
+				valid: false,
+			},
+			target: candidate{
+				valid: false,
+			},
+			expected: false,
+		},
+		{
+			name: "full disk source to non-full disk target",
+			source: candidate{
+				valid:    true,
+				fullDisk: true,
+			},
+			target: candidate{
+				valid:    true,
+				fullDisk: false,
+			},
+			expected: true,
+		},
+		{
+			name: "non-full disk source to full disk target",
+			source: candidate{
+				valid:    true,
+				fullDisk: false,
+			},
+			target: candidate{
+				valid:    true,
+				fullDisk: true,
+			},
+			expected: false,
+		},
+		{
+			name: "both full disk",
+			source: candidate{
+				valid:    true,
+				fullDisk: true,
+			},
+			target: candidate{
+				valid:    true,
+				fullDisk: true,
+			},
+			expected: false,
+		},
+		{
+			name: "non-necessary source to necessary target",
+			source: candidate{
+				valid:     true,
+				necessary: false,
+			},
+			target: candidate{
+				valid:     true,
+				necessary: true,
+			},
+			expected: true,
+		},
+		{
+			name: "necessary source to non-necessary target",
+			source: candidate{
+				valid:     true,
+				necessary: true,
+			},
+			target: candidate{
+				valid:     true,
+				necessary: false,
+			},
+			expected: false,
+		},
+		{
+			name: "non-voter-necessary source to voter-necessary target",
+			source: candidate{
+				valid:          true,
+				voterNecessary: false,
+			},
+			target: candidate{
+				valid:          true,
+				voterNecessary: true,
+			},
+			expected: true,
+		},
+		{
+			name: "voter-necessary source to non-voter-necessary target",
+			source: candidate{
+				valid:          true,
+				voterNecessary: true,
+			},
+			target: candidate{
+				valid:          true,
+				voterNecessary: false,
+			},
+			expected: false,
+		},
+		{
+			name: "higher diversity score target",
+			source: candidate{
+				valid:          true,
+				diversityScore: 0.5,
+			},
+			target: candidate{
+				valid:          true,
+				diversityScore: 0.8,
+			},
+			expected: true,
+		},
+		{
+			name: "lower diversity score target",
+			source: candidate{
+				valid:          true,
+				diversityScore: 0.8,
+			},
+			target: candidate{
+				valid:          true,
+				diversityScore: 0.5,
+			},
+			expected: false,
+		},
+		{
+			name: "almost equal diversity scores",
+			source: candidate{
+				valid:          true,
+				diversityScore: 0.5,
+			},
+			target: candidate{
+				valid:          true,
+				diversityScore: 0.5 + epsilon/2, // Within epsilon tolerance
+			},
+			expected: false,
+		},
+		{
+			name: "exactly equal diversity scores",
+			source: candidate{
+				valid:          true,
+				diversityScore: 0.5,
+			},
+			target: candidate{
+				valid:          true,
+				diversityScore: 0.5,
+			},
+			expected: false,
+		},
+		{
+			name: "multiple conditions - invalid to valid trumps all",
+			source: candidate{
+				valid:          false,
+				fullDisk:       false,
+				necessary:      true,
+				voterNecessary: true,
+				diversityScore: 0.8,
+			},
+			target: candidate{
+				valid:          true,
+				fullDisk:       true,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.2,
+			},
+			expected: true,
+		},
+		{
+			name: "multiple conditions - full disk trumps necessary and diversity",
+			source: candidate{
+				valid:          true,
+				fullDisk:       true,
+				necessary:      true,
+				voterNecessary: true,
+				diversityScore: 0.8,
+			},
+			target: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.2,
+			},
+			expected: true,
+		},
+		{
+			name: "multiple conditions - necessary trumps voter necessary and diversity",
+			source: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: true,
+				diversityScore: 0.8,
+			},
+			target: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      true,
+				voterNecessary: false,
+				diversityScore: 0.2,
+			},
+			expected: true,
+		},
+		{
+			name: "multiple conditions - voter necessary trumps diversity",
+			source: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.8,
+			},
+			target: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: true,
+				diversityScore: 0.2,
+			},
+			expected: true,
+		},
+		{
+			name: "all conditions equal except diversity - higher diversity target",
+			source: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.2,
+			},
+			target: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.8,
+			},
+			expected: true,
+		},
+		{
+			name: "all conditions equal including diversity",
+			source: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.5,
+			},
+			target: candidate{
+				valid:          true,
+				fullDisk:       false,
+				necessary:      false,
+				voterNecessary: false,
+				diversityScore: 0.5,
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.source.isCriticalRebalance(tc.target)
+			if result != tc.expected {
+				t.Errorf("expected %t, got %t", tc.expected, result)
+			}
+		})
 	}
 }
 
