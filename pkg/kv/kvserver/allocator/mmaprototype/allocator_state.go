@@ -1340,9 +1340,9 @@ func (a *allocatorState) IsInConflictWithMMA(
 	candSLS := a.cs.computeLoadSummary(context.Background(), cand, &handle.means.storeLoad, &handle.means.nodeLoad)
 	existingSLS := handle.existingStoreSLS
 	if cpuOnly {
-		return candSLS.dimSummary[CPURate] > existingSLS.dimSummary[CPURate]
+		return candSLS.dimSummary[CPURate] > existingSLS.dimSummary[CPURate] && candSLS.dimSummary[CPURate] >= loadNormal
 	}
-	return candSLS.sls > existingSLS.sls
+	return candSLS.sls > existingSLS.sls && candSLS.sls >= loadNormal
 }
 
 // Consider the core logic for a change, rebalancing or recovery.
