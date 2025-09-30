@@ -2441,7 +2441,7 @@ func TestIsCriticalRebalance(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := tc.source.isCriticalRebalance(tc.target)
+			result := tc.source.isCriticalRebalance(&tc.target)
 			if result != tc.expected {
 				t.Errorf("expected %t, got %t", tc.expected, result)
 			}
