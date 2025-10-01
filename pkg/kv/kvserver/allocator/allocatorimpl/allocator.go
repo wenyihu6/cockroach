@@ -1942,7 +1942,6 @@ func (a Allocator) RebalanceTarget(
 				}
 			}
 		}
-
 		// Add a fake new replica to our copy of the replica descriptor so that we can
 		// simulate the removal logic. If we decide not to go with this target, note
 		// that this needs to be removed from desc before we try any other target.
