@@ -1914,6 +1914,7 @@ func (a Allocator) RebalanceTarget(
 			// so we will not select it again.
 			if advisor, ok := advisors[bestIdx]; ok {
 				if a.as.IsInConflictWithMMA(target.store.StoreID, advisor, false) {
+					log.KvDistribution.VEventf(ctx, 2, "mma checking: not rebalancing %s to s%d due to conflicts", targetType, target.store.StoreID)
 					continue
 				}
 			} else {
@@ -1924,7 +1925,6 @@ func (a Allocator) RebalanceTarget(
 				}
 			}
 		}
-
 		// Add a fake new replica to our copy of the replica descriptor so that we can
 		// simulate the removal logic. If we decide not to go with this target, note
 		// that this needs to be removed from desc before we try any other target.
