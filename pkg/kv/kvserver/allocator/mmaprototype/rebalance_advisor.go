@@ -54,7 +54,7 @@ func NoopMMARebalanceAdvisor() *MMARebalanceAdvisor {
 //
 // The provided cands list may or may not include the existing store. For the
 // replicate queue, the cands list is just the set of candidate stores for the
-// equivalence class, exlcuding the existing store. For the lease queue, the
+// equivalence class, excluding the existing store. For the lease queue, the
 // cands list includes all stores that satisfy the constraint including the
 // existing store.
 //
@@ -94,8 +94,8 @@ func (a *allocatorState) BuildMMARebalanceAdvisor(
 // currently say that this is in conflict if the candidate is more overloaded
 // than the existing store. This is subject to change in the future. When
 // cpuOnly is true, the candidate store's cpu load summary must not exceed that
-// of the existing store, or the rebalance operation is rejected. When cpuOnly
-// is false, the worst dimension's summary is compared instead.
+// of the existing store, or the operation is considered in conflict. When
+// cpuOnly is false, the worst dimension's summary is compared instead.
 //
 // Caller is responsible for making sure the MMARebalanceAdvisor is for the correct
 // existing store and candidate set.
