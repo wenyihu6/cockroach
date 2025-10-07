@@ -20,7 +20,7 @@ import (
 // Change is a state change for a range, to a target store that has some delay.
 type Change interface {
 	// Apply applies a change to the state.
-	Apply(s State)
+	Apply(ctx context.Context, s State)
 	// Target returns the recipient store of the change.
 	Target() StoreID
 	// Range returns the range id the change is for.
@@ -42,7 +42,7 @@ type Changer interface {
 	Push(tick time.Time, sc Change) (time.Time, bool)
 	// Tick updates state changer to apply any changes that have occurred
 	// between the last tick and this one.
-	Tick(tick time.Time, state State)
+	Tick(ctx context.Context, tick time.Time, state State)
 }
 
 // ReplicaChange contains information necessary to add, remove or move (both) a
@@ -487,7 +487,7 @@ func (rc *replicaChanger) Push(tick time.Time, change Change) (time.Time, bool) 
 
 // Tick updates state changer to apply any changes that have occurred
 // between the last tick and this one.
-func (rc *replicaChanger) Tick(tick time.Time, state State) {
+func (rc *replicaChanger) Tick(ctx context.Context, tick time.Time, state State) {
 	var changeList []*pendingChange
 
 	// NB: Add the smallest unit of time, in order to find all items in
@@ -500,7 +500,7 @@ func (rc *replicaChanger) Tick(tick time.Time, state State) {
 
 	for _, nextChange := range changeList {
 		change := rc.pendingTickets[nextChange.ticket]
-		change.Apply(state)
+		change.Apply(ctx, state)
 
 		// Cleanup the pending trackers for this ticket. This allows another
 		// change to be pushed for Range().

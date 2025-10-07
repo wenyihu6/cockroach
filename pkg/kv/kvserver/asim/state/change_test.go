@@ -6,6 +6,7 @@
 package state
 
 import (
+	"context"
 	"sort"
 	"testing"
 	"time"
@@ -686,8 +687,9 @@ func TestReplicaStateChanger(t *testing.T) {
 			tsResults := make([]int64, 0, 1)
 			resultLeaseholders := make(map[int64]map[int64]StoreID)
 
+			ctx := context.Background()
 			for _, tick := range tc.ticks {
-				changer.Tick(OffsetTick(start, tick), state)
+				changer.Tick(ctx, OffsetTick(start, tick), state)
 				if change, ok := tc.pushes[tick]; ok {
 					if ts, ok := changer.Push(OffsetTick(start, tick), change(state)); ok {
 						tsResults = append(tsResults, ReverseOffsetTick(start, ts))
