@@ -1,0 +1,5 @@
+     0.000ms      0.000ms    === operation:replicateQueue.PlanOneChange gid:1197 _verbose:1 name:high_cpu/mma-count asim: tick:Mar 21 11:01:11.000
+     0.039ms      0.039ms    event:kv/kvserver/allocator/plan/replicate.go:228 [name=high_cpu/mma-count,asim,tick=2022-03-21 11:01:11 +0000 UTC,replica,n9s9,r45] planning range change desc=r45:0000004{400-500} [(n10,s10):1, (n9,s9):2, (n4,s4):3, next=4, gen=0] config=range_min_bytes:134217728 range_max_bytes:536870912 gc_policy:<> num_replicas:3 num_voters:3 
+     0.054ms      0.015ms    event:kv/kvserver/allocator/plan/replicate.go:239 [name=high_cpu/mma-count,asim,tick=2022-03-21 11:01:11 +0000 UTC,replica,n9s9,r45] next replica action: consider rebalance
+     0.132ms      0.078ms    event:kv/kvserver/allocator/plan/replicate.go:814 [name=high_cpu/mma-count,asim,tick=2022-03-21 11:01:11 +0000 UTC,replica,n9s9,r45] no suitable rebalance target for voters
+     0.147ms      0.014ms    event:kv/kvserver/allocator/plan/replicate.go:830 [name=high_cpu/mma-count,asim,tick=2022-03-21 11:01:11 +0000 UTC,replica,n9s9,r45] no suitable rebalance target for non-voters
