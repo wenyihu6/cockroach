@@ -156,14 +156,15 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 			pendingChanges := msr.allocator.ComputeChanges(ctx, &storeLeaseholderMsg, mmaprototype.ChangeOptions{
 				LocalStoreID: roachpb.StoreID(msr.localStoreID),
 			})
-			for _, change := range pendingChanges {
+			log.KvDistribution.Infof(ctx, "store %d: computed %d changes", msr.localStoreID, len(pendingChanges))
+			for i, change := range pendingChanges {
 				usageInfo := s.RangeUsageInfo(state.RangeID(change.RangeID), msr.localStoreID)
 				msr.pendingChanges = append(msr.pendingChanges, pendingChangeAndRangeUsageInfo{
 					change: change,
 					usage:  usageInfo,
 				})
+				log.KvDistribution.Infof(ctx, "%v-th change: %s", i+1, change.String())
 			}
-			log.KvDistribution.Infof(ctx, "store %d: computed %d changes %v", msr.localStoreID, len(msr.pendingChanges), msr.pendingChanges)
 			if len(msr.pendingChanges) == 0 {
 				// Nothing to do, there were no changes returned.
 				msr.currentlyRebalancing = false

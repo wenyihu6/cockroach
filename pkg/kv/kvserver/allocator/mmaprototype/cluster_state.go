@@ -1197,6 +1197,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 
 	clear(cs.scratchRangeMap)
 	for _, rangeMsg := range msg.Ranges {
+		log.KvDistribution.Infof(ctx, "processing range msg for r%d", rangeMsg.RangeID)
 		cs.scratchRangeMap[rangeMsg.RangeID] = struct{}{}
 		rs, ok := cs.ranges[rangeMsg.RangeID]
 		if !ok {
@@ -1262,7 +1263,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		// leaseholder.
 		var remainingChanges, enactedChanges []*pendingReplicaChange
 		var remainingReplicaChanges []ReplicaChange
-		log.KvDistribution.Infof(ctx, "pending changes: %v", rs.pendingChanges)
+		log.KvDistribution.Infof(ctx, "r%d has pending changes: %v", rangeMsg.RangeID, rs.pendingChanges)
 		for _, change := range rs.pendingChanges {
 			ss := cs.stores[change.target.StoreID]
 			adjustedReplica, ok := ss.adjusted.replicas[rangeMsg.RangeID]
