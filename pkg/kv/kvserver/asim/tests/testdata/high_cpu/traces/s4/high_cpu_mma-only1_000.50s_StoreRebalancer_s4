@@ -1,3 +1,0 @@
-     0.000ms      0.000ms    === operation:StoreRebalancer gid:685 _verbose:1 name:high_cpu/mma-only asim: tick:Mar 21 11:00:00.500
-     0.061ms      0.061ms    event:kv/kvserver/store_rebalancer.go:348 [name=high_cpu/mma-only,asim,tick=500ms,s4] StorePool missing descriptor for local store with ID 4, store list   candidate: avg-ranges=0.00 avg-leases=0.00 avg-disk-usage=0 B avg-queries-per-second=0.00 avg-store-cpu-per-second=0µs avg-io-overload=0.00(max=0.00) <no candidates>
-     0.072ms      0.011ms    event:kv/kvserver/store_rebalancer.go:456 [name=high_cpu/mma-only,asim,tick=500ms,s4] no rebalance context given, bailing out of rebalancing store, will try again later

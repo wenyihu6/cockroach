@@ -1041,6 +1041,7 @@ func replicaSetIsValid(replicas []StoreIDAndReplicaState) (bool, string) {
 func (rs *rangeState) removePendingChangeTracking(changeID ChangeID) {
 	n := len(rs.pendingChanges)
 	found := false
+	log.KvDistribution.Infof(context.Background(), "removing the pending change: %d", changeID)
 	for i := 0; i < n; i++ {
 		if rs.pendingChanges[i].ChangeID == changeID {
 			rs.pendingChanges[i], rs.pendingChanges[n-1] = rs.pendingChanges[n-1], rs.pendingChanges[i]
@@ -1366,6 +1367,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		if ok {
 			continue
 		}
+		log.KvDistribution.Infof(ctx, "removing: r%d, success = %t", r, rs.localRangeOwner == msg.StoreID)
 		// Not the leaseholder for this range. Consider removing it.
 		//
 		// In a multi-store setting this is inefficient, since we are iterating

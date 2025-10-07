@@ -93,6 +93,7 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 
 	if !msr.currentlyRebalancing &&
 		tick.Sub(msr.lastRebalanceTime) < msr.settings.LBRebalancingInterval {
+		log.KvDistribution.VInfof(ctx, 2, "still rebalancing: %v", tick.Sub(msr.lastRebalanceTime))
 		// We are waiting out the rebalancing interval. Nothing to do.
 		return
 	}
@@ -132,15 +133,15 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 				msr.pendingTicket = -1
 				success := true
 				if err := op.Errors(); err != nil {
-					log.KvDistribution.Infof(ctx, "operation for pendingChange=%v failed: %v", curChange, err)
+					log.KvDistribution.Infof(ctx, "operation for pendingChange=%v failed: %v", curChange.change, err)
 					success = false
 				} else {
-					log.KvDistribution.VInfof(ctx, 1, "operation for pendingChange=%v completed successfully", curChange)
+					log.KvDistribution.VInfof(ctx, 1, "operation for pendingChange=%v completed successfully", curChange.change)
 				}
 				msr.as.PostApply(curChange.syncChangeID, success)
 				msr.pendingChangeIdx++
 			} else {
-				log.KvDistribution.VInfof(ctx, 1, "operation for pendingChange=%v is still in progress", curChange)
+				log.KvDistribution.VInfof(ctx, 1, "operation for pendingChange=%v is still in progress", curChange.change)
 				// Operation is still in progress, nothing to do this tick.
 				return
 			}
@@ -163,7 +164,7 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 					change: change,
 					usage:  usageInfo,
 				})
-				log.KvDistribution.Infof(ctx, "%v-th change: %s", i+1, change.String())
+				log.KvDistribution.Infof(ctx, "%v-th change: %v", i+1, change)
 			}
 			if len(msr.pendingChanges) == 0 {
 				// Nothing to do, there were no changes returned.
@@ -203,7 +204,7 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 		} else {
 			panic(fmt.Sprintf("unexpected pending change type: %v", curChange))
 		}
-		log.KvDistribution.VInfof(ctx, 1, "dispatching operation for pendingChange=%v", curChange)
+		log.KvDistribution.VInfof(ctx, 1, "dispatching operation for pendingChange=%v", curChange.change)
 		msr.pendingChanges[msr.pendingChangeIdx].syncChangeID =
 			msr.as.MMAPreApply(ctx, curChange.usage, curChange.change)
 		msr.pendingTicket = msr.controller.Dispatch(ctx, tick, s, curOp)
