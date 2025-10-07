@@ -1262,6 +1262,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		// leaseholder.
 		var remainingChanges, enactedChanges []*pendingReplicaChange
 		var remainingReplicaChanges []ReplicaChange
+		log.KvDistribution.Infof(ctx, "pending changes: %v", rs.pendingChanges)
 		for _, change := range rs.pendingChanges {
 			ss := cs.stores[change.target.StoreID]
 			adjustedReplica, ok := ss.adjusted.replicas[rangeMsg.RangeID]
@@ -1269,6 +1270,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 				adjustedReplica.ReplicaID = noReplicaID
 			}
 			if adjustedReplica.subsumesChange(change.prev.ReplicaIDAndType, change.next) {
+				log.KvDistribution.Infof(ctx, "subsumed: %v", enactedChanges)
 				// The change has been enacted according to the leaseholder.
 				enactedChanges = append(enactedChanges, change)
 			} else {

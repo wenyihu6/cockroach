@@ -257,6 +257,9 @@ func (a *allocatorState) rebalanceStores(
 ) []PendingRangeChange {
 	now := a.cs.ts.Now()
 	ctx = logtags.AddTag(ctx, "mmaid", mmaid.Add(1))
+	if mmaid.Load() == 4359 {
+		fmt.Println("hit ")
+	}
 	log.KvDistribution.VInfof(ctx, 2, "rebalanceStores begins")
 	// To select which stores are overloaded, we use a notion of overload that
 	// is based on cluster means (and of course individual store/node
