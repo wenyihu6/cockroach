@@ -21,30 +21,30 @@ gen_ranges ranges=100 min_key=0 max_key=10000
 ----
 
 # Evenly distributed workload.
-gen_load rate=500000 rw_ratio=0.95 min_block=100 max_block=100 request_cpu_per_access=10000 raft_cpu_per_write=2000 min_key=0 max_key=10000
+gen_load rate=5000 rw_ratio=0.95 min_block=100 max_block=100 request_cpu_per_access=1000000 raft_cpu_per_write=200000 min_key=0 max_key=10000
 ----
-5.00 access-vcpus, 0.05 raft-vcpus, 2.4 MiB/s goodput
+5.00 access-vcpus, 0.05 raft-vcpus, 24 KiB/s goodput
 
 # Another workload is added over the second half of the keyspace, which is initially
 # mostly on s1-s3.
 gen_ranges ranges=50 min_key=10001 max_key=20000 placement_type=skewed
 ----
 
-gen_load rate=10000000 rw_ratio=0.99 min_block=128 max_block=128 request_cpu_per_access=1000 raft_cpu_per_write=20000 min_key=10001 max_key=20000
+gen_load rate=1000 rw_ratio=0.99 min_block=128 max_block=128 request_cpu_per_access=10000000 raft_cpu_per_write=20000000 min_key=10001 max_key=20000
 ----
-10.00 access-vcpus, 2.00 raft-vcpus, 12 MiB/s goodput
+10.00 access-vcpus, 0.20 raft-vcpus, 1.3 KiB/s goodput
 
-eval duration=20m samples=1 seed=42 cfgs=(mma-only) metrics=(cpu,cpu_util,replicas,leases)
+eval duration=20m samples=1 seed=42 cfgs=(mma-count) metrics=(cpu,cpu_util,replicas,leases)
 ----
-cpu#1: last:  [s1=2113941054, s2=2115066411, s3=1855041896, s4=2195195294, s5=2315155704, s6=2275145253, s7=1865004084, s8=2235170949, s9=2064942411, s10=2114937023] (stddev=148041953.47, mean=2114960007.90, sum=21149600079)
-cpu#1: thrash_pct: [s1=65%, s2=63%, s3=56%, s4=31%, s5=5%, s6=4%, s7=12%, s8=2%, s9=20%, s10=4%]  (sum=262%)
-cpu_util#1: last:  [s1=0.26, s2=0.26, s3=0.23, s4=0.27, s5=0.29, s6=0.28, s7=0.23, s8=0.28, s9=0.26, s10=0.26] (stddev=0.02, mean=0.26, sum=3)
-cpu_util#1: thrash_pct: [s1=65%, s2=63%, s3=56%, s4=31%, s5=5%, s6=4%, s7=12%, s8=2%, s9=20%, s10=4%]  (sum=262%)
+cpu#1: last:  [s1=1541887030, s2=1713235417, s3=1580118619, s4=1618283496, s5=1563312037, s6=1657951235, s7=1307364950, s8=1552531971, s9=1561935680, s10=1645749580] (stddev=103163155.55, mean=1574237001.50, sum=15742370015)
+cpu#1: thrash_pct: [s1=25%, s2=29%, s3=18%, s4=29%, s5=28%, s6=16%, s7=19%, s8=27%, s9=30%, s10=18%]  (sum=238%)
+cpu_util#1: last:  [s1=0.19, s2=0.21, s3=0.20, s4=0.20, s5=0.20, s6=0.21, s7=0.16, s8=0.19, s9=0.20, s10=0.21] (stddev=0.01, mean=0.20, sum=2)
+cpu_util#1: thrash_pct: [s1=25%, s2=29%, s3=18%, s4=29%, s5=28%, s6=16%, s7=19%, s8=27%, s9=30%, s10=18%]  (sum=238%)
 leases#1: first: [s1=37, s2=22, s3=14, s4=13, s5=11, s6=11, s7=10, s8=11, s9=10, s10=11] (stddev=8.07, mean=15.00, sum=150)
-leases#1: last:  [s1=15, s2=9, s3=15, s4=9, s5=22, s6=19, s7=16, s8=16, s9=14, s10=15] (stddev=3.74, mean=15.00, sum=150)
-leases#1: thrash_pct: [s1=26%, s2=54%, s3=49%, s4=44%, s5=0%, s6=0%, s7=0%, s8=0%, s9=8%, s10=0%]  (sum=181%)
+leases#1: last:  [s1=10, s2=14, s3=15, s4=16, s5=15, s6=17, s7=16, s8=15, s9=15, s10=17] (stddev=1.90, mean=15.00, sum=150)
+leases#1: thrash_pct: [s1=0%, s2=9%, s3=8%, s4=9%, s5=9%, s6=0%, s7=0%, s8=9%, s9=17%, s10=0%]  (sum=61%)
 replicas#1: first: [s1=80, s2=70, s3=51, s4=42, s5=37, s6=35, s7=34, s8=33, s9=34, s10=34] (stddev=16.02, mean=45.00, sum=450)
-replicas#1: last:  [s1=45, s2=45, s3=46, s4=47, s5=45, s6=44, s7=45, s8=43, s9=45, s10=45] (stddev=1.00, mean=45.00, sum=450)
-replicas#1: thrash_pct: [s1=0%, s2=6%, s3=14%, s4=0%, s5=0%, s6=0%, s7=20%, s8=0%, s9=20%, s10=0%]  (sum=60%)
-artifacts[mma-only]: e210185c5dc79411
+replicas#1: last:  [s1=45, s2=44, s3=45, s4=46, s5=43, s6=45, s7=47, s8=45, s9=45, s10=45] (stddev=1.00, mean=45.00, sum=450)
+replicas#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=5%, s6=0%, s7=0%, s8=0%, s9=6%, s10=0%]  (sum=11%)
+artifacts[mma-count]: 2e50737f44fc4950
 ==========================
