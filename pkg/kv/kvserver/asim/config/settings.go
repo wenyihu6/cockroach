@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	defaultTickInteval             = 500 * time.Millisecond
+	defaultTickInteval             = 250 * time.Millisecond
 	defaultMetricsInterval         = 10 * time.Second
 	defaultReplicaChangeBaseDelay  = 100 * time.Millisecond
 	defaultRebalancingSnapshotRate = 32 << 20 // 32MiB/s

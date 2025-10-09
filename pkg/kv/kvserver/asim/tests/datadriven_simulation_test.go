@@ -501,6 +501,8 @@ func TestDataDriven(t *testing.T) {
 					scanIfExists(t, d, "metrics", &metrics)
 					scanIfExists(t, d, "full", &full)
 
+					duration = duration / (500 * time.Millisecond / settingsGen.Settings.TickInterval)
+
 					t.Logf("running eval for %s", name)
 
 					if len(cfgs) == 0 {
