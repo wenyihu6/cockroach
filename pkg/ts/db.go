@@ -149,7 +149,7 @@ func (p *poller) start() (firstDone <-chan struct{}) {
 		close(ch)
 		return ch
 	}
-	go func(ctx context.Context, ch chan struct{}) {
+	go func(ctx context.Context, hdl *stop.Handle, ch chan struct{}) {
 		defer hdl.Activate(ctx).Release(ctx)
 		var ticker timeutil.Timer
 		ticker.Reset(0) // poll immediately
@@ -167,7 +167,7 @@ func (p *poller) start() (firstDone <-chan struct{}) {
 				return
 			}
 		}
-	}(ctx, ch)
+	}(ctx, hdl, ch)
 	return ch
 }
 

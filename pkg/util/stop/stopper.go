@@ -435,10 +435,10 @@ func (s *Stopper) RunAsyncTaskEx(ctx context.Context, opt TaskOpts, f func(conte
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		f(ctx)
-	}(ctx)
+	}(ctx, hdl)
 	return nil
 }
 

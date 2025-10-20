@@ -188,7 +188,7 @@ func (s *TCPServer) ServeWith(
 			err = errors.CombineErrors(err, rw.Close())
 			return err
 		}
-		go func(ctx context.Context) {
+		go func(ctx context.Context, hdl *stop.Handle) {
 			defer hdl.Activate(ctx).Release(ctx)
 			defer func() {
 				_ = rw.Close()
@@ -196,7 +196,7 @@ func (s *TCPServer) ServeWith(
 			s.addConn(rw)
 			defer s.rmConn(rw)
 			serveConn(ctx, rw)
-		}(taskCtx)
+		}(taskCtx, hdl)
 	}
 }
 

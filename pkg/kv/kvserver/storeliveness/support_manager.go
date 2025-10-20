@@ -184,10 +184,10 @@ func (sm *SupportManager) Start(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		sm.startLoop(ctx)
-	}(ctx)
+	}(ctx, hdl)
 	return nil
 }
 

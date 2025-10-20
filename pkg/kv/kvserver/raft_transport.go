@@ -415,7 +415,7 @@ func (t *RaftTransport) raftMessageBatch(
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		errCh <- func() error {
 			defer func() {
@@ -459,7 +459,7 @@ func (t *RaftTransport) raftMessageBatch(
 				}
 			}
 		}()
-	}(taskCtx)
+	}(taskCtx, hdl)
 
 	select {
 	case err := <-errCh:
@@ -622,7 +622,7 @@ func (t *RaftTransport) processQueue(
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		errCh <- func() error {
 			for {
@@ -642,7 +642,7 @@ func (t *RaftTransport) processQueue(
 				}
 			}
 		}()
-	}(goCtx)
+	}(goCtx, hdl)
 
 	// For replication admission control v2.
 	maybeAnnotateWithAdmittedStates := func(
@@ -929,10 +929,10 @@ func (t *RaftTransport) startProcessNewQueue(
 		t.connectionMu.Unlock()
 		return false
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		pprof.Do(ctx, pprof.Labels("remote_node_id", toNodeID.String()), worker)
-	}(ctx)
+	}(ctx, hdl)
 	return true
 }
 
@@ -948,7 +948,7 @@ func (t *RaftTransport) startDroppingFlowTokensForDisconnectedNodes(ctx context.
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		settingChangeCh := make(chan struct{}, 1)
 		kvadmission.FlowTokenDropInterval.SetOnChange(
@@ -986,7 +986,7 @@ func (t *RaftTransport) startDroppingFlowTokensForDisconnectedNodes(ctx context.
 				return
 			}
 		}
-	}(ctx)
+	}(ctx, hdl)
 	return nil
 }
 

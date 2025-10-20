@@ -719,12 +719,12 @@ func TestHandleWithoutActivateOrRelease(t *testing.T) {
 		require.NoError(t, err)
 
 		relCh := make(chan stop.ActiveHandle, 1)
-		go func() {
+		go func(ctx context.Context, hdl *stop.Handle) {
 			if activate {
 				relCh <- hdl.Activate(ctx)
 				// Oops, forgot release!
 			} // otherwise, forgot Activate too
-		}()
+		}(ctx, hdl)
 
 		stopCh := make(chan struct{})
 		go func() {
@@ -766,11 +766,11 @@ func TestHandleSetsGoroutineOnSpan(t *testing.T) {
 
 	endCh := make(chan struct{})
 	var goroutineID int64
-	go func() {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		goroutineID = goid.Get()
 		close(endCh)
-	}()
+	}(ctx, hdl)
 	<-endCh
 	rec := sp.FinishAndGetRecording(tracingpb.RecordingVerbose)
 	require.Contains(t, rec.String(), fmt.Sprintf("gid:%d", goroutineID))

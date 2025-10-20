@@ -636,10 +636,10 @@ func (h *txnHeartbeater) abortTxnAsyncLocked(ctx context.Context) {
 		h.metrics.AsyncRollbacksFailed.Inc(1)
 		return
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		work(ctx)
-	}(asyncCtx)
+	}(asyncCtx, hdl)
 }
 
 // randLockingIndex returns the index of the first request that acquires locks

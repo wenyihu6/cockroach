@@ -309,10 +309,10 @@ func (p *streamPool[Req, Resp, Conn]) newPooledStream() (*pooledStream[Req, Resp
 	if err != nil {
 		return nil, err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		s.run(ctx)
-	}(ctx)
+	}(ctx, hdl)
 	cancel = nil
 	return s, nil
 }

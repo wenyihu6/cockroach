@@ -747,10 +747,10 @@ func (bq *baseQueue) Async(
 		}
 		return baseQueueAsyncRateLimited
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		fn(ctx, baseQueueHelper{bq})
-	}(bgCtx)
+	}(bgCtx, hdl)
 	return nil
 }
 

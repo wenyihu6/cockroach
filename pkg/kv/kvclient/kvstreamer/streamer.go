@@ -1574,10 +1574,10 @@ func (w *workerCoordinator) performRequestAsync(
 		w.s.results.setError(err)
 		return
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		work(ctx)
-	}(ctx)
+	}(ctx, hdl)
 }
 
 // singleRangeBatchResponseFootprint is the footprint of the shape of the

@@ -247,7 +247,7 @@ func (ie *InternalExecutor) runWithEx(
 		cleanup(ctx)
 		return err
 	}
-	go func() {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		defer cleanup(ctx)
 		// TODO(yuzefovich): benchmark whether we should be growing the
@@ -265,7 +265,7 @@ func (ie *InternalExecutor) runWithEx(
 			errCallback(err)
 		}
 		w.finish()
-	}()
+	}(ctx, hdl)
 	return nil
 }
 

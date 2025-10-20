@@ -1574,10 +1574,10 @@ func (ds *DistSender) divideAndSendParallelCommit(
 		if err != nil {
 			return nil, kvpb.NewError(err)
 		}
-		go func(ctx context.Context) {
+		go func(ctx context.Context, hdl *stop.Handle) {
 			defer hdl.Activate(ctx).Release(ctx)
 			sendPreCommit(ctx)
-		}(ctx)
+		}(ctx, hdl)
 	}
 
 	// Adjust the original batch request to ignore the pre-commit
@@ -2102,7 +2102,7 @@ func (ds *DistSender) sendPartialBatchAsync(
 		ds.metrics.AsyncThrottledCount.Inc(1)
 		return false
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		ds.metrics.AsyncSentCount.Inc(1)
 		ds.metrics.AsyncInProgress.Inc(1)
@@ -2110,7 +2110,7 @@ func (ds *DistSender) sendPartialBatchAsync(
 		resp := ds.sendPartialBatch(ctx, ba, rs, withCommit, batchIdx, routing)
 		resp.positions = positions
 		responseCh <- resp
-	}(ctx)
+	}(ctx, hdl)
 	return true
 }
 

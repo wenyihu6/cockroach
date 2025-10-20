@@ -248,10 +248,10 @@ func New(cfg Config) *RequestBatcher {
 	if err != nil {
 		panic(err)
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		b.run(ctx)
-	}(bgCtx)
+	}(bgCtx, hdl)
 	return b
 }
 
@@ -442,10 +442,10 @@ func (b *RequestBatcher) sendBatch(ctx context.Context, ba *batch) {
 		b.sendDone(ba)
 		return
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		work(ctx)
-	}(ctx)
+	}(ctx, hdl)
 }
 
 func (b *RequestBatcher) sendResponse(req *request, resp Response) {

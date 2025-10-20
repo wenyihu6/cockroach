@@ -515,10 +515,10 @@ func (ir *IntentResolver) runAsyncTask(
 		}
 		return errors.Wrapf(err, "during async intent resolution")
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		taskFn(ctx)
-	}(ctx)
+	}(ctx, hdl)
 	return nil
 }
 
@@ -729,7 +729,7 @@ func (ir *IntentResolver) CleanupTxnIntentsOnGCAsync(
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		var pushed, succeeded bool
 		defer func() {
@@ -787,7 +787,7 @@ func (ir *IntentResolver) CleanupTxnIntentsOnGCAsync(
 				log.KvExec.Warningf(ctx, "failed to cleanup transaction intents: %+v", err)
 			}
 		}
-	}(ctx)
+	}(ctx, hdl)
 	return nil
 }
 
@@ -876,7 +876,7 @@ func (ir *IntentResolver) cleanupFinishedTxnIntents(
 	if err != nil {
 		return err
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		err := timeutil.RunWithTimeout(ctx, "cleanup txn record",
 			gcTxnRecordTimeout, func(ctx context.Context) error {
@@ -890,7 +890,7 @@ func (ir *IntentResolver) cleanupFinishedTxnIntents(
 				log.KvExec.Warningf(ctx, "failed to gc transaction record: %v", err)
 			}
 		}
-	}(ctx)
+	}(ctx, hdl)
 	return nil
 }
 

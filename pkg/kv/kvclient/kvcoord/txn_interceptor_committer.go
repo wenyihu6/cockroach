@@ -520,10 +520,10 @@ func (tc *txnCommitter) makeTxnCommitExplicitAsync(
 		log.VErrEventf(ctx, 1, "failed to make txn commit explicit: %v", err)
 		return
 	}
-	go func(ctx context.Context) {
+	go func(ctx context.Context, hdl *stop.Handle) {
 		defer hdl.Activate(ctx).Release(ctx)
 		work(ctx)
-	}(asyncCtx)
+	}(asyncCtx, hdl)
 }
 
 func makeTxnCommitExplicitLocked(
