@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,7 +86,7 @@ func AddChangefeedToQueryLoad(
 		return err
 	}
 
-	log.Dev.Infof(ctx, "cursor: %s, time since now: %s", cursorStr, timeutil.Now())
+	log.Dev.Infof(ctx, "cursor: %s", cursorStr)
 
 	tableNames := strings.Builder{}
 	for i, table := range gen.Tables() {
@@ -113,7 +114,6 @@ func AddChangefeedToQueryLoad(
 		"CREATE CHANGEFEED FOR %s WITH %s",
 		tableNames.String(), strings.Join(opts, ","),
 	)
-	log.Dev.Infof(ctx, "creating changefeed with stmt: %s", stmt)
 	cfCtx, cancel := context.WithCancel(ctx)
 
 	var doneErr error
@@ -130,6 +130,11 @@ func AddChangefeedToQueryLoad(
 	maybeSetupRows := func() (done bool) {
 		if rows != nil {
 			return false
+		}
+		log.Dev.Infof(ctx, "creating changefeed with stmt: %s with args %v", stmt, args)
+		if epoch, parseErr := strconv.ParseInt(cursorStr, 10, 64); parseErr == nil {
+			t := time.Unix(epoch, 0).UTC()
+			log.Dev.Infof(ctx, "starting a changefeed after %s", time.Since(t))
 		}
 		var err error
 		rows, err = conn.Query(cfCtx, stmt, args...)
