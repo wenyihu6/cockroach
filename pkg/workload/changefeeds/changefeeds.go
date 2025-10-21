@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/workload"
 	"github.com/cockroachdb/cockroach/pkg/workload/histogram"
@@ -84,6 +85,8 @@ func AddChangefeedToQueryLoad(
 		return err
 	}
 
+	log.Dev.Infof(ctx, "cursor: %s, time since now: %s", cursorStr, timeutil.Now())
+
 	tableNames := strings.Builder{}
 	for i, table := range gen.Tables() {
 		if i == 0 {
@@ -110,6 +113,7 @@ func AddChangefeedToQueryLoad(
 		"CREATE CHANGEFEED FOR %s WITH %s",
 		tableNames.String(), strings.Join(opts, ","),
 	)
+	log.Dev.Infof(ctx, "creating changefeed with stmt: %s", stmt)
 	cfCtx, cancel := context.WithCancel(ctx)
 
 	var doneErr error
