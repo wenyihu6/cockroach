@@ -15,6 +15,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/crlib/crtime"
 	"github.com/cockroachdb/errors"
 )
@@ -149,6 +150,27 @@ func (ubr *unbufferedRegistration) publish(
 	// Disconnected or catchUpOverflowed is not set and catchUpBuf
 	// is nil. Safe to send to underlying stream.
 	if ubr.mu.catchUpBuf == nil {
+		if log.V(5) {
+			eventType := "unknown"
+			if strippedEvent.Val != nil {
+				eventType = "val"
+			} else if strippedEvent.Checkpoint != nil {
+				eventType = "checkpoint"
+				if !strippedEvent.Checkpoint.ResolvedTS.IsEmpty() {
+					now := hlc.Timestamp{WallTime: timeutil.Now().UnixNano()}
+					lag := now.GoTime().Sub(strippedEvent.Checkpoint.ResolvedTS.GoTime())
+					log.KvExec.Infof(ctx, "r%d: publishing live checkpoint at %s (lag: %s)",
+						ubr.Range(), strippedEvent.Checkpoint.ResolvedTS, lag)
+				}
+			} else if strippedEvent.SST != nil {
+				eventType = "sst"
+			} else if strippedEvent.DeleteRange != nil {
+				eventType = "deleteRange"
+			}
+			if eventType != "checkpoint" {
+				log.KvExec.Infof(ctx, "r%d: publishing live event type=%s", ubr.Range(), eventType)
+			}
+		}
 		if err := ubr.stream.SendBuffered(strippedEvent, alloc); err != nil {
 			ubr.disconnectLocked(kvpb.NewError(err))
 		}
@@ -163,6 +185,9 @@ func (ubr *unbufferedRegistration) publish(
 		default:
 			// catchUpBuf exceeded and we are dropping this event. A catch up scan is
 			// needed later.
+			if log.V(5) {
+				log.KvExec.Infof(ctx, "r%d: catch-up buffer overflowed, dropping event", ubr.Range())
+			}
 			ubr.mu.catchUpOverflowed = true
 			e.alloc.Release(ctx)
 			putPooledSharedEvent(e)
@@ -223,15 +248,24 @@ func (ubr *unbufferedRegistration) IsDisconnected() bool {
 // nolint:deferunlockcheck
 func (ubr *unbufferedRegistration) runOutputLoop(ctx context.Context, forStacks roachpb.RangeID) {
 	start := crtime.NowMono()
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "r%d: starting output loop for unbuffered registration", ubr.Range())
+	}
 	ubr.mu.Lock()
 	defer func() {
 		// Noop if publishCatchUpBuffer below returns no error.
 		ubr.drainAllocations(ctx)
 		ubr.metrics.RangefeedOutputLoopNanosForUnbufferedReg.Inc(start.Elapsed().Nanoseconds())
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: output loop completed in %s", ubr.Range(), start.Elapsed())
+		}
 	}()
 
 	if ubr.mu.disconnected {
 		ubr.mu.Unlock()
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: output loop exiting early, already disconnected", ubr.Range())
+		}
 		return
 	}
 
@@ -242,6 +276,9 @@ func (ubr *unbufferedRegistration) runOutputLoop(ctx context.Context, forStacks 
 		// Important to disconnect before draining otherwise publish() might
 		// interpret this as a successful catch-up scan and send events to the
 		// underlying stream directly.
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: disconnecting due to catch-up scan error: %v", ubr.Range(), err)
+		}
 		ubr.Disconnect(kvpb.NewError(errors.Wrap(err, "catch-up scan failed")))
 		return
 	}
@@ -250,11 +287,17 @@ func (ubr *unbufferedRegistration) runOutputLoop(ctx context.Context, forStacks 
 		// Important to disconnect before draining otherwise publish() might
 		// interpret this as a successful catch-up scan and send events to the
 		// underlying stream directly.
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: disconnecting due to publish catch-up buffer error: %v", ubr.Range(), err)
+		}
 		ubr.Disconnect(kvpb.NewError(err))
 		return
 	}
 	// Success: publishCatchUpBuffer should have drained and set catchUpBuf to nil
 	// when it succeeds.
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "r%d: output loop succeeded, now forwarding live events directly", ubr.Range())
+	}
 }
 
 // drainAllocations drains catchUpBuf and release all memory held by the events
@@ -311,6 +354,16 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 	maxUnbufferedSends := min(len(ubr.mu.catchUpBuf), 1024)
 	unbufferedSendCount := 0
 
+	// Metrics for logging.
+	var checkpointCount, valCount, ssfCount, deleteRangeCount int
+	publishStart := crtime.NowMono()
+
+	if log.V(5) {
+		bufferLen := len(ubr.mu.catchUpBuf)
+		log.KvExec.Infof(ctx, "r%d: starting to publish catch-up buffer with %d events",
+			ubr.Range(), bufferLen)
+	}
+
 	publish := func(underLock bool) error {
 		shouldSendBuffered = shouldSendBuffered || underLock
 		for {
@@ -324,6 +377,25 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 
 			select {
 			case e := <-ubr.mu.catchUpBuf:
+				// Track event types for logging.
+				if log.V(5) {
+					if e.event.Val != nil {
+						valCount++
+					} else if e.event.Checkpoint != nil {
+						checkpointCount++
+						if !e.event.Checkpoint.ResolvedTS.IsEmpty() {
+							now := hlc.Timestamp{WallTime: timeutil.Now().UnixNano()}
+							lag := now.GoTime().Sub(e.event.Checkpoint.ResolvedTS.GoTime())
+							log.KvExec.Infof(ctx, "r%d: publishing checkpoint at %s (lag: %s, wall: %d ns behind now)",
+								ubr.Range(), e.event.Checkpoint.ResolvedTS, lag, now.WallTime-e.event.Checkpoint.ResolvedTS.WallTime)
+						}
+					} else if e.event.SST != nil {
+						ssfCount++
+					} else if e.event.DeleteRange != nil {
+						deleteRangeCount++
+					}
+				}
+
 				var err error
 				if shouldSendBuffered {
 					err = ubr.stream.SendBuffered(e.event, e.alloc)
@@ -381,6 +453,13 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 	// Success.
 	ubr.mu.catchUpBuf = nil
 	ubr.mu.caughtUp = true
+
+	if log.V(5) {
+		totalEvents := checkpointCount + valCount + ssfCount + deleteRangeCount
+		log.KvExec.Infof(ctx, "r%d: finished publishing catch-up buffer in %s: total=%d events (checkpoints=%d, vals=%d, ssts=%d, deleteRanges=%d)",
+			ubr.Range(), publishStart.Elapsed(), totalEvents, checkpointCount, valCount, ssfCount, deleteRangeCount)
+	}
+
 	return nil
 }
 
@@ -400,17 +479,37 @@ func (ubr *unbufferedRegistration) detachCatchUpIter() *CatchUpIterator {
 func (ubr *unbufferedRegistration) maybeRunCatchUpScan(ctx context.Context) error {
 	catchUpIter := ubr.detachCatchUpIter()
 	if catchUpIter == nil {
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: no catch-up scan required for unbuffered registration", ubr.Range())
+		}
 		return nil
 	}
 	start := crtime.NowMono()
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "r%d: starting catch-up scan for unbuffered registration from %s",
+			ubr.Range(), ubr.catchUpTimestamp)
+	}
 	defer func() {
 		catchUpIter.Close()
 		ubr.metrics.RangeFeedCatchUpScanNanos.Inc(start.Elapsed().Nanoseconds())
 	}()
 
-	return catchUpIter.CatchUpScan(ctx, ubr.stream.SendUnbuffered, ubr.withDiff, ubr.withFiltering,
+	err := catchUpIter.CatchUpScan(ctx, ubr.stream.SendUnbuffered, ubr.withDiff, ubr.withFiltering,
 		ubr.withOmitRemote, ubr.bulkDelivery)
 
+	if err != nil {
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: catch-up scan failed after %s: %v",
+				ubr.Range(), start.Elapsed(), err)
+		}
+	} else {
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "r%d: catch-up scan completed successfully in %s",
+				ubr.Range(), start.Elapsed())
+		}
+	}
+
+	return err
 }
 
 // Used for testing only.
