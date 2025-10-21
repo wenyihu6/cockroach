@@ -151,23 +151,13 @@ func (ubr *unbufferedRegistration) publish(
 	// is nil. Safe to send to underlying stream.
 	if ubr.mu.catchUpBuf == nil {
 		if log.V(5) {
-			eventType := "unknown"
-			if strippedEvent.Val != nil {
-				eventType = "val"
-			} else if strippedEvent.Checkpoint != nil {
-				eventType = "checkpoint"
+			if strippedEvent.Checkpoint != nil {
 				if !strippedEvent.Checkpoint.ResolvedTS.IsEmpty() {
-					lag := time.Since(strippedEvent.Checkpoint.ResolvedTS)
-					log.KvExec.Infof(ctx, "publishing live checkpoint at %s (lag: %s)",
-						strippedEvent.Checkpoint.ResolvedTS, lag)
+					log.KvExec.Infof(ctx, "publishing live checkpoint to buffer (lag: %s)", timeutil.Since(strippedEvent.Checkpoint.ResolvedTS.GoTime()))
 				}
-			} else if strippedEvent.SST != nil {
-				eventType = "sst"
-			} else if strippedEvent.DeleteRange != nil {
-				eventType = "deleteRange"
 			}
-			if eventType != "checkpoint" {
-				log.KvExec.Infof(ctx, "r%d: publishing live event type=%s", ubr.Range(), eventType)
+			if strippedEvent.Val != nil {
+				log.KvExec.VEventf(ctx, 5, "publishing live value to buffer (lag: %s)", timeutil.Since(strippedEvent.Val.Timestamp().GoTime()))
 			}
 		}
 		if err := ubr.stream.SendBuffered(strippedEvent, alloc); err != nil {

@@ -486,7 +486,6 @@ func (m *rangefeedMuxer) receiveEventsFromNode(
 				continue
 			}
 		}
-
 		switch t := event.GetValue().(type) {
 		case *kvpb.RangeFeedCheckpoint:
 			if t.Span.Contains(active.Span) {
@@ -515,8 +514,7 @@ func (m *rangefeedMuxer) receiveEventsFromNode(
 			})
 			continue
 		}
-
-		active.onRangeEvent(ms.nodeID, event.RangeID, &event.RangeFeedEvent)
+		active.onRangeEvent(ctx, ms.nodeID, event.RangeID, &event.RangeFeedEvent)
 		msg := RangeFeedMessage{RangeFeedEvent: &event.RangeFeedEvent, RegisteredSpan: active.Span}
 		select {
 		case <-ctx.Done():
