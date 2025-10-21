@@ -157,10 +157,9 @@ func (ubr *unbufferedRegistration) publish(
 			} else if strippedEvent.Checkpoint != nil {
 				eventType = "checkpoint"
 				if !strippedEvent.Checkpoint.ResolvedTS.IsEmpty() {
-					now := hlc.Timestamp{WallTime: timeutil.Now().UnixNano()}
-					lag := now.GoTime().Sub(strippedEvent.Checkpoint.ResolvedTS.GoTime())
-					log.KvExec.Infof(ctx, "r%d: publishing live checkpoint at %s (lag: %s)",
-						ubr.Range(), strippedEvent.Checkpoint.ResolvedTS, lag)
+					lag := time.Since(strippedEvent.Checkpoint.ResolvedTS)
+					log.KvExec.Infof(ctx, "publishing live checkpoint at %s (lag: %s)",
+						strippedEvent.Checkpoint.ResolvedTS, lag)
 				}
 			} else if strippedEvent.SST != nil {
 				eventType = "sst"
