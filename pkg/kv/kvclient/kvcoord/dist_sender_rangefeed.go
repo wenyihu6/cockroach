@@ -340,7 +340,7 @@ func (a *activeRangeFeed) onRangeEvent(
 	defer a.Unlock()
 	if event.Val != nil || event.SST != nil {
 		a.LastValueReceived = timeutil.Now()
-		log.KvExec.VEventf(ctx, 5, "received value from node %d: rangeID: %d", nodeID, timeutil.Since(event.Val.Timestamp().GoTime()))
+		log.KvExec.VEventf(ctx, 5, "received value from node %d: lag: %s", nodeID, timeutil.Since(event.Val.Timestamp().GoTime()))
 	} else if event.Checkpoint != nil {
 		a.Resolved = event.Checkpoint.ResolvedTS
 		log.KvExec.VEventf(ctx, 5, "received checkpoint from node %d: resolvedTS: %s, lag: %s", nodeID, event.Checkpoint.ResolvedTS, timeutil.Since(event.Checkpoint.ResolvedTS.GoTime()))

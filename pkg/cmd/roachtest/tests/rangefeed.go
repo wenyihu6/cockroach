@@ -92,7 +92,7 @@ func runRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opt range
 func withRangefeedVMod(startOpts option.StartOpts) option.StartOpts {
 	startOpts.RoachprodOpts.ExtraArgs = append(
 		startOpts.RoachprodOpts.ExtraArgs,
-		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5`,
+		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5`,
 	)
 	return startOpts
 }

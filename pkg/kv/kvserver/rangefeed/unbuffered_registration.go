@@ -105,6 +105,7 @@ func newUnbufferedRegistration(
 	stream BufferedStream,
 	removeRegFromProcessor func(registration),
 ) *unbufferedRegistration {
+	log.KvExec.VInfof(streamCtx, 5, "creating unbuffered registration startTS: %s", startTS)
 	br := &unbufferedRegistration{
 		baseRegistration: baseRegistration{
 			streamCtx:              streamCtx,
