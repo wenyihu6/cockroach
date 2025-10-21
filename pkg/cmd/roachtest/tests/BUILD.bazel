@@ -167,6 +167,7 @@ go_library(
         "query_comparison_util.go",
         "queue.go",
         "quit.go",
+        "rangefeed.go",
         "rapid_restart.go",
         "rebalance_load.go",
         "rebalance_stats.go",

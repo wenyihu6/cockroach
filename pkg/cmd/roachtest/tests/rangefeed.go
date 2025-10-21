@@ -14,6 +14,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/cluster"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/option"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/registry"
+	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/spec"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachtest/test"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 )
@@ -35,20 +36,17 @@ func registerRangefeed(r registry.Registry) {
 	r.Add(registry.TestSpec{
 		Name:             fmt.Sprintf("rangefeed/nodes=%d/duration=%s", numNodes, duration),
 		Owner:            registry.OwnerKV,
-		Cluster:          r.MakeClusterSpec(numNodes + 1), // +1 for workload node
+		Cluster:          r.MakeClusterSpec(numNodes+1, spec.WorkloadNode()), // +1 for workload node
 		CompatibleClouds: registry.AllExceptAWS,
 		Suites:           registry.Suites(registry.Nightly),
 		Leases:           registry.MetamorphicLeases,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
-			if c.IsLocal() {
-				duration = 1 * time.Minute
-				t.L().Printf("running with duration=%s in local mode\n", duration)
-			}
 			runRangefeed(ctx, t, c, rangefeedOpts{
 				ranges:            1000,
 				nodes:             numNodes,
 				duration:          duration,
 				catchUpInterval:   "30s",
+				resolvedTarget:    5 * time.Second,
 				maxRate:           500,
 				changefeedMaxRate: 500,
 			})
