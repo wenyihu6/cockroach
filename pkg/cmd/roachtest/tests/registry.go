@@ -48,6 +48,7 @@ func RegisterTests(r registry.Registry) {
 	registerCopyFrom(r)
 	registerCostFuzz(r)
 	registerDecommission(r)
+	registerRangefeed(r)
 	registerDecommissionBench(r)
 	registerDisaggRebalance(r)
 	registerDiskFull(r)
