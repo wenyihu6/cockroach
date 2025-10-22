@@ -27,11 +27,12 @@ type rangefeedOpts struct {
 	catchUpInterval   string
 	maxRate           int
 	changefeedMaxRate int
+	insertCount       int
 }
 
 func registerRangefeed(r registry.Registry) {
-	numNodes := 1
-	duration := 10 * time.Minute
+	numNodes := 3
+	duration := 15 * time.Minute
 
 	r.Add(registry.TestSpec{
 		Name:             fmt.Sprintf("rangefeed/nodes=%d/duration=%s", numNodes, duration),
@@ -42,13 +43,14 @@ func registerRangefeed(r registry.Registry) {
 		Leases:           registry.MetamorphicLeases,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runRangefeed(ctx, t, c, rangefeedOpts{
-				ranges:            1000,
+				ranges:            10000,
 				nodes:             numNodes,
 				duration:          duration,
-				catchUpInterval:   "30s",
+				catchUpInterval:   "5m",
 				resolvedTarget:    5 * time.Second,
 				maxRate:           500,
-				changefeedMaxRate: 500,
+				changefeedMaxRate: 300,
+				insertCount:       100000000,
 			})
 		},
 	})
@@ -59,8 +61,9 @@ func runRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opt range
 	c.Start(ctx, t.L(), withRangefeedVMod(option.DefaultStartOpts()), install.MakeClusterSettings(), c.Range(1, opt.nodes))
 
 	t.Status("initializing workload")
+	t.L().Printf("creating table with ranges: %d, insert count: %d", opt.ranges, opt.insertCount)
 	c.Run(ctx, option.WithNodes(c.WorkloadNode()),
-		fmt.Sprintf(`./cockroach workload init kv --splits=%d {pgurl:1-%d}`, opt.ranges, opt.nodes))
+		fmt.Sprintf(`./cockroach workload init kv --splits=%d --insert-count %d {pgurl:1-%d}`, opt.ranges, opt.insertCount, opt.nodes))
 
 	m := c.NewDeprecatedMonitor(ctx, c.Range(1, opt.nodes))
 	m.Go(func(ctx context.Context) error {
@@ -92,7 +95,7 @@ func runRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opt range
 func withRangefeedVMod(startOpts option.StartOpts) option.StartOpts {
 	startOpts.RoachprodOpts.ExtraArgs = append(
 		startOpts.RoachprodOpts.ExtraArgs,
-		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5`,
+		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5,catchup_scan=5`,
 	)
 	return startOpts
 }

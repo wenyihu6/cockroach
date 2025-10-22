@@ -132,9 +132,8 @@ func AddChangefeedToQueryLoad(
 			return false
 		}
 		log.Dev.Infof(ctx, "creating changefeed with stmt: %s with args %v", stmt, args)
-		if epoch, parseErr := strconv.ParseInt(cursorStr, 10, 64); parseErr == nil {
-			t := time.Unix(epoch, 0).UTC()
-			log.Dev.Infof(ctx, "starting a changefeed after %s", time.Since(t))
+		if epoch, err := hlc.ParseHLC(cursorStr); err == nil {
+			log.Dev.Infof(ctx, "starting a changefeed after %s", timeutil.Since(epoch.GoTime()))
 		}
 		var err error
 		rows, err = conn.Query(cfCtx, stmt, args...)

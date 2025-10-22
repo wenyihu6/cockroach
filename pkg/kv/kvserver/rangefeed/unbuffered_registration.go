@@ -374,10 +374,8 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 					} else if e.event.Checkpoint != nil {
 						checkpointCount++
 						if !e.event.Checkpoint.ResolvedTS.IsEmpty() {
-							now := hlc.Timestamp{WallTime: timeutil.Now().UnixNano()}
-							lag := now.GoTime().Sub(e.event.Checkpoint.ResolvedTS.GoTime())
-							log.KvExec.Infof(ctx, "r%d: publishing checkpoint at %s (lag: %s, wall: %d ns behind now)",
-								ubr.Range(), e.event.Checkpoint.ResolvedTS, lag, now.WallTime-e.event.Checkpoint.ResolvedTS.WallTime)
+							lag := timeutil.Since(e.event.Checkpoint.ResolvedTS.GoTime())
+							log.KvExec.Infof(ctx, "publishing checkpoint at %s (lag: %s)",e.event.Checkpoint.ResolvedTS, lag)
 						}
 					} else if e.event.SST != nil {
 						ssfCount++

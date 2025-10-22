@@ -12,6 +12,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/storage"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
 	"github.com/cockroachdb/cockroach/pkg/storage/fs"
 	"github.com/cockroachdb/cockroach/pkg/util/admission"
@@ -143,6 +144,10 @@ func (i *CatchUpIterator) CatchUpScan(
 	withOmitRemote bool,
 	bulkDeliverySize int,
 ) error {
+	totalCount := 0
+	defer func() {
+		log.KvExec.VInfof(ctx, 5, "catchup scan sent %d events", totalCount)
+	}()
 	var a bufalloc.ByteAllocator
 	// MVCCIterator will encounter historical values for each key in
 	// reverse-chronological order. To output in chronological order, store
@@ -151,12 +156,16 @@ func (i *CatchUpIterator) CatchUpScan(
 	// as we fill in previous values.
 	reorderBuf := make([]kvpb.RangeFeedEvent, 0, 5)
 
-	outputFn := emitFn
+	outputFn := func(event *kvpb.RangeFeedEvent) error {
+		totalCount++
+		return emitFn(event)
+	}
 	var emitBufSize int
 	var emitBuf []*kvpb.RangeFeedEvent
 
 	if bulkDeliverySize > 0 {
 		outputFn = func(event *kvpb.RangeFeedEvent) error {
+			totalCount += event.Size()
 			emitBuf = append(emitBuf, event)
 			emitBufSize += event.Size()
 			// If there are ~2MB of buffered events, flush them.
