@@ -83,7 +83,7 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 	nodes := c.Spec().NodeCount - 1
 	startOpts := option.NewStartOpts(option.NoBackupSchedule)
 	settings := install.MakeClusterSettings()
-	c.Start(ctx, t.L(), startOpts, settings, c.CRDBNodes())
+	c.Start(ctx, t.L(), withRangefeedVMod(startOpts), settings, c.CRDBNodes())
 
 	db := c.Conn(ctx, t.L(), 1)
 	defer db.Close()
@@ -163,6 +163,14 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 		}
 	}
 
+}
+
+func withRangefeedVMod(startOpts option.StartOpts) option.StartOpts {
+	startOpts.RoachprodOpts.ExtraArgs = append(
+		startOpts.RoachprodOpts.ExtraArgs,
+		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5,catchup_scan=5`,
+	)
+	return startOpts
 }
 
 func findP99Below(ticks []exporter.SnapshotTick, target time.Duration) time.Duration {

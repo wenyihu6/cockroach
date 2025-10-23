@@ -15,6 +15,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/retry"
 	"github.com/cockroachdb/cockroach/pkg/util/stop"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
@@ -158,10 +159,18 @@ func (bs *BufferedSender) sendBuffered(
 					// If _this_ event is an error, no use sending another error. This stream
 					// is going down. Admit this error and mark the stream as overflowed.
 					status.state = streamOverflowed
+					if log.V(5) {
+						log.KvExec.Infof(context.Background(), "buffered_sender: stream %d state transition: streamActive -> streamOverflowed (at capacity, error event)",
+							ev.StreamID)
+					}
 				} else {
 					// This stream is at capacity, return an error to the registration that it
 					// should send back to us after cleaning up.
 					status.state = streamOverflowing
+					if log.V(5) {
+						log.KvExec.Infof(context.Background(), "buffered_sender: stream %d state transition: streamActive -> streamOverflowing (at capacity: %d/%d)",
+							ev.StreamID, status.queueItems, bs.queueMu.perStreamCapacity)
+					}
 					return newRetryErrBufferCapacityExceeded()
 				}
 			}
@@ -180,12 +189,20 @@ func (bs *BufferedSender) sendBuffered(
 			// that exception if possible.
 			if ev.Error != nil {
 				status.state = streamOverflowed
+				if log.V(5) {
+					log.KvExec.Infof(context.Background(), "buffered_sender: stream %d state transition: streamOverflowing -> streamOverflowed (received error event)",
+						ev.StreamID)
+				}
 			}
 		case streamOverflowed:
 			// If we are overflowed, we don't expect any further events because the
 			// registration should have disconnected in response to the error.
 			//
 			// TODO(ssd): Consider adding an assertion here.
+			if log.V(5) {
+				log.KvExec.Infof(context.Background(), "buffered_sender: stream %d dropping event (already overflowed)",
+					ev.StreamID)
+			}
 			return nil
 		default:
 			panic(fmt.Sprintf("unhandled stream state: %v", status.state))
@@ -210,6 +227,22 @@ func (bs *BufferedSender) sendBuffered(
 // sendUnbuffered sends the event directly to the underlying
 // ServerStreamSender.  It bypasses the buffer and thus may block.
 func (bs *BufferedSender) sendUnbuffered(ev *kvpb.MuxRangeFeedEvent) error {
+	if log.V(5) {
+		eventType := "unknown"
+		if ev.RangeFeedEvent.Val != nil {
+			eventType = "val"
+		} else if ev.RangeFeedEvent.Checkpoint != nil {
+			eventType = "checkpoint"
+		} else if ev.RangeFeedEvent.SST != nil {
+			eventType = "sst"
+		} else if ev.RangeFeedEvent.DeleteRange != nil {
+			eventType = "deleteRange"
+		} else if ev.RangeFeedEvent.Error != nil {
+			eventType = "error"
+		}
+		log.KvExec.Infof(context.Background(), "buffered_sender: sending unbuffered event type=%s to stream %d",
+			eventType, ev.StreamID)
+	}
 	return bs.sender.Send(ev)
 }
 
@@ -219,17 +252,28 @@ func (bs *BufferedSender) sendUnbuffered(ev *kvpb.MuxRangeFeedEvent) error {
 func (bs *BufferedSender) run(
 	ctx context.Context, stopper *stop.Stopper, onError func(streamID int64),
 ) error {
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "buffered_sender: starting run loop")
+	}
+	var eventsSent int64
 	for {
 		select {
 		case <-ctx.Done():
 			// Top level goroutine will receive the context cancellation and handle
 			// ctx.Err().
+			if log.V(5) {
+				log.KvExec.Infof(ctx, "buffered_sender: stopping run loop (context done), sent %d events total", eventsSent)
+			}
 			return nil
 		case <-stopper.ShouldQuiesce():
 			// Top level goroutine will receive the stopper quiesce signal and handle
 			// error.
+			if log.V(5) {
+				log.KvExec.Infof(ctx, "buffered_sender: stopping run loop (stopper quiesce), sent %d events total", eventsSent)
+			}
 			return nil
 		case <-bs.notifyDataC:
+			batchSize := 0
 			for {
 				e, success := bs.popFront()
 				if !success {
@@ -240,11 +284,23 @@ func (bs *BufferedSender) run(
 				err := bs.sender.Send(e.ev)
 				e.alloc.Release(ctx)
 				if e.ev.Error != nil {
+					if log.V(5) {
+						log.KvExec.Infof(ctx, "buffered_sender: sent error event to stream %d", e.ev.StreamID)
+					}
 					onError(e.ev.StreamID)
 				}
 				if err != nil {
+					if log.V(5) {
+						log.KvExec.Infof(ctx, "buffered_sender: error sending event: %v", err)
+					}
 					return err
 				}
+				batchSize++
+				eventsSent++
+			}
+			if log.V(5) && batchSize > 0 {
+				log.KvExec.Infof(ctx, "buffered_sender: sent batch of %d events, total sent: %d, remaining in buffer: %d",
+					batchSize, eventsSent, bs.len())
 			}
 		}
 	}
@@ -272,6 +328,10 @@ func (bs *BufferedSender) addStream(streamID int64) {
 	defer bs.queueMu.Unlock()
 	if _, ok := bs.queueMu.byStream[streamID]; !ok {
 		bs.queueMu.byStream[streamID] = streamStatus{}
+		if log.V(5) {
+			log.KvExec.Infof(context.Background(), "buffered_sender: added stream %d, total active streams: %d",
+				streamID, len(bs.queueMu.byStream))
+		}
 	} else {
 		if buildutil.CrdbTestBuild {
 			panic(fmt.Sprintf("stream %d already exists in buffered sender", streamID))
@@ -288,6 +348,12 @@ func (bs *BufferedSender) addStream(streamID int64) {
 func (bs *BufferedSender) removeStream(streamID int64) {
 	bs.queueMu.Lock()
 	defer bs.queueMu.Unlock()
+	if status, ok := bs.queueMu.byStream[streamID]; ok {
+		if log.V(5) {
+			log.KvExec.Infof(context.Background(), "buffered_sender: removing stream %d, state=%d, queued_items=%d, remaining streams: %d",
+				streamID, status.state, status.queueItems, len(bs.queueMu.byStream)-1)
+		}
+	}
 	delete(bs.queueMu.byStream, streamID)
 }
 
@@ -298,6 +364,18 @@ func (bs *BufferedSender) cleanup(ctx context.Context) {
 	defer bs.queueMu.Unlock()
 	bs.queueMu.stopped = true
 	remaining := bs.queueMu.buffer.len()
+	numStreams := len(bs.queueMu.byStream)
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "buffered_sender: cleaning up, draining %d remaining events from buffer, closing %d streams",
+			remaining, numStreams)
+		// Log stream-specific details
+		for streamID, status := range bs.queueMu.byStream {
+			if status.queueItems > 0 {
+				log.KvExec.Infof(ctx, "buffered_sender: stream %d had %d undrained items (state=%d)",
+					streamID, status.queueItems, status.state)
+			}
+		}
+	}
 	bs.queueMu.buffer.drain(ctx)
 	bs.queueMu.byStream = nil
 	bs.metrics.BufferedSenderQueueSize.Dec(remaining)

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/cockroach/pkg/workload"
 	"github.com/cockroachdb/cockroach/pkg/workload/histogram"
@@ -123,6 +124,10 @@ func AddChangefeedToQueryLoad(
 	maybeSetupRows := func() (done bool) {
 		if rows != nil {
 			return false
+		}
+		log.Dev.Infof(ctx, "creating changefeed with stmt: %s with args %v", stmt, args)
+		if epoch, err := hlc.ParseHLC(cursorStr); err == nil {
+			log.Dev.Infof(ctx, "starting a changefeed after %s", timeutil.Since(epoch.GoTime()))
 		}
 		var err error
 		rows, err = conn.Query(cfCtx, stmt, args...)

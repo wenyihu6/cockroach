@@ -100,6 +100,17 @@ func NewStreamManager(sender sender, metrics *StreamManagerMetrics) *StreamManag
 }
 
 func (sm *StreamManager) NewStream(streamID int64, rangeID roachpb.RangeID) (sink Stream) {
+	if log.V(5) {
+		senderType := "unknown"
+		switch sm.sender.(type) {
+		case *BufferedSender:
+			senderType = "buffered"
+		case *UnbufferedSender:
+			senderType = "unbuffered"
+		}
+		log.KvExec.Infof(context.Background(), "stream_manager: creating new %s stream for streamID=%d rangeID=%d",
+			senderType, streamID, rangeID)
+	}
 	switch sender := sm.sender.(type) {
 	case *BufferedSender:
 		return &BufferedPerRangeEventSink{
@@ -125,6 +136,15 @@ func (sm *StreamManager) OnError(streamID int64) {
 			assertTrue(d.IsDisconnected(), "OnError called on connected registration")
 			delete(sm.streams.m, streamID)
 			sm.metrics.ActiveMuxRangeFeed.Dec(1)
+			if log.V(5) {
+				log.KvExec.Infof(context.Background(), "stream_manager: OnError for stream %d, removed from manager, active streams: %d",
+					streamID, len(sm.streams.m))
+			}
+		} else {
+			if log.V(5) {
+				log.KvExec.Infof(context.Background(), "stream_manager: OnError for stream %d, but stream not found in manager (may have been removed already)",
+					streamID)
+			}
 		}
 	}()
 	sm.sender.removeStream(streamID)
@@ -141,13 +161,26 @@ func (sm *StreamManager) DisconnectStream(streamID int64, err *kvpb.Error) {
 	defer sm.streams.Unlock()
 	if disconnector, ok := sm.streams.m[streamID]; ok {
 		// Fine to skip nil checking here since that would be a programming error.
+		if log.V(5) {
+			log.KvExec.Infof(context.Background(), "stream_manager: disconnecting stream %d with error: %v",
+				streamID, err)
+		}
 		disconnector.Disconnect(err)
+	} else {
+		if log.V(5) {
+			log.KvExec.Infof(context.Background(), "stream_manager: attempted to disconnect stream %d, but stream not found",
+				streamID)
+		}
 	}
 }
 
 // RegisteringStream is called once a stream will be registered. After this
 // point, the stream may start to see event.
 func (sm *StreamManager) RegisteringStream(streamID int64) {
+	if log.V(5) {
+		log.KvExec.Infof(context.Background(), "stream_manager: registering stream %d, preparing to receive events",
+			streamID)
+	}
 	sm.sender.addStream(streamID)
 }
 
@@ -163,6 +196,10 @@ func (sm *StreamManager) AddStream(streamID int64, d Disconnector) {
 	if d.IsDisconnected() {
 		// If the stream is already disconnected, we don't add it to streams. The
 		// registration will have already sent an error to the client.
+		if log.V(5) {
+			log.KvExec.Infof(context.Background(), "stream_manager: stream %d already disconnected, not adding to manager",
+				streamID)
+		}
 		return
 	}
 	if _, ok := sm.streams.m[streamID]; ok {
@@ -171,6 +208,10 @@ func (sm *StreamManager) AddStream(streamID int64, d Disconnector) {
 	sm.streams.m[streamID] = d
 	sm.metrics.ActiveMuxRangeFeed.Inc(1)
 	sm.metrics.NumMuxRangeFeed.Inc(1)
+	if log.V(5) {
+		log.KvExec.Infof(context.Background(), "stream_manager: added stream %d to manager, total active streams: %d, cumulative streams: %d",
+			streamID, len(sm.streams.m), sm.metrics.NumMuxRangeFeed.Count())
+	}
 }
 
 // Start launches sender.run in the background if no error is returned.
@@ -184,18 +225,34 @@ func (sm *StreamManager) AddStream(streamID int64, d Disconnector) {
 //
 // defer StreamManager.Stop()
 func (sm *StreamManager) Start(ctx context.Context, stopper *stop.Stopper) error {
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "stream_manager: starting sender run loop")
+	}
 	sm.errCh = make(chan error, 1)
 	sm.wg.Add(1)
 	ctx, sm.taskCancel = context.WithCancel(ctx)
 	if err := stopper.RunAsyncTask(ctx, "stream-manager-sender", func(ctx context.Context) {
 		defer sm.wg.Done()
 		if err := sm.sender.run(ctx, stopper, sm.OnError); err != nil {
+			if log.V(5) {
+				log.KvExec.Infof(ctx, "stream_manager: sender run loop returned error: %v", err)
+			}
 			sm.errCh <- err
+		} else {
+			if log.V(5) {
+				log.KvExec.Infof(ctx, "stream_manager: sender run loop completed without error")
+			}
 		}
 	}); err != nil {
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "stream_manager: failed to start async task: %v", err)
+		}
 		sm.taskCancel()
 		sm.wg.Done()
 		return err
+	}
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "stream_manager: started successfully")
 	}
 	return nil
 }
@@ -204,22 +261,47 @@ func (sm *StreamManager) Start(ctx context.Context, stopper *stop.Stopper) error
 // nothing if sender.run is already finished. It is expected to be called after
 // StreamManager.Start.
 func (sm *StreamManager) Stop(ctx context.Context) {
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "stream_manager: stopping, canceling sender task")
+	}
 	sm.taskCancel()
 	sm.wg.Wait()
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "stream_manager: sender task completed, cleaning up")
+	}
 	sm.sender.cleanup(ctx)
 	sm.streams.Lock()
 	defer sm.streams.Unlock()
-	log.KvExec.VInfof(ctx, 2, "stopping stream manager: disconnecting %d streams", len(sm.streams.m))
+	numStreams := len(sm.streams.m)
+	log.KvDistribution.VInfof(ctx, 2, "stopping stream manager: disconnecting %d streams", numStreams)
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "stream_manager: disconnecting %d active streams", numStreams)
+		// Log individual streams being disconnected
+		if numStreams > 0 && numStreams <= 10 {
+			// Only log individual stream IDs if there aren't too many
+			streamIDs := make([]int64, 0, numStreams)
+			for streamID := range sm.streams.m {
+				streamIDs = append(streamIDs, streamID)
+			}
+			log.KvExec.Infof(ctx, "stream_manager: disconnecting streams: %v", streamIDs)
+		}
+	}
 	rangefeedClosedErr := kvpb.NewError(
 		kvpb.NewRangeFeedRetryError(kvpb.RangeFeedRetryError_REASON_RANGEFEED_CLOSED))
 	sm.metrics.ActiveMuxRangeFeed.Dec(int64(len(sm.streams.m)))
-	for _, disconnector := range sm.streams.m {
+	for streamID, disconnector := range sm.streams.m {
 		// Disconnect all streams with a retry error. No rangefeed errors will be
 		// sent to the client after shutdown, but the gRPC stream will still
 		// terminate.
 		disconnector.Disconnect(rangefeedClosedErr)
+		if log.V(5) && numStreams <= 10 {
+			log.KvExec.Infof(ctx, "stream_manager: disconnected stream %d", streamID)
+		}
 	}
 	sm.streams.m = nil
+	if log.V(5) {
+		log.KvExec.Infof(ctx, "stream_manager: stopped successfully")
+	}
 }
 
 // Error returns a channel for receiving errors from sender.run. Only non-nil
