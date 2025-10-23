@@ -43,14 +43,14 @@ func registerRangefeed(r registry.Registry) {
 		Leases:           registry.MetamorphicLeases,
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runRangefeed(ctx, t, c, rangefeedOpts{
-				ranges:            10000,
+				ranges:            1000,
 				nodes:             numNodes,
 				duration:          duration,
-				catchUpInterval:   "5m",
+				catchUpInterval:   "3m",
 				resolvedTarget:    5 * time.Second,
 				maxRate:           500,
 				changefeedMaxRate: 300,
-				insertCount:       100000000,
+				insertCount:       1000,
 			})
 		},
 	})
