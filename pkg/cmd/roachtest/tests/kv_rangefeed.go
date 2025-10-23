@@ -162,7 +162,6 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 			t.L().Printf("changefeed caught up quickly enough %s < %s", actualCatchUpDuration, allowedCatchUpDuration)
 		}
 	}
-
 }
 
 func withRangefeedVMod(startOpts option.StartOpts) option.StartOpts {
@@ -255,6 +254,7 @@ func registerKVRangefeed(r registry.Registry) {
 			Cluster:   r.MakeClusterSpec(4, spec.CPU(8), spec.WorkloadNode(), spec.WorkloadNodeCPU(4)),
 			Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 				runKVRangefeed(ctx, t, c, opts)
+				t.Fatalf("passed but fail for logs")
 			},
 			CompatibleClouds: registry.AllClouds,
 			Suites:           registry.Suites(registry.Nightly),

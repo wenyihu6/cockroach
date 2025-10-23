@@ -21,6 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+var logResolvedEvery = log.Every(10 * time.Second)
+
 // AddChangefeedToQueryLoad augments the passed QueryLoad to contain an extra
 // worker to run a changefeed over the tables of the generator.
 func AddChangefeedToQueryLoad(
@@ -135,7 +137,6 @@ func AddChangefeedToQueryLoad(
 	}
 
 	var lastResolved hlc.Timestamp
-
 	ql.ChangefeedFns = append(ql.ChangefeedFns, func(ctx context.Context) error {
 		if doneErr != nil {
 			return doneErr
@@ -172,6 +173,7 @@ func AddChangefeedToQueryLoad(
 					return errors.Errorf("resolved timestamp %s is less than last resolved timestamp %s", resolved, lastResolved)
 				}
 				lastResolved = resolved
+				log.Dev.Infof(ctx, "received resolved timestamp: ts=%s, lag=%s", resolved, timeutil.Since(resolved.GoTime()))
 			} else {
 				return errors.Errorf("failed to parse CHANGEFEED event: %s", values[2])
 			}
@@ -179,7 +181,12 @@ func AddChangefeedToQueryLoad(
 			// our lastResolved so that we don't get long periods of 0 in the
 			// histogram.
 			if cfResolved != nil {
-				cfResolved.Record(timeutil.Since(lastResolved.GoTime()))
+				if !lastResolved.IsEmpty() {
+					if logResolvedEvery.ShouldLog() {
+						log.Dev.Infof(ctx, "recording resolved timestamp: lag=%s, ts=%s", timeutil.Since(lastResolved.GoTime()), lastResolved)
+					}
+					cfResolved.Record(timeutil.Since(lastResolved.GoTime()))
+				}
 			}
 			return nil
 		}
