@@ -37,9 +37,8 @@ type kvRangefeedTest struct {
 	// duration is how long the test will run.
 	duration time.Duration
 
-	// catchUpInternal is how much we will delay the changefeed start by while the
-	// workload is running.
-	catchUpInterval time.Duration
+	// insertCount is the number of rows to insert into the KV table.
+	insertCount int64
 	// sinkProvisioning is the throughput of the sink expressed in a percentage of
 	// the writeMaxRate.
 	sinkProvisioning float64
@@ -57,7 +56,7 @@ func (t kvRangefeedTest) changefeedMaxRate() int64 {
 }
 
 func (t kvRangefeedTest) expectedCatchupDuration() (time.Duration, error) {
-	writesToCatchUp := t.writeMaxRate * int64(t.catchUpInterval.Seconds())
+	writesToCatchUp := t.insertCount
 	catchUpRate := t.changefeedMaxRate() - t.writeMaxRate
 	if catchUpRate < 0 {
 		return 0, errors.AssertionFailedf("catch-up rate (%d) is negative, catch up will not complete", catchUpRate)
@@ -75,8 +74,8 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 		if err != nil {
 			t.Fatal(err)
 		}
-		if opts.duration > 0 && opts.duration < catchUpDur+opts.catchUpInterval {
-			t.Fatalf("duration (%s) is insufficient for catch up to complete (%s)", opts.duration, catchUpDur+opts.catchUpInterval)
+		if opts.duration > 0 && opts.duration < catchUpDur {
+			t.Fatalf("duration (%s) is insufficient for catch up to complete (%s)", opts.duration, catchUpDur)
 		}
 	}
 
@@ -109,10 +108,27 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 		opts.splits, nodes)
 	c.Run(ctx, option.WithNodes(c.WorkloadNode()), initCmd)
 
+	err := roachtestutil.WaitFor3XReplication(ctx, t.L(), db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1 * time.Second)
+
+	var cursorStr string
+	if err := db.QueryRow("SELECT cluster_logical_timestamp()").Scan(&cursorStr); err != nil {
+		t.Fatal(err)
+	}
+	t.L().Printf("using cursor %s", cursorStr)
+
+	t.Status("inserting rows")
+	initCmd = fmt.Sprintf("./cockroach workload init kv --insert-count %d --data-loader=insert {pgurl:1-%d}",
+		opts.insertCount, nodes)
+	c.Run(ctx, option.WithNodes(c.WorkloadNode()), initCmd)
+
 	t.Status("running workload with changefeed")
-	t.L().Printf("catch-up starting in %s", opts.catchUpInterval)
+	t.L().Printf("inserting %d rows", opts.insertCount)
 	if opts.expectChangefeedCatchesUp {
-		t.L().Printf("catch-up expected to take %s (%s after start)", catchUpDur, catchUpDur+opts.catchUpInterval)
+		t.L().Printf("catch-up expected to take %s", catchUpDur)
 	}
 
 	const resolvedTarget = 5 * time.Second
@@ -124,18 +140,16 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 			roachtestutil.GetWorkloadHistogramArgs(t, c, nil),
 			" --changefeed",
 			fmt.Sprintf("--changefeed-resolved-target=%s", resolvedTarget),
-			fmt.Sprintf("--changefeed-start-delay=%s", opts.catchUpInterval),
 			fmt.Sprintf("--duration=%s", opts.duration),
-
 			fmt.Sprintf("--changefeed-max-rate=%d", opts.changefeedMaxRate()),
 			fmt.Sprintf("--max-rate=%d", opts.writeMaxRate),
+			fmt.Sprintf("--changefeed-cursor=%s", cursorStr),
 		}
 
 		cmd := fmt.Sprintf("./cockroach workload run kv %s {pgurl:1-%d}",
 			strings.Join(opts, " "),
 			nodes,
 		)
-
 		t.L().Printf("Running workload: %s", cmd)
 		c.Run(ctx, option.WithNodes(c.WorkloadNode()), cmd)
 		return nil
@@ -153,7 +167,7 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 		}
 
 		allowedCatchUpDuration := time.Duration(int64(float64(catchUpDur) * float64(1.1)))
-		actualCatchUpDuration := findP99Below(metrics["changefeed-resolved"], resolvedTarget*2) - opts.catchUpInterval
+		actualCatchUpDuration := findP99Below(metrics["changefeed-resolved"], resolvedTarget*2)
 		if actualCatchUpDuration == 0 {
 			t.Fatal("changefeed never caught up")
 		} else if actualCatchUpDuration > allowedCatchUpDuration {
@@ -222,20 +236,26 @@ func parseMetrics(metricsFile string) (map[string][]exporter.SnapshotTick, error
 }
 
 func registerKVRangefeed(r registry.Registry) {
-	testConfigs := []kvRangefeedTest{
+	testConfigs := []struct {
+		writeMaxRate              int64
+		duration                  time.Duration
+		sinkProvisioning          float64
+		splits                    int64
+		expectChangefeedCatchesUp  bool
+		catchUpInterval            time.Duration
+	}{
 		{
-			writeMaxRate:              500,
-			duration:                  10 * time.Minute,
-			catchUpInterval:           1 * time.Minute,
-			sinkProvisioning:          1.2, // Correctly provisioned.
-			splits:                    1000,
+			writeMaxRate:             500,
+			duration:                 10 * time.Minute,
+			sinkProvisioning:         1.2, // Correctly provisioned.
+			splits:                   1000,
 			expectChangefeedCatchesUp: true,
+			catchUpInterval:          1 * time.Minute,
 		},
 		// {
-		// 	writeMaxRate:              1000,
-		// 	catchUpInterval:           5 * time.Minute,
-		// 	sinkProvisioning:          0.9, // Under-provisioned.
-		// 	splits:                    1000,
+		// 	writeMaxRate:             1000,
+		// 	sinkProvisioning:         0.9, // Under-provisioned.
+		// 	splits:                   1000,
 		// 	expectChangefeedCatchesUp: false,
 		// },
 	}
@@ -243,7 +263,7 @@ func registerKVRangefeed(r registry.Registry) {
 	for _, opts := range testConfigs {
 		testName := fmt.Sprintf("kv-rangefeed/write-rate=%d/sink-rate=%d/catchup=%s/splits=%d",
 			opts.writeMaxRate,
-			opts.changefeedMaxRate(),
+			int64(float64(opts.writeMaxRate) * opts.sinkProvisioning),
 			opts.catchUpInterval,
 			opts.splits,
 		)
@@ -253,7 +273,14 @@ func registerKVRangefeed(r registry.Registry) {
 			Benchmark: true,
 			Cluster:   r.MakeClusterSpec(4, spec.CPU(8), spec.WorkloadNode(), spec.WorkloadNodeCPU(4)),
 			Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
-				runKVRangefeed(ctx, t, c, opts)
+				runKVRangefeed(ctx, t, c, kvRangefeedTest{
+					writeMaxRate: opts.writeMaxRate,
+					duration: opts.duration,
+					insertCount: int64((opts.catchUpInterval.Seconds()) * float64(opts.writeMaxRate)),
+					sinkProvisioning: opts.sinkProvisioning,
+					splits: int(opts.splits),
+					expectChangefeedCatchesUp: opts.expectChangefeedCatchesUp,
+				})
 				t.Fatalf("passed but fail for logs")
 			},
 			CompatibleClouds: registry.AllClouds,

@@ -30,6 +30,7 @@ func AddChangefeedToQueryLoad(
 	gen workload.ConnFlagser,
 	dbName string,
 	resolvedTarget time.Duration,
+	cursorStr string,
 	urls []string,
 	reg *histogram.Registry,
 	ql *workload.QueryLoad,
@@ -79,11 +80,6 @@ func AddChangefeedToQueryLoad(
 		return err
 	}
 
-	var cursorStr string
-	if err := conn.QueryRow(ctx, "SELECT cluster_logical_timestamp()").Scan(&cursorStr); err != nil {
-		return err
-	}
-
 	tableNames := strings.Builder{}
 	for i, table := range gen.Tables() {
 		if i == 0 {
@@ -123,9 +119,13 @@ func AddChangefeedToQueryLoad(
 		return true
 	}
 	var rows pgx.Rows
+	var currTime time.Time
 	maybeSetupRows := func() (done bool) {
 		if rows != nil {
 			return false
+		}
+		if currTime.IsZero() {
+			currTime = timeutil.Now()
 		}
 		log.Dev.Infof(ctx, "creating changefeed with stmt: %s with args %v", stmt, args)
 		if epoch, err := hlc.ParseHLC(cursorStr); err == nil {
@@ -137,6 +137,7 @@ func AddChangefeedToQueryLoad(
 	}
 
 	var lastResolved hlc.Timestamp
+	firstResolved := true
 	ql.ChangefeedFns = append(ql.ChangefeedFns, func(ctx context.Context) error {
 		if doneErr != nil {
 			return doneErr
@@ -173,7 +174,7 @@ func AddChangefeedToQueryLoad(
 					return errors.Errorf("resolved timestamp %s is less than last resolved timestamp %s", resolved, lastResolved)
 				}
 				lastResolved = resolved
-				log.Dev.Infof(ctx, "received resolved timestamp: ts=%s, lag=%s", resolved, timeutil.Since(resolved.GoTime()))
+				log.Dev.Infof(ctx, "received resolved timestamp: lag=%s, ts=%s", timeutil.Since(resolved.GoTime()), resolved)
 			} else {
 				return errors.Errorf("failed to parse CHANGEFEED event: %s", values[2])
 			}
@@ -182,6 +183,10 @@ func AddChangefeedToQueryLoad(
 			// histogram.
 			if cfResolved != nil {
 				if !lastResolved.IsEmpty() {
+					if firstResolved {
+						log.Dev.Infof(ctx, "first resolved timestamp: ts=%s (took %s to start)", lastResolved.GoTime(), timeutil.Since(currTime))
+						firstResolved = false
+					}
 					if logResolvedEvery.ShouldLog() {
 						log.Dev.Infof(ctx, "recording resolved timestamp: lag=%s, ts=%s", timeutil.Since(lastResolved.GoTime()), lastResolved)
 					}
