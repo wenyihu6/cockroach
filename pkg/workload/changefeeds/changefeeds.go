@@ -181,6 +181,7 @@ func AddChangefeedToQueryLoad(
 			// Resolved timestamps arrived infrequently. Always record the time since
 			// our lastResolved so that we don't get long periods of 0 in the
 			// histogram.
+			// TODO(): during catchup scan, if lastResolved is empty, record 0.
 			if cfResolved != nil {
 				if !lastResolved.IsEmpty() {
 					if firstResolved {

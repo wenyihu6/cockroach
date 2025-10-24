@@ -142,20 +142,20 @@ func (ubr *unbufferedRegistration) publish(
 	// Disconnected or catchUpOverflowed is not set and catchUpBuf
 	// is nil. Safe to send to underlying stream.
 	if ubr.mu.catchUpBuf == nil {
-		if log.V(5) {
-			if strippedEvent.Checkpoint != nil {
-				if !strippedEvent.Checkpoint.ResolvedTS.IsEmpty() {
-					if logEventEvery.ShouldLog() {
-						log.KvExec.Infof(ctx, "publishing live checkpoint to buffer (lag: %s)", timeutil.Since(strippedEvent.Checkpoint.ResolvedTS.GoTime()))
-					}
-				}
-			}
-			if strippedEvent.Val != nil {
-				if logEventEvery.ShouldLog() {
-					log.KvExec.VEventf(ctx, 5, "publishing live value to buffer (lag: %s)", timeutil.Since(strippedEvent.Val.Timestamp().GoTime()))
-				}
-			}
-		}
+		// if log.V(5) {
+		// 	if strippedEvent.Checkpoint != nil {
+		// 		if !strippedEvent.Checkpoint.ResolvedTS.IsEmpty() {
+		// 			if logEventEvery.ShouldLog() {
+		// 				log.KvExec.Infof(ctx, "publishing live checkpoint to buffer (lag: %s)", timeutil.Since(strippedEvent.Checkpoint.ResolvedTS.GoTime()))
+		// 			}
+		// 		}
+		// 	}
+		// 	if strippedEvent.Val != nil {
+		// 		if logEventEvery.ShouldLog() {
+		// 			log.KvExec.VEventf(ctx, 5, "publishing live value to buffer (lag: %s)", timeutil.Since(strippedEvent.Val.Timestamp().GoTime()))
+		// 		}
+		// 	}
+		// }
 		if err := ubr.stream.SendBuffered(strippedEvent, alloc); err != nil {
 			ubr.disconnectLocked(kvpb.NewError(err))
 		}

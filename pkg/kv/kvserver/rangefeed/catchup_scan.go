@@ -165,7 +165,7 @@ func (i *CatchUpIterator) CatchUpScan(
 
 	if bulkDeliverySize > 0 {
 		outputFn = func(event *kvpb.RangeFeedEvent) error {
-			totalCount += event.Size()
+			totalCount += 1 
 			emitBuf = append(emitBuf, event)
 			emitBufSize += event.Size()
 			// If there are ~2MB of buffered events, flush them.

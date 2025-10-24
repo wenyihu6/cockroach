@@ -60,6 +60,8 @@ import (
 // need to. We probably want each buffered sender (or each consumerID) to be
 // able to hold up to some fraction of the total rangefeed budget. But we are
 // starting here for now.
+// 4096*2 events, 1000 ranges, 500 requests per sec, 60s (catchup scan) 60*500
+// 5000 requests 
 var RangefeedSingleBufferedSenderQueueMaxPerReg = settings.RegisterIntSetting(
 	settings.SystemOnly,
 	"kv.rangefeed.buffered_sender.per_registration_max_queue_size",

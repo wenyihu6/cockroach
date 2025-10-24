@@ -97,6 +97,7 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 		}
 	}
 
+	// lower RangefeedSingleBufferedSenderQueueMaxPerReg and decrease ranges, increase the rate 
 	// Set per-changefeed memory to a low value so that we don't queue in the
 	// changefeed machinery and instead force the buffered sender to queue.
 	if _, err := db.Exec("SET CLUSTER SETTING changefeed.memory.per_changefeed_limit='1MiB'"); err != nil {
@@ -104,7 +105,9 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 	}
 
 	t.Status("initializing workload")
-	initCmd := fmt.Sprintf("./cockroach workload init kv --splits=%d {pgurl:1-%d}",
+	// 64 bytes per block 
+	// 64 * 1024 = 65536 bytes
+	initCmd := fmt.Sprintf("./cockroach workload init kv --splits=%d --read-percent 0 --min-block-bytes=64 --max-block-bytes=64 {pgurl:1-%d}",
 		opts.splits, nodes)
 	c.Run(ctx, option.WithNodes(c.WorkloadNode()), initCmd)
 
@@ -121,7 +124,7 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 	t.L().Printf("using cursor %s", cursorStr)
 
 	t.Status("inserting rows")
-	initCmd = fmt.Sprintf("./cockroach workload init kv --insert-count %d --data-loader=insert {pgurl:1-%d}",
+	initCmd = fmt.Sprintf("./cockroach workload init kv --insert-count %d --read-percent 0 --data-loader=insert --min-block-bytes=64 --max-block-bytes=64 {pgurl:1-%d}",
 		opts.insertCount, nodes)
 	c.Run(ctx, option.WithNodes(c.WorkloadNode()), initCmd)
 
@@ -146,7 +149,7 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 			fmt.Sprintf("--changefeed-cursor=%s", cursorStr),
 		}
 
-		cmd := fmt.Sprintf("./cockroach workload run kv %s {pgurl:1-%d}",
+		cmd := fmt.Sprintf("./cockroach workload run kv --read-percent 0 %s {pgurl:1-%d}",
 			strings.Join(opts, " "),
 			nodes,
 		)
