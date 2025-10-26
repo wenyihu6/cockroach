@@ -65,6 +65,35 @@ func (t kvRangefeedTest) expectedCatchupDuration() (time.Duration, error) {
 	return catchUpTime, nil
 }
 
+// Rought math: 
+// To hit the slow consumer err, 1. overflow catch up buffer 2. overflow buffered sender queue size. 
+// Given per-changefeed memory limit is 512 KiB, each event is 1024B (512 KiB / 1024B = 512 events). 
+// 25 ranges, 4096 events per range.
+// To buffer there full, (rate of incoming - outgoing) * time.Duration(sec) = 512 events.
+// During non-catch up, 512/(500-500*0.9) = 10.24s. After that, we will start buffering in buffered sender queue. 
+// To overflow buffered sender queue (4096*25), 512/(500-500*0.9) = 10.24s. 
+// 
+// If we want to overflow with catchUpBuf: 
+// During catchup, real live events will be buffered in catch up buffer (4096*25) / 500 = 204.8s.
+// After catch up buffer, all events are loaded to buffered sender queue (4096*25) = 102400 events.
+// If range overflowed during catch up, they were all disconnected. Otherwise, they are still connected. 
+// Then, if events flow in at a rate > 500, buffered sender queue will overflow in 10s. 
+// Need to lift the catch up iterator to 64 ranges a time as well. 
+func makeKVRangefeedOptions(c cluster.Cluster) (option.StartOpts, install.ClusterSettings) {
+	startOpts := option.NewStartOpts(option.NoBackupSchedule)
+	settings := install.MakeClusterSettings()
+	// changefeed machinery and instead force the buffered sender to queue.
+	settings.ClusterSettings["kv.rangefeed.enabled"] = "true"
+	settings.ClusterSettings["kv.rangefeed.concurrent_catchup_iterators"] = "64"
+	settings.ClusterSettings["changefeed.memory.per_changefeed_limit"] = "512KiB"
+	settings.Env = append(settings.Env, "COCKROACH_RANGEFEED_SEND_TIMEOUT=0")
+	startOpts.RoachprodOpts.ExtraArgs = append(
+		startOpts.RoachprodOpts.ExtraArgs,
+		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5,catchup_scan=5`,
+	)
+	return startOpts, settings
+}
+
 func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kvRangefeedTest) {
 	// Check this early to avoid test misconfigurations.
 	var catchUpDur time.Duration
@@ -80,34 +109,16 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 	}
 
 	nodes := c.Spec().NodeCount - 1
-	startOpts := option.NewStartOpts(option.NoBackupSchedule)
-	settings := install.MakeClusterSettings()
-	c.Start(ctx, t.L(), withRangefeedVMod(startOpts), settings, c.CRDBNodes())
+	startOpts, settings := makeKVRangefeedOptions(c)
+	c.Start(ctx, t.L(), startOpts, settings, c.CRDBNodes())
 
 	db := c.Conn(ctx, t.L(), 1)
 	defer db.Close()
 
-	var rfEnabled bool
-	if err := db.QueryRow("SHOW CLUSTER SETTING kv.rangefeed.enabled").Scan(&rfEnabled); err != nil {
-		t.Fatal(err)
-	}
-	if !rfEnabled {
-		if _, err := db.Exec("SET CLUSTER SETTING kv.rangefeed.enabled = true"); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// lower RangefeedSingleBufferedSenderQueueMaxPerReg and decrease ranges, increase the rate 
-	// Set per-changefeed memory to a low value so that we don't queue in the
-	// changefeed machinery and instead force the buffered sender to queue.
-	if _, err := db.Exec("SET CLUSTER SETTING changefeed.memory.per_changefeed_limit='1MiB'"); err != nil {
-		t.Fatal(err)
-	}
-
 	t.Status("initializing workload")
 	// 64 bytes per block 
 	// 64 * 1024 = 65536 bytes
-	initCmd := fmt.Sprintf("./cockroach workload init kv --splits=%d --read-percent 0 --min-block-bytes=64 --max-block-bytes=64 {pgurl:1-%d}",
+	initCmd := fmt.Sprintf("./cockroach workload init kv --splits=%d --read-percent 0 --min-block-bytes=1024 --max-block-bytes=1024 {pgurl:1-%d}",
 		opts.splits, nodes)
 	c.Run(ctx, option.WithNodes(c.WorkloadNode()), initCmd)
 
@@ -124,7 +135,7 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 	t.L().Printf("using cursor %s", cursorStr)
 
 	t.Status("inserting rows")
-	initCmd = fmt.Sprintf("./cockroach workload init kv --insert-count %d --read-percent 0 --data-loader=insert --min-block-bytes=64 --max-block-bytes=64 {pgurl:1-%d}",
+	initCmd = fmt.Sprintf("./cockroach workload init kv --insert-count %d --read-percent 0 --data-loader=insert --min-block-bytes=1024 --max-block-bytes=1024 {pgurl:1-%d}",
 		opts.insertCount, nodes)
 	c.Run(ctx, option.WithNodes(c.WorkloadNode()), initCmd)
 
@@ -179,14 +190,6 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 			t.L().Printf("changefeed caught up quickly enough %s < %s", actualCatchUpDuration, allowedCatchUpDuration)
 		}
 	}
-}
-
-func withRangefeedVMod(startOpts option.StartOpts) option.StartOpts {
-	startOpts.RoachprodOpts.ExtraArgs = append(
-		startOpts.RoachprodOpts.ExtraArgs,
-		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5,catchup_scan=5`,
-	)
-	return startOpts
 }
 
 func findP99Below(ticks []exporter.SnapshotTick, target time.Duration) time.Duration {
@@ -249,12 +252,20 @@ func registerKVRangefeed(r registry.Registry) {
 	}{
 		{
 			writeMaxRate:             500,
-			duration:                 10 * time.Minute,
-			sinkProvisioning:         1.2, // Correctly provisioned.
-			splits:                   1000,
-			expectChangefeedCatchesUp: true,
-			catchUpInterval:          1 * time.Minute,
+			duration:                 25 * time.Minute,
+			sinkProvisioning:         0.9, // Under provisioned.
+			splits:                   25,
+			expectChangefeedCatchesUp: false,
+			catchUpInterval:          7 * time.Minute,
 		},
+		// {
+		// 	writeMaxRate:             500,
+		// 	duration:                 10 * time.Minute,
+		// 	sinkProvisioning:         1.2, // Correctly provisioned.
+		// 	splits:                   1000,
+		// 	expectChangefeedCatchesUp: true,
+		// 	catchUpInterval:          1 * time.Minute,
+		// },
 		// {
 		// 	writeMaxRate:             1000,
 		// 	sinkProvisioning:         0.9, // Under-provisioned.
