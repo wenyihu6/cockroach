@@ -329,13 +329,12 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 	//
 	// TODO(ssd): We are considering using the buffered sender during the catch up
 	// scan. If we do that, we must remove use of the unbuffered sender here.
-	maxUnbufferedSends := min(len(ubr.mu.catchUpBuf), 1024)
+	maxUnbufferedSends := 0  
 	unbufferedSendCount := 0
 
 	if log.V(5) {
 		bufferLen := len(ubr.mu.catchUpBuf)
-		log.KvExec.Infof(ctx, "r%d: starting to publish catch-up buffer with %d events",
-			ubr.Range(), bufferLen)
+		log.KvExec.Infof(ctx, "starting to publish catch-up buffer with %d events", bufferLen)
 	}
 
 	publish := func() error {
@@ -405,6 +404,9 @@ func (ubr *unbufferedRegistration) publishCatchUpBuffer(ctx context.Context) err
 	// We check this after publish because even if the catch-up buffer has
 	// overflowed, all events in it should still be published.
 	if ubr.mu.catchUpOverflowed {
+		if log.V(5) {
+			log.KvExec.Infof(ctx, "catch-up buffer overflowed, returning capacity exceeded error")
+		}
 		return newRetryErrBufferCapacityExceeded()
 	}
 

@@ -300,7 +300,7 @@ func (bs *BufferedSender) run(
 				batchSize++
 				eventsSent++
 			}
-			if log.V(5) && batchSize > 0 {
+			if log.V(5) && batchSize > 0 && logEventEvery.ShouldLog() {
 				log.KvExec.Infof(ctx, "buffered_sender: sent batch of %d events, total sent: %d, remaining in buffer: %d",
 					batchSize, eventsSent, bs.len())
 			}

@@ -86,7 +86,7 @@ func makeKVRangefeedOptions(c cluster.Cluster) (option.StartOpts, install.Cluste
 	settings.ClusterSettings["kv.rangefeed.enabled"] = "true"
 	settings.ClusterSettings["kv.rangefeed.concurrent_catchup_iterators"] = "64"
 	settings.ClusterSettings["changefeed.memory.per_changefeed_limit"] = "512KiB"
-	settings.Env = append(settings.Env, "COCKROACH_RANGEFEED_SEND_TIMEOUT=0")
+	// settings.Env = append(settings.Env, "COCKROACH_RANGEFEED_SEND_TIMEOUT=0")
 	startOpts.RoachprodOpts.ExtraArgs = append(
 		startOpts.RoachprodOpts.ExtraArgs,
 		`--vmodule=replica_rangefeed=5,unbuffered_registration=5,buffered_registration=5,buffered_sender=5,unbuffered_sender=5,stream_manager=5,dist_sender_mux_rangefeed=5,scheduled_processor=5,dist_sender_rangefeed=5,catchup_scan=5`,
@@ -252,10 +252,10 @@ func registerKVRangefeed(r registry.Registry) {
 	}{
 		{
 			writeMaxRate:             500,
-			duration:                 25 * time.Minute,
-			sinkProvisioning:         0.9, // Under provisioned.
-			splits:                   25,
-			expectChangefeedCatchesUp: false,
+			duration:                 40 * time.Minute,
+			sinkProvisioning:         1.2, // correctly provisioned.
+			splits:                   50,
+			expectChangefeedCatchesUp: true,
 			catchUpInterval:          7 * time.Minute,
 		},
 		// {

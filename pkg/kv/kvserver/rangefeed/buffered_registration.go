@@ -232,7 +232,8 @@ func (br *bufferedRegistration) outputLoop(ctx context.Context) error {
 				log.KvExec.Warningf(ctx, "rangefeed %s overflowed during catch up scan from %s (useful checkpoint sent: %v)",
 					br.span, br.catchUpTimestamp, oneCheckpointWithTimestampSent)
 			}
-
+			log.KvExec.VEventf(ctx, 5, "rangefeed %s overflowed during catch up scan from %s (useful checkpoint sent: %v)",
+				br.span, br.catchUpTimestamp, oneCheckpointWithTimestampSent)
 			return newErrBufferCapacityExceeded().GoError()
 		}
 
