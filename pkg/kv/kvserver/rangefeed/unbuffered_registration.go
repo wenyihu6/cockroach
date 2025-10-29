@@ -151,6 +151,8 @@ func (ubr *unbufferedRegistration) publish(
 			// catchUpBuf exceeded and we are dropping this event. A catch up scan is
 			// needed later.
 			ubr.mu.catchUpOverflowed = true
+			log.KvExec.Infof(ctx, "catchUpBuf exceeded and we are dropping this event. A catch up scan is needed later.")
+			ubr.metrics.RangeFeedCatchUpBufExceeded.Inc(1)
 			e.alloc.Release(ctx)
 			putPooledSharedEvent(e)
 		}
@@ -378,7 +380,6 @@ func (ubr *unbufferedRegistration) drainAllocations(ctx context.Context) {
 			ubr.mu.catchUpBuf = nil
 			ubr.mu.Unlock()
 			assertTrue(bufLen == 0, "non-empty catch up buffer after drainAllocation")
-
 			return
 		}
 	}

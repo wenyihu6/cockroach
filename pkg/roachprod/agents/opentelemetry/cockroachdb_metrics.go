@@ -1162,6 +1162,7 @@ var cockroachdbMetrics = map[string]string{
     "kv_rangefeed_budget_allocation_failed": "kv.rangefeed.budget_allocation_failed",
     "kv_rangefeed_buffered_registrations": "kv.rangefeed.buffered_registrations",
     "kv_rangefeed_buffered_sender_queue_size": "kv.rangefeed.buffered_sender.queue_size",
+    "kv_rangefeed_catch_up_buf_exceeded": "kv.rangefeed.catch_up_buf_exceeded",
     "kv_rangefeed_catchup_scan_nanos": "kv.rangefeed.catchup_scan_nanos",
     "kv_rangefeed_closed_timestamp_max_behind_nanos": "kv.rangefeed.closed_timestamp_max_behind_nanos",
     "kv_rangefeed_closed_timestamp_slow_ranges": "kv.rangefeed.closed_timestamp.slow_ranges",

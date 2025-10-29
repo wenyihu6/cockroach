@@ -186,7 +186,8 @@ func runKVRangefeed(ctx context.Context, t test.Test, c cluster.Cluster, opts kv
 			fmt.Sprintf("--max-rate=%d", opts.writeMaxRate),
 		}
 
-		cmd := fmt.Sprintf("./cockroach workload run kv --read-percent 0 %s {pgurl:1-%d}",
+		// With 512KiB / 1024 bytes per row, this will write 512KiB / 1024 bytes = 500 events. 
+		cmd := fmt.Sprintf("./cockroach workload run kv --sequential --cycle-length 10 --read-percent 0 %s {pgurl:1-%d}",
 			strings.Join(opts, " "),
 			nodes,
 		)

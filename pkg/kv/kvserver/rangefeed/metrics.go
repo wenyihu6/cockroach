@@ -108,6 +108,12 @@ var (
 		Measurement: "Nanoseconds",
 		Unit:        metric.Unit_NANOSECONDS,
 	}
+	metaRangeFeedCatchUpBufExceeded = metric.Metadata{
+		Name: "kv.rangefeed.catch_up_buf_exceeded",
+		Help: "Number of times the RangeFeed catch up buffer exceeded",
+		Measurement: "Exceeded Count",
+		Unit:        metric.Unit_COUNT,
+	}
 )
 
 // Metrics are for production monitoring of RangeFeeds.
@@ -124,6 +130,7 @@ type Metrics struct {
 	RangeFeedBufferedRegistrations              *metric.Gauge
 	RangeFeedUnbufferedRegistrations            *metric.Gauge
 	RangefeedOutputLoopNanosForUnbufferedReg    *metric.Counter
+	RangeFeedCatchUpBufExceeded                 *metric.Counter
 	// RangeFeedSlowClosedTimestampNudgeSem bounds the amount of work that can be
 	// spun up on behalf of the RangeFeed nudger. We don't expect to hit this
 	// limit, but it's here to limit the effect on stability in case something
@@ -157,6 +164,7 @@ func NewMetrics() *Metrics {
 		RangeFeedBufferedRegistrations:              metric.NewGauge(metaRangeFeedBufferedRegistrations),
 		RangeFeedUnbufferedRegistrations:            metric.NewGauge(metaRangeFeedUnbufferedRegistrations),
 		RangefeedOutputLoopNanosForUnbufferedReg:    metric.NewCounter(metaRangeFeedOutputLoopNanosUnbufferedRegistration),
+		RangeFeedCatchUpBufExceeded:                 metric.NewCounter(metaRangeFeedCatchUpBufExceeded),
 	}
 }
 
