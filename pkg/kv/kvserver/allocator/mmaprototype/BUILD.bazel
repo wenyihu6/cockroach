@@ -8,6 +8,7 @@ go_library(
         "cluster_state.go",
         "constraint.go",
         "constraint_matcher.go",
+        "constraint_unused.go",
         "doc.go",
         "load.go",
         "memo_helper.go",
