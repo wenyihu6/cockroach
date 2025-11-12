@@ -266,34 +266,58 @@ func makeNormalizedSpanConfig(
 	return doStructuralNormalization(nConf)
 }
 
+// normalizeConstraints processes a slice of ConstraintsConjunctions for a given
+// number of replicas and returns a normalized slice of internedConstraintsConjunction.
+// This operation ensures the following:
+//   - Combines constraints with NumReplicas == 0 into a single conjunction containing
+//     the union of their constraints, which must be satisfied by all replicas.
+//   - Ensures that the total number of replicas required by all constraints does not
+//     exceed numReplicas.
+//   - If constraints under-specify the number of replicas, adds a "catch-all"
+//     constraints conjunction that will match all stores for the remaining replicas.
+//   - Returns errors for illegal constraint mixes (like both zero and nonzero NumReplicas,
+//     or if constraints require more replicas than allowed).
 func normalizeConstraints(
 	constraints []roachpb.ConstraintsConjunction, numReplicas int32, interner *stringInterner,
 ) ([]internedConstraintsConjunction, error) {
-	var nc []roachpb.ConstraintsConjunction
-	haveZero := false
-	sumReplicas := int32(0)
+	var nc []roachpb.ConstraintsConjunction // Will hold normalized constraints
+	haveZero := false                       // Tracks if any conjunction has NumReplicas==0
+	sumReplicas := int32(0)                 // Total number of replicas required by explicit constraints
+
+	// Iterate over input constraints, separating those with NumReplicas==0 and summing explicit replicas.
 	for i := range constraints {
 		if constraints[i].NumReplicas == 0 {
 			haveZero = true
 			if len(nc) == 0 {
+				// First time we see NumReplicas==0: create a slot
 				nc = append(nc, roachpb.ConstraintsConjunction{})
 			}
-			// Conjunction of conjunctions, since they all must be satisfied.
+			// Add these constraints to the single conjunction (all must be satisfied)
+			// This effectively merges all zero-replica constraints into one.
 			nc[0].Constraints = append(nc[0].Constraints, constraints[i].Constraints...)
 		} else {
 			sumReplicas += constraints[i].NumReplicas
 		}
 	}
+
+	// Error if both explicit constraints and zero-replica constraints are specified.
 	if haveZero && sumReplicas > 0 {
 		return nil, errors.Errorf("invalid mix of constraints")
 	}
+
+	// Error if sum of explicit constraints exceeds allowed replicas.
 	if sumReplicas > numReplicas {
 		return nil, errors.Errorf("constraint replicas add up to more than configured replicas")
 	}
+
+	// Compose the normalized list depending on input shape
 	if haveZero {
+		// For zero-replica constraints, all replicas must satisfy the merged list.
 		nc[0].NumReplicas = numReplicas
 	} else {
+		// Keep all input constraints as-is.
 		nc = append(nc, constraints...)
+		// If we have additional unspecified replicas, add a catch-all constraint (nil constraints).
 		if sumReplicas < numReplicas {
 			cc := roachpb.ConstraintsConjunction{
 				NumReplicas: numReplicas - sumReplicas,
@@ -302,6 +326,8 @@ func normalizeConstraints(
 			nc = append(nc, cc)
 		}
 	}
+
+	// Intern the constraints and create final output slice.
 	var rv []internedConstraintsConjunction
 	for i := range nc {
 		icc := internedConstraintsConjunction{
@@ -327,24 +353,32 @@ func normalizeConstraints(
 // test -- we sometimes see these in production settings, and we want to fix
 // ones that we can, and raise an error for users to fix their configs.
 func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfig, error) {
+	// If there are no constraints or voterConstraints defined, nothing to do.
 	if len(conf.constraints) == 0 || len(conf.voterConstraints) == 0 {
 		return conf, nil
 	}
-	// Relationships between each voter constraint and each all replica
-	// constraint.
+
+	// We want to examine the relationship between every pair:
+	//   - voter constraint conjunction (from voterConstraints list)
+	//   - all-replica constraint conjunction (from constraints list)
+	// This relationship can be: equal, strict subset, strict superset, non-intersecting, or intersecting.
 	type relationshipVoterAndAll struct {
-		voterIndex     int
-		allIndex       int
-		voterAndAllRel conjunctionRelationship
+		voterIndex     int                     // Index of the voter constraint in conf.voterConstraints
+		allIndex       int                     // Index of the all-replica constraint in conf.constraints
+		voterAndAllRel conjunctionRelationship // Relationship between these two constraint conjunctions
 	}
-	emptyConstraintIndex := -1
-	emptyVoterConstraintIndex := -1
-	var rels []relationshipVoterAndAll
+
+	emptyConstraintIndex := -1      // Will hold index of the empty (catch-all) constraint, if it exists
+	emptyVoterConstraintIndex := -1 // Will hold index of the empty voter constraint, if it exists
+
+	var rels []relationshipVoterAndAll // List of all pairwise relationships
 	for i := range conf.voterConstraints {
+		// Check if this voter constraint is the empty constraint (no conjunctions)
 		if len(conf.voterConstraints[i].constraints) == 0 {
 			emptyVoterConstraintIndex = i
 		}
 		for j := range conf.constraints {
+			// Check if this all-replica constraint is the empty constraint
 			if len(conf.constraints[j].constraints) == 0 {
 				emptyConstraintIndex = j
 			}
@@ -355,47 +389,42 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 			})
 		}
 	}
-	// Sort these relationships in the order we want to examine them.
+
+	// Sort relationships so those requiring attention come first (by conj relationship order)
 	slices.SortFunc(rels, func(a, b relationshipVoterAndAll) int {
 		return cmp.Compare(a.voterAndAllRel, b.voterAndAllRel)
 	})
-	// First are the intersecting constraints, which cause an error.
+
+	// Check for intersecting constraints - which is always an error.
 	index := 0
 	for rels[index].voterAndAllRel == conjIntersecting {
 		index++
 	}
 	var err error
 	if index > 0 {
+		// At least one intersecting pair was found - record an error.
 		err = errors.Errorf("intersecting conjunctions in constraints and voter constraints")
 	}
-	// Even if there was an error, we will continue normalization.
+	// Even if we saw an error, normalization proceeds in an attempt to produce a best-effort result.
 
-	// For each all-replica constraint, track how many replicas are remaining
-	// (not already taken by a voter constraint). Additionally, when we find an
-	// all replica constraint that is a subset of one or more voter constraints,
-	// and create a new voter constraint, we record the index of that new voter
-	// constraint in newVoterIndex.
+	// Track, for each all-replica constraint:
+	//   - how many replicas have not been claimed by voter constraints,
+	//   - and, if we've built a new voter constraint based on narrowing this constraint, its index.
 	type allReplicaConstraintsInfo struct {
-		remainingReplicas int32
-		newVoterIndex     int
+		remainingReplicas int32 // Replicas of this constraint still available for voter constraints
+		newVoterIndex     int   // Index of a narrower voter constraint created from this constraint, else -1
 	}
 	var allReplicaConstraints []allReplicaConstraintsInfo
 	for i := range conf.constraints {
 		allReplicaConstraints = append(allReplicaConstraints,
 			allReplicaConstraintsInfo{
-				// Initially all of numReplicas are remaining.
-				remainingReplicas: conf.constraints[i].numReplicas,
+				remainingReplicas: conf.constraints[i].numReplicas, // initially, all are unassigned
 				newVoterIndex:     -1,
 			})
 	}
-	// For each voter replica constraint, we keep the current
-	// internedConstraintsConjunction. The numReplicas start with 0 and build up
-	// towards the desired number in the corresponding un-normalized voter
-	// constraint. In addition, if the voter constraint had a superset
-	// relationship with one or more all-replica constraint, we may take some of
-	// its voter count and construct narrower voter constraints.
-	// additionalReplicas tracks the total count of replicas in such narrower
-	// voter constraints.
+
+	// For each voter constraint, we track its interned form (with zeroed numReplicas),
+	// and how many "additional" replicas should be created by narrowing.
 	type voterConstraintsAndAdditionalInfo struct {
 		internedConstraintsConjunction
 		additionalReplicas int32
@@ -407,24 +436,22 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 			internedConstraintsConjunction: constraint,
 		})
 	}
-	// Now resume iterating from index, and consume all relationships that are
-	// conjEqualSet and conjStrictSubset.
+
+	// 1. Assign as many voter replicas as possible via equal and strict subset relationships.
 	for ; index < len(rels) && rels[index].voterAndAllRel <= conjStrictSubset; index++ {
 		rel := rels[index]
 		if rel.voterIndex == emptyVoterConstraintIndex {
-			// Don't try to satisfy the empty constraint with the corresponding
-			// empty constraint since the latter may be needed by some other voter
-			// constraint.
+			// Don't claim from the empty all-replica constraint for the empty voter constraint;
+			// might need it later to satisfy voter constraints that have NO matching all-replica constraint.
 			continue
 		}
 		remainingAll := allReplicaConstraints[rel.allIndex].remainingReplicas
-		// NB: we don't bother subtracting
-		// voterConstraints[rel.voterIndex].additionalReplicas since it is always
-		// 0 at this point in the code.
+		// Compute the number of voter replicas needed for this voter constraint.
+		// Note that additionalReplicas is always zero in this part of the code.
 		neededVoterReplicas := conf.voterConstraints[rel.voterIndex].numReplicas -
 			voterConstraints[rel.voterIndex].numReplicas
 		if neededVoterReplicas > 0 && remainingAll > 0 {
-			// We can satisfy some voter replicas.
+			// Satisfy as many replicas as we can for this voter constraint with this all-replica constraint.
 			toAdd := remainingAll
 			if toAdd > neededVoterReplicas {
 				toAdd = neededVoterReplicas
@@ -433,21 +460,14 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 			allReplicaConstraints[rel.allIndex].remainingReplicas -= toAdd
 		}
 	}
-	// The only relationships remaining are conjStrictSuperset and
-	// conjNonIntersecting. We don't care about the latter. conjStrictSuperset
-	// can be used to narrow a voter constraint. As a heuristic we try to even
-	// out the satisfaction across various constraints. For example, if we have
-	// a voter constraint with conjunction c1 that needs 2 more replicas, and we
-	// have all constraints with conjuctions:
-	// - c1 and c2, with 2 remainingReplicas
-	// - c1 and c3, with 2 remainingReplicas
-	// instead of greedily adding a voter constraint c1 and c2 with 2 voter
-	// replicas, we add both with 1 voter replica each ("load-balancing").
-	//
-	// Before we do the narrowing, we consider the pair of conjunctions that are
-	// empty: emptyVoterConstraintIndex and emptyConstraintIndex. We don't want
-	// to narrow unnecessarily, and so if emptyConstraintIndex has some
-	// remainingReplicas, we take them here.
+
+	// 2. At this point, only strict superset (or non-intersecting, which is ignored) relationships remain.
+	//    Use strict superset relationships to create *narrower* voter constraints ("load balancing" among supersets).
+	//    The idea is to favor spreading replicas when both c1∧c2 and c1∧c3 could satisfy a voter constraint c1.
+
+	// Before "narrowing", check if (empty voter constraint, empty all-replica constraint) exist.
+	// If so, try to satisfy empty voter constraint with any remaining replicas from the empty all-replica constraint,
+	// to avoid unnecessary creation of narrowed constraints.
 	if emptyVoterConstraintIndex > 0 && emptyConstraintIndex > 0 {
 		neededReplicas := conf.voterConstraints[emptyVoterConstraintIndex].numReplicas
 		actualReplicas := voterConstraints[emptyVoterConstraintIndex].numReplicas
@@ -459,38 +479,31 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 				if count > remaining {
 					count = remaining
 				}
+				// Satisfy as many as we can for the empty voter constraint
 				voterConstraints[emptyVoterConstraintIndex].numReplicas += count
 				allReplicaConstraints[emptyConstraintIndex].remainingReplicas -= count
 			}
 		}
 	}
 
-	// The aforementioned "load-balancing" of the satisfaction is why we need
-	// the outer for loop below.
-	//
-	// The outer for loop causes repeated iteration over the strict superset
-	// relationship. When the inner loop finds a voter constraint that needs
-	// more replicas, and the subset conjunction in constraints has some
-	// remaining replicas, we replace the weaker voter constraint with the
-	// stronger/tighter conjunction for 1 voter. Note that we don't exclude the
-	// emptyVoterConstraintIndex for consideration here, since this is exactly
-	// the place where we want to see if we can replace it with tighter
-	// conjunctions.
+	// Now, loop over all remaining strict superset relationships and try to
+	// "narrow" constraints, spreading the needed voter replicas evenly.
 	for {
 		added := false
 		for i := index; i < len(rels) && rels[i].voterAndAllRel == conjStrictSuperset; i++ {
 			rel := rels[i]
 			remainingAll := allReplicaConstraints[rel.allIndex].remainingReplicas
+			// Compute how many more replicas are needed from this voter constraint
 			neededVoterReplicas := conf.voterConstraints[rel.voterIndex].numReplicas -
 				voterConstraints[rel.voterIndex].numReplicas -
 				voterConstraints[rel.voterIndex].additionalReplicas
 			if neededVoterReplicas > 0 && remainingAll > 0 {
-				// Satisfy 1 replica.
+				// Take one replica to satisfy a narrowed constraint (to enable load balancing)
 				voterConstraints[rel.voterIndex].additionalReplicas++
 				allReplicaConstraints[rel.allIndex].remainingReplicas--
 				newVoterIndex := allReplicaConstraints[rel.allIndex].newVoterIndex
 				if newVoterIndex == -1 {
-					// We haven't yet created a narrower voter constraint for this.
+					// If the all-replica constraint hasn't already spawned a narrowed voter constraint, do so now.
 					newVoterIndex = len(voterConstraints)
 					allReplicaConstraints[rel.allIndex].newVoterIndex = newVoterIndex
 					voterConstraints = append(voterConstraints, voterConstraintsAndAdditionalInfo{
@@ -506,28 +519,34 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 			}
 		}
 		if !added {
-			break
+			break // No more work to do: all possible narrowing has been attempted
 		}
 	}
+
+	// 3. Final accounting: for each original voter constraint, make sure we satisfied its needs (or fill anyway)
 	for i := range conf.voterConstraints {
 		neededReplicas := conf.voterConstraints[i].numReplicas
 		actualReplicas := voterConstraints[i].numReplicas + voterConstraints[i].additionalReplicas
 		if actualReplicas > neededReplicas {
-			panic("code bug")
+			panic("code bug") // Invariant: should never over-assign voter replicas!
 		}
 		if actualReplicas < neededReplicas {
+			// Not all voter constraints could be satisfied (e.g., non-intersecting config).
 			err = errors.Errorf("could not satisfy all voter constraints due to " +
 				"non-intersecting conjunctions in voter and all replica constraints")
-			// Just force the satisfaction.
+			// Just force satisfaction by adding remaining needed.
 			voterConstraints[i].numReplicas += neededReplicas - actualReplicas
 		}
 	}
+
+	// 4. Move the empty voter constraint (i.e., the catch-all) to the end, so it's considered last for placement logic.
 	n := len(voterConstraints) - 1
 	if emptyVoterConstraintIndex >= 0 && emptyVoterConstraintIndex < n {
-		// Move it to the end, since it is the biggest set.
 		voterConstraints[emptyVoterConstraintIndex], voterConstraints[n] =
 			voterConstraints[n], voterConstraints[emptyVoterConstraintIndex]
 	}
+
+	// 5. Collect back only voter constraints with > 0 assigned replicas (ignore others)
 	var vc []internedConstraintsConjunction
 	for i := range voterConstraints {
 		if voterConstraints[i].numReplicas > 0 {
@@ -536,38 +555,19 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 	}
 	conf.voterConstraints = vc
 
-	// We are done with normalizing voter constraints. We also do some basic
-	// normalization for constraints: we have seen examples where the
-	// constraints are under-specified and give freedom in the choice of
-	// constraintsForAddingNonVoter() that isn't actually there. Note that when
-	// all the voter constraints are satisfied (which we try to do before
-	// satisfying non-voter constraints), then the under-specification does not
-	// hurt the choice made in constraintsForAddingNonVoter(). However, we could
-	// have situations where an outage of some kind is preventing all the voter
-	// constraints from being satisfied, and now we need to place a non-voter --
-	// placing that non-voter correctly will avoid the need to move it later
-	// when the voter constraint does get satisfied.
-	//
-	// For example, see the config from #106559 in testdata/normalize_config.
-	// The constraints for us-west-1 and us-east-1 are under-specified in
-	// needing only 1 replica, while voter constraints specify we need 2
-	// replicas in each. Consider if it were left under-specified, and we had
-	// only 3 voters, 2 in us-west-1 and 1 in us-east-1 and we were temporarily
-	// unable to add a voter in us-east-1. Say we lose the non-voter too, and
-	// need to add one. With the under-specified constraint we could add the
-	// non-voter anywhere, since we think we are allowed 2 replicas with the
-	// empty constraint conjunction. This is technically true, but once we have
-	// the required second voter in us-east-1, we will need to move that
-	// non-voter to us-central-1, which is wasteful.
+	// --
+	// Now, normalize constraints (not just voterConstraints), especially when
+	// there is an empty constraint and it's possible to "tighten" its allocation
+	// based on actual voter needs. This reduces risk of later misplacing non-voter replicas.
+	// --
+
 	if emptyConstraintIndex >= 0 {
-		// Recompute the relationship since voterConstraints have changed.
+		// The structure of voterConstraints has changed, so recompute relationships for this normalization pass.
 		emptyVoterConstraintIndex = -1
 		rels = rels[:0]
 		for i := range conf.voterConstraints {
 			if len(conf.voterConstraints[i].constraints) == 0 {
-				// We don't actually use emptyVoterConstraintIndex later, but it is
-				// harmless to recompute, and will avoid subtle bugs if we change the
-				// logic below to start using it.
+				// Again, just record if we see one.
 				emptyVoterConstraintIndex = i
 			}
 			for j := range conf.constraints {
@@ -579,24 +579,26 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 				})
 			}
 		}
-		// Sort these relationships in the order we want to examine them.
+		// Sort again for relationship examination
 		slices.SortFunc(rels, func(a, b relationshipVoterAndAll) int {
 			return cmp.Compare(a.voterAndAllRel, b.voterAndAllRel)
 		})
-		// Ignore conjIntersecting.
+		// Again, skip contradicting pairs (conjIntersecting).
 		index = 0
 		for rels[index].voterAndAllRel == conjIntersecting {
 			index++
 		}
 		voterConstraintHasEqualityWithConstraint := make([]bool, len(conf.voterConstraints))
-		// For conjEqualSet, if we can grab from the emptyConstraintIndex, do so.
+		// For conjEqualSet: try to align all-replica constraint's replica count with voterConstraint needs,
+		// using the empty constraint's allocation if necessary.
 		for ; index < len(rels) && rels[index].voterAndAllRel <= conjEqualSet; index++ {
 			rel := rels[index]
 			voterConstraintHasEqualityWithConstraint[rel.voterIndex] = true
 			if rel.allIndex == emptyConstraintIndex {
-				// rel.voterIndex must be emptyVoterConstraintIndex.
+				// This is the (empty,empty) case; nothing to transfer
 				continue
 			}
+			// If the matching constraint doesn't have enough replicas, "steal" from the empty constraint
 			if conf.constraints[rel.allIndex].numReplicas < conf.voterConstraints[rel.voterIndex].numReplicas {
 				toAddCount := conf.voterConstraints[rel.voterIndex].numReplicas -
 					conf.constraints[rel.allIndex].numReplicas
@@ -604,20 +606,20 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 				if availableCount < toAddCount {
 					toAddCount = availableCount
 				}
+				// Reassign some replicas from the empty constraint to this specific constraint
 				conf.constraints[emptyConstraintIndex].numReplicas -= toAddCount
 				conf.constraints[rel.allIndex].numReplicas += toAddCount
 			}
 		}
-		// For conjStrictSubset, if the subset relationship is with
-		// emptyConstraintIndex, grab from there.
+		// Now, for conjStrictSubset: If there's a subset voter constraint, but no exact match, allocate from empty constraint
 		for ; index < len(rels) && rels[index].voterAndAllRel <= conjStrictSubset; index++ {
 			rel := rels[index]
 			if rel.allIndex != emptyConstraintIndex {
+				// Only care about ones that map to the empty constraint
 				continue
 			}
 			if voterConstraintHasEqualityWithConstraint[rel.voterIndex] {
-				// Already has a corresponding constraint, that we have considered in
-				// the previous loop.
+				// Already handled by exact match, skip
 				continue
 			}
 			availableCount := conf.constraints[emptyConstraintIndex].numReplicas
@@ -626,6 +628,7 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 				if toAddCount > availableCount {
 					toAddCount = availableCount
 				}
+				// Reassign from the empty constraint to a new specific one.
 				conf.constraints[emptyConstraintIndex].numReplicas -= toAddCount
 				conf.constraints = append(conf.constraints, internedConstraintsConjunction{
 					numReplicas: toAddCount,
@@ -633,20 +636,18 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 				})
 			}
 		}
-		// We may have appended to conf.constraints in the previous loop. We like
-		// to keep the empty constraint as the last one, so do a swap if needed.
+		// To keep ordering (more-specific-to-less), keep the empty constraint last,
+		// swapping if we've just appended.
 		n := len(conf.constraints) - 1
 		if n != emptyConstraintIndex {
 			conf.constraints[n], conf.constraints[emptyConstraintIndex] =
 				conf.constraints[emptyConstraintIndex], conf.constraints[n]
 		}
-		// If the empty constraint does not have any replicas due to the
-		// normalization, discard it.
+		// If, as a result, the empty constraint has no remaining replicas, drop it entirely.
 		if conf.constraints[n].numReplicas == 0 {
 			conf.constraints = conf.constraints[:n]
 		}
 	}
-
 	return conf, err
 }
 
@@ -713,23 +714,27 @@ func (ac *analyzedConstraints) isEmpty() bool {
 	return len(ac.constraints) == 0
 }
 
+// extend2DSlice extends a 2D slice by adding an empty inner slice.
+// On the slow path (not enough capacity), append(v, nil) adds a zero-valued
+// (empty) inner slice at the end.
 func extend2DSlice[T any](v [][]T) [][]T {
 	n := len(v)
 	if cap(v) > n {
 		v = v[:n+1]
 		v[n] = v[n][:0]
 	} else {
+		// Slow path: append nil gives a new empty inner slice.
 		v = append(v, nil)
 	}
 	return v
 }
 
+// clear2DSlice resets all inner slices to empty and truncates the outer slice.
 func clear2DSlice[T any](v [][]T) [][]T {
 	for i := range v {
 		v[i] = v[i][:0]
 	}
-	v = v[:0]
-	return v
+	return v[:0]
 }
 
 // rangeAnalyzedConstraints is a function of the spanConfig and the current
@@ -830,6 +835,12 @@ type storeMatchesConstraintInterface interface {
 	storeMatches(storeID roachpb.StoreID, constraintConj constraintsConj) bool
 }
 
+// finishInit performs final setup for rangeAnalyzedConstraints after store
+// information has been gathered. It processes the provided normalizedSpanConfig
+// and evaluates constraint satisfaction for all stores, assigning stores to
+// constraint buckets for both voters and non-voters. It also assigns lease
+// preference indices, verifies leaseholder presence, and computes diversity
+// scores for both voters and all replicas.
 func (rac *rangeAnalyzedConstraints) finishInit(
 	spanConfig *normalizedSpanConfig,
 	constraintMatcher storeMatchesConstraintInterface,
@@ -840,86 +851,102 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 	rac.numNeededReplicas[nonVoterIndex] = spanConfig.numReplicas - spanConfig.numVoters
 	rac.replicas = rac.buf.replicas
 
+	// analyzeFunc matches stores to constraints, populating assignment
+	// structures for later decision-making.
+	// analyzeFunc maps stores to constraints based on the given analyzedConstraints struct.
+	// It fills various slices indicating which replica/store satisfies which constraint.
 	analyzeFunc := func(ac *analyzedConstraints) {
 		if len(ac.constraints) == 0 {
-			// Nothing to do.
+			// No constraints to analyze; nothing to do.
 			return
 		}
+		// Expand/extend internal 2D slices (for both replica kinds) to match the number of constraints.
 		for i := 0; i < len(ac.constraints); i++ {
 			ac.satisfiedByReplica[voterIndex] = extend2DSlice(ac.satisfiedByReplica[voterIndex])
 			ac.satisfiedByReplica[nonVoterIndex] = extend2DSlice(ac.satisfiedByReplica[nonVoterIndex])
 		}
-		// Compute the list of all constraints satisfied by each store.
+
+		// For each replica kind (voter/non-voter), iterate over known stores.
+		// For each store, determine which constraints it satisfies.
 		for kind := voterIndex; kind < numReplicaKinds; kind++ {
 			for i, store := range rac.buf.replicas[kind] {
+				// Ensure the constraint indices list for this kind is sufficiently large.
 				rac.buf.replicaConstraintIndices[kind] =
 					extend2DSlice(rac.buf.replicaConstraintIndices[kind])
+				// For each constraint, check if store satisfies it (or the unconstrained catch-all).
 				for j, c := range ac.constraints {
 					if len(c.constraints) == 0 || constraintMatcher.storeMatches(store.StoreID, c.constraints) {
+						// Store satisfies this constraint, record constraint index.
 						rac.buf.replicaConstraintIndices[kind][i] =
 							append(rac.buf.replicaConstraintIndices[kind][i], int32(j))
 					}
 				}
 				n := len(rac.buf.replicaConstraintIndices[kind][i])
 				if n == 0 {
+					// Store doesn't satisfy any constraint: add to "no constraint matched" list.
 					ac.satisfiedNoConstraintReplica[kind] =
 						append(ac.satisfiedNoConstraintReplica[kind], store.StoreID)
 				} else if n == 1 {
-					// Satisfies exactly one constraint, so place it there.
+					// Store satisfies exactly one constraint: assign directly to that constraint.
 					constraintIndex := rac.buf.replicaConstraintIndices[kind][i][0]
 					ac.satisfiedByReplica[kind][constraintIndex] =
 						append(ac.satisfiedByReplica[kind][constraintIndex], store.StoreID)
+					// Clear constraint indices as assignment is done.
 					rac.buf.replicaConstraintIndices[kind][i] = rac.buf.replicaConstraintIndices[kind][i][:0]
 				}
-				// Else, satisfied multiple constraints. Don't choose yet.
+				// If store satisfies multiple constraints, assignment is deferred for next stage.
 			}
 		}
-		// The only stores not yet in ac are the ones that satisfy multiple
-		// constraints. For each store, the constraint indices it satisfies are in
-		// increasing order. Satisfy constraints in order, while not
-		// oversatisfying.
+
+		// For stores matching multiple constraints, assign stores in a fixed order,
+		// stopping when each constraint's replica target is satisfied and avoiding over-assignment.
 		for j := range ac.constraints {
+			// Helper function to check if the sum of assigned voter and non-voter replicas
+			// meets (or exceeds) the number of replicas needed for this constraint.
 			doneFunc := func() bool {
 				return len(ac.satisfiedByReplica[voterIndex][j])+
 					len(ac.satisfiedByReplica[nonVoterIndex][j]) >= int(ac.constraints[j].numReplicas)
 			}
 			done := doneFunc()
 			if done {
+				// Constraint already satisfied; no stores need to be assigned to it.
 				continue
 			}
+			// Iterate over replicas (voters then non-voters) and try to assign deferred stores to this constraint.
 			for kind := voterIndex; kind < numReplicaKinds; kind++ {
 				for i := range rac.buf.replicaConstraintIndices[kind] {
 					constraintIndices := rac.buf.replicaConstraintIndices[kind][i]
 					for _, index := range constraintIndices {
 						if index == int32(j) {
+							// Assign this store to constraint j for this kind.
 							ac.satisfiedByReplica[kind][j] =
 								append(ac.satisfiedByReplica[kind][j], rac.replicas[kind][i].StoreID)
+							// Clear out indices as assignment is handled.
 							rac.buf.replicaConstraintIndices[kind][i] = constraintIndices[:0]
+							// Recompute done status after assignment.
 							done = doneFunc()
-							// This store is finished.
+							// Store assigned, stop looking at other constraint indices for this store.
 							break
 						}
 					}
-					// done can be true if some store was appended to
-					// ac.satisfiedByReplica[kind][j] and made it fully satisfied. Don't
-					// need to look at other stores for this constraint.
+					// If constraint is now satisfied, don't assign more stores to it.
 					if done {
 						break
 					}
 				}
-				// done can be true if some store was appended to
-				// ac.satisfiedByReplica[kind][j] and made it fully satisfied. Don't
-				// need to look at other stores for this constraint.
 				if done {
 					break
 				}
 			}
 		}
-		// Nothing over-satisfied. Go and greedily assign.
+
+		// Any remaining stores that satisfied multiple constraints but weren't assigned above
+		// are greedily assigned to constraints (should not oversatisfy due to earlier logic).
 		for kind := voterIndex; kind < numReplicaKinds; kind++ {
 			for i := range rac.buf.replicaConstraintIndices[kind] {
 				constraintIndices := rac.buf.replicaConstraintIndices[kind][i]
 				for _, index := range constraintIndices {
+					// Assign to the first matching constraint remaining; break after assignment.
 					ac.satisfiedByReplica[kind][index] =
 						append(ac.satisfiedByReplica[kind][index], rac.replicas[kind][i].StoreID)
 					rac.buf.replicaConstraintIndices[kind][i] = constraintIndices[:0]
@@ -928,6 +955,8 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 			}
 		}
 	}
+
+	// Analyze constraints for general and voter-specific constraints.
 	if spanConfig.constraints != nil {
 		rac.constraints.constraints = spanConfig.constraints
 		analyzeFunc(&rac.constraints)
@@ -937,6 +966,7 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 		analyzeFunc(&rac.voterConstraints)
 	}
 
+	// Leaseholder must exist; compute lease preference indices and leaseholder preference.
 	rac.leaseholderID = leaseholder
 	rac.leaseholderPreferenceIndex = -1
 	for i := range rac.replicas[voterIndex] {
@@ -949,7 +979,7 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 		}
 	}
 	if rac.leaseholderPreferenceIndex == -1 {
-		// Must be a VOTER_DEMOTING_NON_VOTER, which we count as a non-voter.
+		// Leaseholder might be a demoting non-voter.
 		for i := range rac.replicas[nonVoterIndex] {
 			storeID := rac.replicas[nonVoterIndex][i].StoreID
 			if storeID == leaseholder {
@@ -963,6 +993,7 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 		}
 	}
 
+	// Compute voter and overall replica diversity scores for range.
 	var replicaLocalityTiers, voterLocalityTiers []localityTiers
 	for i := range rac.replicas[voterIndex] {
 		replicaLocalityTiers = append(replicaLocalityTiers, rac.replicas[voterIndex][i].localityTiers)
@@ -974,6 +1005,7 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 	rac.replicaLocalityTiers = makeReplicasLocalityTiers(replicaLocalityTiers)
 	rac.voterLocalityTiers = makeReplicasLocalityTiers(voterLocalityTiers)
 
+	// Helper to compute the sum of pairwise diversity scores and sample count.
 	diversityFunc := func(
 		stores1 []storeAndLocality, stores2 []storeAndLocality, sameStores bool,
 	) (sumScore float64, numSamples int) {
@@ -981,8 +1013,7 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 			s1 := stores1[i]
 			for j := range stores2 {
 				s2 := stores2[j]
-				// Only compare pairs of replicas where s2.StoreID > s1.StoreID to avoid
-				// computing the diversity score between each pair of stores twice.
+				// Avoid duplicate scoring for the same pair if stores1 == stores2.
 				if sameStores && s2.StoreID <= s1.StoreID {
 					continue
 				}
@@ -992,16 +1023,19 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 		}
 		return sumScore, numSamples
 	}
+	// Compute normalized average diversity from pairwise sums.
 	scoreFromSumAndSamples := func(sumScore float64, numSamples int) float64 {
 		if numSamples == 0 {
 			return roachpb.MaxDiversityScore
 		}
 		return sumScore / float64(numSamples)
 	}
+	// Voter diversity.
 	sumVoterScore, numVoterSamples := diversityFunc(
 		rac.replicas[voterIndex], rac.replicas[voterIndex], true)
 	rac.votersDiversityScore = scoreFromSumAndSamples(sumVoterScore, numVoterSamples)
 
+	// All replica diversity, considering both voter and non-voter contributions.
 	sumReplicaScore, numReplicaSamples := sumVoterScore, numVoterSamples
 	srs, nrs := diversityFunc(rac.replicas[nonVoterIndex], rac.replicas[nonVoterIndex], true)
 	sumReplicaScore += srs
