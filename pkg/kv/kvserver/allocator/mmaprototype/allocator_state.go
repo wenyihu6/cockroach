@@ -443,10 +443,7 @@ func (cs *clusterState) rebalanceStores(
 					log.KvDistribution.VInfof(ctx, 2, "skipping r%d: too soon after failed change", rangeID)
 					continue
 				}
-				if !cs.ensureAnalyzedConstraints(rstate) {
-					log.KvDistribution.VInfof(ctx, 2, "skipping r%d: constraints analysis failed", rangeID)
-					continue
-				}
+				cs.ensureAnalyzedConstraints(rstate)
 				if rstate.constraints.leaseholderID != store.StoreID {
 					// We should not panic here since the leaseQueue may have shed the
 					// lease and informed MMA, since the last time MMA computed the
@@ -633,10 +630,7 @@ func (cs *clusterState) rebalanceStores(
 				log.KvDistribution.VInfof(ctx, 2, "skipping r%d: too soon after failed change", rangeID)
 				continue
 			}
-			if !cs.ensureAnalyzedConstraints(rstate) {
-				log.KvDistribution.VInfof(ctx, 2, "skipping r%d: constraints analysis failed", rangeID)
-				continue
-			}
+			cs.ensureAnalyzedConstraints(rstate)
 			isVoter, isNonVoter := rstate.constraints.replicaRole(store.StoreID)
 			if !isVoter && !isNonVoter {
 				// We should not panic here since the replicateQueue may have shed the
@@ -1271,9 +1265,7 @@ func (cs *clusterState) ensureAnalyzedConstraints(rstate *rangeState) bool {
 	if leaseholder < 0 {
 		// Very dubious why the leaseholder (which must be a local store since there
 		// are no pending changes) is not known.
-		// TODO(sumeer): log an error.
-		releaseRangeAnalyzedConstraints(rac)
-		return false
+		panic(errors.AssertionFailedf("no leaseholders found in %v", rstate.replicas))
 	}
 	rac.finishInit(rstate.conf, cs.constraintMatcher, leaseholder)
 	rstate.constraints = rac
