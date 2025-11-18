@@ -371,10 +371,16 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 	var rels []relationshipVoterAndAll
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
+			if emptyVoterConstraintIndex > 0 {
+				panic("multiple empty voter constraints")
+			}
 			emptyVoterConstraintIndex = i
 		}
 		for j := range conf.constraints {
 			if len(conf.constraints[j].constraints) == 0 {
+				if emptyConstraintIndex > 0 {
+					panic("multiple empty all-replica constraints")
+				}
 				emptyConstraintIndex = j
 			}
 			rels = append(rels, relationshipVoterAndAll{
@@ -441,8 +447,11 @@ func doStructuralNormalization(conf *normalizedSpanConfig) (*normalizedSpanConfi
 	for ; index < len(rels) && rels[index].voterAndAllRel <= conjStrictSubset; index++ {
 		rel := rels[index]
 		if rel.voterIndex == emptyVoterConstraintIndex {
-			// Don't try to satisfy the empty constraint with the corresponding
-			// empty constraint since the latter may be needed by some other voter
+			if rel.allIndex != emptyConstraintIndex {
+				panic("empty voter constraint should only be related to empty all-replica constraint at this point")
+			}
+			// Don't try to satisfy the empty voter constraint with the corresponding
+			// empty all-replica constraint since the latter may be needed by some other voter
 			// constraint.
 			continue
 		}
