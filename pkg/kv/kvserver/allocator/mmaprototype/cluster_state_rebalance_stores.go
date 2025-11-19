@@ -223,6 +223,9 @@ func (re *rebalanceEnv) rebalanceStore(
 		}
 	}
 
+	log.KvDistribution.VInfof(ctx, 1, "what VInfo level 1")
+	log.KvDistribution.VInfof(ctx, 0, "what VInfo level 0")
+	log.KvDistribution.Infof(ctx, "what Info")
 	// TODO(tbg): it's somewhat akward that we only enter this branch for
 	// ss.StoreID == localStoreID and not for *any* calling local store.
 	// More generally, does it make sense that rebalanceStores is called on
@@ -231,6 +234,7 @@ func (re *rebalanceEnv) rebalanceStore(
 	if ss.StoreID == localStoreID && store.dimSummary[CPURate] >= overloadSlow {
 		shouldSkipReplicaMoves := re.rebalanceLeases(ctx, ss, store, localStoreID)
 		if shouldSkipReplicaMoves {
+			log.KvDistribution.Infof(ctx, "shouldSkipReplicaMoves")
 			return
 		}
 	} else {
@@ -239,6 +243,7 @@ func (re *rebalanceEnv) rebalanceStore(
 	}
 
 	log.KvDistribution.VInfof(ctx, 2, "attempting to shed replicas next")
+	log.KvDistribution.Infof(ctx, "attempting")
 	re.rebalanceReplicas(ctx, store, ss, localStoreID)
 }
 
