@@ -1,0 +1,1 @@
+genhtml /private/var/tmp/_bazel_wenyihu/e6cc8641598a1deef0c08146e7d85e4b/execroot/com_github_cockroachdb_cockroach/bazel-out/_coverage/_coverage_report.dat -o coverage_html --title 'MMA Prototype Coverage'
