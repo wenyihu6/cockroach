@@ -1,0 +1,332 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+
+<html lang="en">
+
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+  <title>LCOV - MMA Prototype Coverage - mmaprototype/store_status.go</title>
+  <link rel="stylesheet" type="text/css" href="../gcov.css">
+</head>
+
+<body>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="title">LCOV - code coverage report</td></tr>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+
+            <tr>
+              <td width="100%">
+                <table cellpadding=1 border=0 width="100%">
+          <tr>
+            <td width="10%" class="headerItem">Current view:</td>
+            <td width="10%" class="headerValue"><a href="../index.html" title="Click to go to top-level">top level</a> - <a href="index.html" title="Click to go to directory mmaprototype">mmaprototype</a> - store_status.go</td>
+            <td width="5%"></td>
+            <td width="5%"></td>
+            <td width="5%" class="headerCovTableHead">Coverage</td>
+            <td width="5%" class="headerCovTableHead" title="Covered + Uncovered code">Total</td>
+            <td width="5%" class="headerCovTableHead" title="Exercised code only">Hit</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test:</td>
+            <td class="headerValue">MMA Prototype Coverage</td>
+            <td></td>
+            <td class="headerItem">Lines:</td>
+            <td class="headerCovTableEntryMed">80.3&nbsp;%</td>
+            <td class="headerCovTableEntry">117</td>
+            <td class="headerCovTableEntry">94</td>
+          </tr>
+          <tr>
+            <td class="headerItem">Test Date:</td>
+            <td class="headerValue">2025-11-20 17:36:41</td>
+            <td></td>
+            <td class="headerItem">Functions:</td>
+            <td class="headerCovTableEntryHi">-</td>
+            <td class="headerCovTableEntry">0</td>
+            <td class="headerCovTableEntry">0</td>
+          </tr>
+                  <tr><td><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+                </table>
+              </td>
+            </tr>
+
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+          </table>
+
+          <table cellpadding=0 cellspacing=0 border=0>
+            <tr>
+              <td><br></td>
+            </tr>
+            <tr>
+              <td>
+<pre class="sourceHeading">            Line data    Source code</pre>
+<pre class="source">
+<span id="L1"><span class="lineNum">       1</span>              : // Copyright 2025 The Cockroach Authors.</span>
+<span id="L2"><span class="lineNum">       2</span>              : //</span>
+<span id="L3"><span class="lineNum">       3</span>              : // Use of this software is governed by the CockroachDB Software License</span>
+<span id="L4"><span class="lineNum">       4</span>              : // included in the /LICENSE file.</span>
+<span id="L5"><span class="lineNum">       5</span>              : </span>
+<span id="L6"><span class="lineNum">       6</span>              : package mmaprototype</span>
+<span id="L7"><span class="lineNum">       7</span>              : </span>
+<span id="L8"><span class="lineNum">       8</span>              : import (</span>
+<span id="L9"><span class="lineNum">       9</span>              :         &quot;github.com/cockroachdb/errors&quot;</span>
+<span id="L10"><span class="lineNum">      10</span>              :         &quot;github.com/cockroachdb/redact&quot;</span>
+<span id="L11"><span class="lineNum">      11</span>              : )</span>
+<span id="L12"><span class="lineNum">      12</span>              : </span>
+<span id="L13"><span class="lineNum">      13</span>              : type (</span>
+<span id="L14"><span class="lineNum">      14</span>              :         // Health represents whether the store &quot;is around&quot;, i.e. able to participate</span>
+<span id="L15"><span class="lineNum">      15</span>              :         // in replication. What this means exactly is left to the outside world. MMA</span>
+<span id="L16"><span class="lineNum">      16</span>              :         // relies on the Disposition as much as possible without consulting the health</span>
+<span id="L17"><span class="lineNum">      17</span>              :         // status, aided by the invariant described on Status (only healthy nodes can</span>
+<span id="L18"><span class="lineNum">      18</span>              :         // have &quot;green&quot; dispositions). Its only (envisioned) use for explicit health</span>
+<span id="L19"><span class="lineNum">      19</span>              :         // tracking are sanity checks and preferring unhealthy candidates when picking</span>
+<span id="L20"><span class="lineNum">      20</span>              :         // sources (for example, when rebalancing, it may make sense to rebalance off</span>
+<span id="L21"><span class="lineNum">      21</span>              :         // an unhealthy or dead node over a healthy one as this actually improves</span>
+<span id="L22"><span class="lineNum">      22</span>              :         // availability).</span>
+<span id="L23"><span class="lineNum">      23</span>              :         Health             byte</span>
+<span id="L24"><span class="lineNum">      24</span>              :         LeaseDisposition   byte</span>
+<span id="L25"><span class="lineNum">      25</span>              :         ReplicaDisposition byte</span>
+<span id="L26"><span class="lineNum">      26</span>              : )</span>
+<span id="L27"><span class="lineNum">      27</span>              : </span>
+<span id="L28"><span class="lineNum">      28</span>              : const (</span>
+<span id="L29"><span class="lineNum">      29</span>              :         // HealthUnknown is the initial state for health. It's treated as an unhealthy</span>
+<span id="L30"><span class="lineNum">      30</span>              :         // state, distinguished from HealthUnhealthy to tailor logging and metrics.</span>
+<span id="L31"><span class="lineNum">      31</span>              :         HealthUnknown Health = iota</span>
+<span id="L32"><span class="lineNum">      32</span>              :         // HealthOK describes a store that has been determined to be alive and well.</span>
+<span id="L33"><span class="lineNum">      33</span>              :         HealthOK</span>
+<span id="L34"><span class="lineNum">      34</span>              :         // HealthUnhealthy describes a store that has recently become unhealthy, but</span>
+<span id="L35"><span class="lineNum">      35</span>              :         // which has not been unhealthy for &quot;extended periods of time&quot; and is expected</span>
+<span id="L36"><span class="lineNum">      36</span>              :         // to return (as determined by a higher layer)</span>
+<span id="L37"><span class="lineNum">      37</span>              :         HealthUnhealthy</span>
+<span id="L38"><span class="lineNum">      38</span>              :         // HealthDead describes a store that is unhealthy and has been in that state</span>
+<span id="L39"><span class="lineNum">      39</span>              :         // for what is considered a &quot;long time&quot; or which may not return.</span>
+<span id="L40"><span class="lineNum">      40</span>              :         HealthDead</span>
+<span id="L41"><span class="lineNum">      41</span>              :         healthCount // sentinel</span>
+<span id="L42"><span class="lineNum">      42</span>              : )</span>
+<span id="L43"><span class="lineNum">      43</span>              : </span>
+<span id="L44"><span class="lineNum">      44</span>              : const (</span>
+<span id="L45"><span class="lineNum">      45</span>              :         // LeaseDispositionOK denotes that the store is in principle willing to</span>
+<span id="L46"><span class="lineNum">      46</span>              :         // receive leases.</span>
+<span id="L47"><span class="lineNum">      47</span>              :         LeaseDispositionOK LeaseDisposition = iota</span>
+<span id="L48"><span class="lineNum">      48</span>              :         // LeaseDispositionRefusing denotes that the store should not be considered</span>
+<span id="L49"><span class="lineNum">      49</span>              :         // as a target for leases.</span>
+<span id="L50"><span class="lineNum">      50</span>              :         LeaseDispositionRefusing</span>
+<span id="L51"><span class="lineNum">      51</span>              :         // LeaseDispositionShedding denotes that the store should actively be</span>
+<span id="L52"><span class="lineNum">      52</span>              :         // considered for removal of leases.</span>
+<span id="L53"><span class="lineNum">      53</span>              :         LeaseDispositionShedding</span>
+<span id="L54"><span class="lineNum">      54</span>              :         leaseDispositionCount // sentinel</span>
+<span id="L55"><span class="lineNum">      55</span>              : )</span>
+<span id="L56"><span class="lineNum">      56</span>              : </span>
+<span id="L57"><span class="lineNum">      57</span>              : const (</span>
+<span id="L58"><span class="lineNum">      58</span>              :         // ReplicaDispositionRefusing denotes that the store can receive replicas.</span>
+<span id="L59"><span class="lineNum">      59</span>              :         ReplicaDispositionOK ReplicaDisposition = iota</span>
+<span id="L60"><span class="lineNum">      60</span>              :         // ReplicaDispositionRefusing denotes that the store should not be considered as</span>
+<span id="L61"><span class="lineNum">      61</span>              :         // a target for replica placement.</span>
+<span id="L62"><span class="lineNum">      62</span>              :         ReplicaDispositionRefusing</span>
+<span id="L63"><span class="lineNum">      63</span>              :         // ReplicaDispositionShedding denotes that the store should actively be</span>
+<span id="L64"><span class="lineNum">      64</span>              :         // considered for removal of replicas.</span>
+<span id="L65"><span class="lineNum">      65</span>              :         ReplicaDispositionShedding</span>
+<span id="L66"><span class="lineNum">      66</span>              :         replicaDispositionCount // sentinel</span>
+<span id="L67"><span class="lineNum">      67</span>              : )</span>
+<span id="L68"><span class="lineNum">      68</span>              : </span>
+<span id="L69"><span class="lineNum">      69</span>              : // Disposition represents the interest a store has in accepting or</span>
+<span id="L70"><span class="lineNum">      70</span>              : // shedding leases or replicas.</span>
+<span id="L71"><span class="lineNum">      71</span>              : type Disposition struct {</span>
+<span id="L72"><span class="lineNum">      72</span>              :         Lease   LeaseDisposition</span>
+<span id="L73"><span class="lineNum">      73</span>              :         Replica ReplicaDisposition</span>
+<span id="L74"><span class="lineNum">      74</span>              : }</span>
+<span id="L75"><span class="lineNum">      75</span>              : </span>
+<span id="L76"><span class="lineNum">      76</span>              : // Status represents the health and disposition of a store. It serves as a</span>
+<span id="L77"><span class="lineNum">      77</span>              : // translation layer between the &quot;messy&quot; outside world in which we may have</span>
+<span id="L78"><span class="lineNum">      78</span>              : // multiple possibly conflicting health signals, and various lifecycle states.</span>
+<span id="L79"><span class="lineNum">      79</span>              : // The Status is never derived internally in mma, but is always passed in and</span>
+<span id="L80"><span class="lineNum">      80</span>              : // kept up to date through the Allocator interface.</span>
+<span id="L81"><span class="lineNum">      81</span>              : //</span>
+<span id="L82"><span class="lineNum">      82</span>              : // The contained Health primarily plays a role when looking for (lease or</span>
+<span id="L83"><span class="lineNum">      83</span>              : // replicas) sources: all other things being equal, we want to be able to</span>
+<span id="L84"><span class="lineNum">      84</span>              : // identify suspect or dead stores as more beneficial sources for, say, a</span>
+<span id="L85"><span class="lineNum">      85</span>              : // replica removal. We also want to be able to tell when a range has lost quorum</span>
+<span id="L86"><span class="lineNum">      86</span>              : // so that we don't even try to make changes in that case. On the flip side, due</span>
+<span id="L87"><span class="lineNum">      87</span>              : // to the INVARIANT below, when looking for targets, health does not typically</span>
+<span id="L88"><span class="lineNum">      88</span>              : // need to be considered as we prohibit &quot;non-healthy&quot; stores from claiming to</span>
+<span id="L89"><span class="lineNum">      89</span>              : // accept replicas or leases.</span>
+<span id="L90"><span class="lineNum">      90</span>              : //</span>
+<span id="L91"><span class="lineNum">      91</span>              : // The wrapped Disposition is important when looking for both targets and</span>
+<span id="L92"><span class="lineNum">      92</span>              : // sources. In principle, stores can reject leases but accept replicas and vice</span>
+<span id="L93"><span class="lineNum">      93</span>              : // versa, though not all combinations may be used in practice (because they do</span>
+<span id="L94"><span class="lineNum">      94</span>              : // not all make sense).</span>
+<span id="L95"><span class="lineNum">      95</span>              : //</span>
+<span id="L96"><span class="lineNum">      96</span>              : // The multi-metric allocator is not currently responsible for establishing</span>
+<span id="L97"><span class="lineNum">      97</span>              : // constraint conformance or for shedding, so not all aspects discussed above</span>
+<span id="L98"><span class="lineNum">      98</span>              : // are necessarily used by it yet.</span>
+<span id="L99"><span class="lineNum">      99</span>              : //</span>
+<span id="L100"><span class="lineNum">     100</span>              : // INVARIANT: if Health != HealthOK, Disposition.{Lease,Replica} = Shedding.</span>
+<span id="L101"><span class="lineNum">     101</span>              : type Status struct {</span>
+<span id="L102"><span class="lineNum">     102</span>              :         Health      Health</span>
+<span id="L103"><span class="lineNum">     103</span>              :         Disposition Disposition</span>
+<span id="L104"><span class="lineNum">     104</span>              : }</span>
+<span id="L105"><span class="lineNum">     105</span>              : </span>
+<span id="L106"><span class="lineNum">     106</span> <span class="tlaGNC">          23 : func MakeStatus(h Health, l LeaseDisposition, r ReplicaDisposition) Status {</span></span>
+<span id="L107"><span class="lineNum">     107</span> <span class="tlaGNC">          23 :         s := Status{</span></span>
+<span id="L108"><span class="lineNum">     108</span> <span class="tlaGNC">          23 :                 Health:      h,</span></span>
+<span id="L109"><span class="lineNum">     109</span> <span class="tlaGNC">          23 :                 Disposition: Disposition{Lease: l, Replica: r},</span></span>
+<span id="L110"><span class="lineNum">     110</span> <span class="tlaGNC">          23 :         }</span></span>
+<span id="L111"><span class="lineNum">     111</span> <span class="tlaGNC">          23 :         s.assertOrPanic()</span></span>
+<span id="L112"><span class="lineNum">     112</span> <span class="tlaGNC">          23 :         return s</span></span>
+<span id="L113"><span class="lineNum">     113</span> <span class="tlaGNC">          23 : }</span></span>
+<span id="L114"><span class="lineNum">     114</span>              : </span>
+<span id="L115"><span class="lineNum">     115</span> <span class="tlaGNC">          23 : func (ss *Status) assert() error {</span></span>
+<span id="L116"><span class="lineNum">     116</span> <span class="tlaGNC">          23 :         // NB: byte values can't be negative, so we don't have to check.</span></span>
+<span id="L117"><span class="lineNum">     117</span> <span class="tlaGNC">          23 : </span></span>
+<span id="L118"><span class="lineNum">     118</span> <span class="tlaGNC">          23 :         if ss.Health &gt;= healthCount {</span></span>
+<span id="L119"><span class="lineNum">     119</span> <span class="tlaUNC">           0 :                 return errors.AssertionFailedf(&quot;invalid health status %d&quot;, ss.Health)</span></span>
+<span id="L120"><span class="lineNum">     120</span> <span class="tlaUNC">           0 :         }</span></span>
+<span id="L121"><span class="lineNum">     121</span> <span class="tlaGNC">          23 :         d := ss.Disposition</span></span>
+<span id="L122"><span class="lineNum">     122</span> <span class="tlaGNC">          23 :         if d.Lease &gt;= leaseDispositionCount {</span></span>
+<span id="L123"><span class="lineNum">     123</span> <span class="tlaUNC">           0 :                 return errors.AssertionFailedf(&quot;invalid lease disposition %d&quot;, d.Lease)</span></span>
+<span id="L124"><span class="lineNum">     124</span> <span class="tlaUNC">           0 :         }</span></span>
+<span id="L125"><span class="lineNum">     125</span> <span class="tlaGNC">          23 :         if d.Replica &gt;= replicaDispositionCount {</span></span>
+<span id="L126"><span class="lineNum">     126</span> <span class="tlaUNC">           0 :                 return errors.AssertionFailedf(&quot;invalid replica disposition %d&quot;, d.Replica)</span></span>
+<span id="L127"><span class="lineNum">     127</span> <span class="tlaUNC">           0 :         }</span></span>
+<span id="L128"><span class="lineNum">     128</span> <span class="tlaGNC">          23 :         if ss.Health != HealthOK &amp;&amp; (ss.Disposition.Replica == ReplicaDispositionOK || ss.Disposition.Lease == LeaseDispositionOK) {</span></span>
+<span id="L129"><span class="lineNum">     129</span> <span class="tlaUNC">           0 :                 return errors.AssertionFailedf(&quot;non-healthy status must not accept leases or replicas: %+v&quot;, ss)</span></span>
+<span id="L130"><span class="lineNum">     130</span> <span class="tlaUNC">           0 :         }</span></span>
+<span id="L131"><span class="lineNum">     131</span> <span class="tlaGNC">          23 :         return nil</span></span>
+<span id="L132"><span class="lineNum">     132</span>              : }</span>
+<span id="L133"><span class="lineNum">     133</span>              : </span>
+<span id="L134"><span class="lineNum">     134</span> <span class="tlaGNC">          23 : func (ss *Status) assertOrPanic() {</span></span>
+<span id="L135"><span class="lineNum">     135</span> <span class="tlaGNC">          23 :         if err := ss.assert(); err != nil {</span></span>
+<span id="L136"><span class="lineNum">     136</span> <span class="tlaUNC">           0 :                 panic(err)</span></span>
+<span id="L137"><span class="lineNum">     137</span>              :         }</span>
+<span id="L138"><span class="lineNum">     138</span>              : }</span>
+<span id="L139"><span class="lineNum">     139</span>              : </span>
+<span id="L140"><span class="lineNum">     140</span> <span class="tlaGNC">           8 : func (h Health) String() string {</span></span>
+<span id="L141"><span class="lineNum">     141</span> <span class="tlaGNC">           8 :         return redact.StringWithoutMarkers(h)</span></span>
+<span id="L142"><span class="lineNum">     142</span> <span class="tlaGNC">           8 : }</span></span>
+<span id="L143"><span class="lineNum">     143</span>              : </span>
+<span id="L144"><span class="lineNum">     144</span>              : // SafeFormat implements the redact.SafeFormatter interface.</span>
+<span id="L145"><span class="lineNum">     145</span> <span class="tlaGNC">          92 : func (h Health) SafeFormat(w redact.SafePrinter, _ rune) {</span></span>
+<span id="L146"><span class="lineNum">     146</span> <span class="tlaGNC">          92 :         switch h {</span></span>
+<span id="L147"><span class="lineNum">     147</span> <span class="tlaGNC">           3 :         case HealthUnknown:</span></span>
+<span id="L148"><span class="lineNum">     148</span> <span class="tlaGNC">           3 :                 w.Print(&quot;unknown&quot;)</span></span>
+<span id="L149"><span class="lineNum">     149</span> <span class="tlaGNC">          84 :         case HealthOK:</span></span>
+<span id="L150"><span class="lineNum">     150</span> <span class="tlaGNC">          84 :                 w.Print(&quot;ok&quot;)</span></span>
+<span id="L151"><span class="lineNum">     151</span> <span class="tlaGNC">           5 :         case HealthUnhealthy:</span></span>
+<span id="L152"><span class="lineNum">     152</span> <span class="tlaGNC">           5 :                 w.Print(&quot;unhealthy&quot;)</span></span>
+<span id="L153"><span class="lineNum">     153</span> <span class="tlaUNC">           0 :         case HealthDead:</span></span>
+<span id="L154"><span class="lineNum">     154</span> <span class="tlaUNC">           0 :                 w.Print(&quot;dead&quot;)</span></span>
+<span id="L155"><span class="lineNum">     155</span> <span class="tlaUNC">           0 :         default:</span></span>
+<span id="L156"><span class="lineNum">     156</span> <span class="tlaUNC">           0 :                 w.Print(&quot;unknown&quot;)</span></span>
+<span id="L157"><span class="lineNum">     157</span>              :         }</span>
+<span id="L158"><span class="lineNum">     158</span>              : }</span>
+<span id="L159"><span class="lineNum">     159</span>              : </span>
+<span id="L160"><span class="lineNum">     160</span> <span class="tlaGNC">           6 : func (l LeaseDisposition) String() string {</span></span>
+<span id="L161"><span class="lineNum">     161</span> <span class="tlaGNC">           6 :         return redact.StringWithoutMarkers(l)</span></span>
+<span id="L162"><span class="lineNum">     162</span> <span class="tlaGNC">           6 : }</span></span>
+<span id="L163"><span class="lineNum">     163</span>              : </span>
+<span id="L164"><span class="lineNum">     164</span>              : // SafeFormat implements the redact.SafeFormatter interface.</span>
+<span id="L165"><span class="lineNum">     165</span> <span class="tlaGNC">           6 : func (l LeaseDisposition) SafeFormat(w redact.SafePrinter, _ rune) {</span></span>
+<span id="L166"><span class="lineNum">     166</span> <span class="tlaGNC">           6 :         switch l {</span></span>
+<span id="L167"><span class="lineNum">     167</span> <span class="tlaGNC">           2 :         case LeaseDispositionOK:</span></span>
+<span id="L168"><span class="lineNum">     168</span> <span class="tlaGNC">           2 :                 w.Print(&quot;ok&quot;)</span></span>
+<span id="L169"><span class="lineNum">     169</span> <span class="tlaGNC">           2 :         case LeaseDispositionRefusing:</span></span>
+<span id="L170"><span class="lineNum">     170</span> <span class="tlaGNC">           2 :                 w.Print(&quot;refusing&quot;)</span></span>
+<span id="L171"><span class="lineNum">     171</span> <span class="tlaGNC">           2 :         case LeaseDispositionShedding:</span></span>
+<span id="L172"><span class="lineNum">     172</span> <span class="tlaGNC">           2 :                 w.Print(&quot;shedding&quot;)</span></span>
+<span id="L173"><span class="lineNum">     173</span> <span class="tlaUNC">           0 :         default:</span></span>
+<span id="L174"><span class="lineNum">     174</span> <span class="tlaUNC">           0 :                 w.Print(&quot;unknown&quot;)</span></span>
+<span id="L175"><span class="lineNum">     175</span>              :         }</span>
+<span id="L176"><span class="lineNum">     176</span>              : }</span>
+<span id="L177"><span class="lineNum">     177</span>              : </span>
+<span id="L178"><span class="lineNum">     178</span> <span class="tlaGNC">           5 : func (r ReplicaDisposition) String() string {</span></span>
+<span id="L179"><span class="lineNum">     179</span> <span class="tlaGNC">           5 :         return redact.StringWithoutMarkers(r)</span></span>
+<span id="L180"><span class="lineNum">     180</span> <span class="tlaGNC">           5 : }</span></span>
+<span id="L181"><span class="lineNum">     181</span>              : </span>
+<span id="L182"><span class="lineNum">     182</span>              : // SafeFormat implements the redact.SafeFormatter interface.</span>
+<span id="L183"><span class="lineNum">     183</span> <span class="tlaGNC">           5 : func (r ReplicaDisposition) SafeFormat(w redact.SafePrinter, _ rune) {</span></span>
+<span id="L184"><span class="lineNum">     184</span> <span class="tlaGNC">           5 :         switch r {</span></span>
+<span id="L185"><span class="lineNum">     185</span> <span class="tlaGNC">           2 :         case ReplicaDispositionOK:</span></span>
+<span id="L186"><span class="lineNum">     186</span> <span class="tlaGNC">           2 :                 w.Print(&quot;ok&quot;)</span></span>
+<span id="L187"><span class="lineNum">     187</span> <span class="tlaGNC">           2 :         case ReplicaDispositionRefusing:</span></span>
+<span id="L188"><span class="lineNum">     188</span> <span class="tlaGNC">           2 :                 w.Print(&quot;refusing&quot;)</span></span>
+<span id="L189"><span class="lineNum">     189</span> <span class="tlaGNC">           1 :         case ReplicaDispositionShedding:</span></span>
+<span id="L190"><span class="lineNum">     190</span> <span class="tlaGNC">           1 :                 w.Print(&quot;shedding&quot;)</span></span>
+<span id="L191"><span class="lineNum">     191</span> <span class="tlaUNC">           0 :         default:</span></span>
+<span id="L192"><span class="lineNum">     192</span> <span class="tlaUNC">           0 :                 w.Print(&quot;unknown&quot;)</span></span>
+<span id="L193"><span class="lineNum">     193</span>              :         }</span>
+<span id="L194"><span class="lineNum">     194</span>              : }</span>
+<span id="L195"><span class="lineNum">     195</span>              : </span>
+<span id="L196"><span class="lineNum">     196</span> <span class="tlaUNC">           0 : func (d Disposition) String() string {</span></span>
+<span id="L197"><span class="lineNum">     197</span> <span class="tlaUNC">           0 :         return redact.StringWithoutMarkers(d)</span></span>
+<span id="L198"><span class="lineNum">     198</span> <span class="tlaUNC">           0 : }</span></span>
+<span id="L199"><span class="lineNum">     199</span>              : </span>
+<span id="L200"><span class="lineNum">     200</span>              : // SafeFormat implements the redact.SafeFormatter interface.</span>
+<span id="L201"><span class="lineNum">     201</span> <span class="tlaGNC">          84 : func (d Disposition) SafeFormat(w redact.SafePrinter, _ rune) {</span></span>
+<span id="L202"><span class="lineNum">     202</span> <span class="tlaGNC">          84 :         if d.Lease == LeaseDispositionOK &amp;&amp; d.Replica == ReplicaDispositionOK {</span></span>
+<span id="L203"><span class="lineNum">     203</span> <span class="tlaGNC">          81 :                 w.Print(&quot;accepting all&quot;)</span></span>
+<span id="L204"><span class="lineNum">     204</span> <span class="tlaGNC">          81 :                 return</span></span>
+<span id="L205"><span class="lineNum">     205</span> <span class="tlaGNC">          81 :         }</span></span>
+<span id="L206"><span class="lineNum">     206</span>              : </span>
+<span id="L207"><span class="lineNum">     207</span> <span class="tlaGNC">           3 :         var refusing []redact.SafeString</span></span>
+<span id="L208"><span class="lineNum">     208</span> <span class="tlaGNC">           3 :         var shedding []redact.SafeString</span></span>
+<span id="L209"><span class="lineNum">     209</span> <span class="tlaGNC">           3 : </span></span>
+<span id="L210"><span class="lineNum">     210</span> <span class="tlaGNC">           3 :         if d.Lease == LeaseDispositionRefusing {</span></span>
+<span id="L211"><span class="lineNum">     211</span> <span class="tlaUNC">           0 :                 refusing = append(refusing, redact.SafeString(&quot;leases&quot;))</span></span>
+<span id="L212"><span class="lineNum">     212</span> <span class="tlaGNC">           3 :         } else if d.Lease == LeaseDispositionShedding {</span></span>
+<span id="L213"><span class="lineNum">     213</span> <span class="tlaGNC">           3 :                 shedding = append(shedding, redact.SafeString(&quot;leases&quot;))</span></span>
+<span id="L214"><span class="lineNum">     214</span> <span class="tlaGNC">           3 :         }</span></span>
+<span id="L215"><span class="lineNum">     215</span>              : </span>
+<span id="L216"><span class="lineNum">     216</span> <span class="tlaGNC">           3 :         if d.Replica == ReplicaDispositionRefusing {</span></span>
+<span id="L217"><span class="lineNum">     217</span> <span class="tlaGNC">           1 :                 refusing = append(refusing, redact.SafeString(&quot;replicas&quot;))</span></span>
+<span id="L218"><span class="lineNum">     218</span> <span class="tlaGNC">           2 :         } else if d.Replica == ReplicaDispositionShedding {</span></span>
+<span id="L219"><span class="lineNum">     219</span> <span class="tlaGNC">           2 :                 shedding = append(shedding, redact.SafeString(&quot;replicas&quot;))</span></span>
+<span id="L220"><span class="lineNum">     220</span> <span class="tlaGNC">           2 :         }</span></span>
+<span id="L221"><span class="lineNum">     221</span>              : </span>
+<span id="L222"><span class="lineNum">     222</span> <span class="tlaGNC">           3 :         first := true</span></span>
+<span id="L223"><span class="lineNum">     223</span> <span class="tlaGNC">           3 :         if len(refusing) &gt; 0 {</span></span>
+<span id="L224"><span class="lineNum">     224</span> <span class="tlaGNC">           1 :                 w.Print(&quot;refusing=&quot;)</span></span>
+<span id="L225"><span class="lineNum">     225</span> <span class="tlaGNC">           1 :                 for i, s := range refusing {</span></span>
+<span id="L226"><span class="lineNum">     226</span> <span class="tlaGNC">           1 :                         if i &gt; 0 {</span></span>
+<span id="L227"><span class="lineNum">     227</span> <span class="tlaUNC">           0 :                                 w.Print(&quot;,&quot;)</span></span>
+<span id="L228"><span class="lineNum">     228</span> <span class="tlaUNC">           0 :                         }</span></span>
+<span id="L229"><span class="lineNum">     229</span> <span class="tlaGNC">           1 :                         w.Print(s)</span></span>
+<span id="L230"><span class="lineNum">     230</span>              :                 }</span>
+<span id="L231"><span class="lineNum">     231</span> <span class="tlaGNC">           1 :                 first = false</span></span>
+<span id="L232"><span class="lineNum">     232</span>              :         }</span>
+<span id="L233"><span class="lineNum">     233</span> <span class="tlaGNC">           3 :         if len(shedding) &gt; 0 {</span></span>
+<span id="L234"><span class="lineNum">     234</span> <span class="tlaGNC">           3 :                 if !first {</span></span>
+<span id="L235"><span class="lineNum">     235</span> <span class="tlaGNC">           1 :                         w.Print(&quot; &quot;)</span></span>
+<span id="L236"><span class="lineNum">     236</span> <span class="tlaGNC">           1 :                 }</span></span>
+<span id="L237"><span class="lineNum">     237</span> <span class="tlaGNC">           3 :                 w.Print(&quot;shedding=&quot;)</span></span>
+<span id="L238"><span class="lineNum">     238</span> <span class="tlaGNC">           5 :                 for i, s := range shedding {</span></span>
+<span id="L239"><span class="lineNum">     239</span> <span class="tlaGNC">           5 :                         if i &gt; 0 {</span></span>
+<span id="L240"><span class="lineNum">     240</span> <span class="tlaGNC">           2 :                                 w.Print(&quot;,&quot;)</span></span>
+<span id="L241"><span class="lineNum">     241</span> <span class="tlaGNC">           2 :                         }</span></span>
+<span id="L242"><span class="lineNum">     242</span> <span class="tlaGNC">           5 :                         w.Print(s)</span></span>
+<span id="L243"><span class="lineNum">     243</span>              :                 }</span>
+<span id="L244"><span class="lineNum">     244</span>              :         }</span>
+<span id="L245"><span class="lineNum">     245</span>              : }</span>
+<span id="L246"><span class="lineNum">     246</span>              : </span>
+<span id="L247"><span class="lineNum">     247</span> <span class="tlaGNC">          84 : func (ss Status) String() string {</span></span>
+<span id="L248"><span class="lineNum">     248</span> <span class="tlaGNC">          84 :         return redact.StringWithoutMarkers(ss)</span></span>
+<span id="L249"><span class="lineNum">     249</span> <span class="tlaGNC">          84 : }</span></span>
+<span id="L250"><span class="lineNum">     250</span>              : </span>
+<span id="L251"><span class="lineNum">     251</span>              : // SafeFormat implements the redact.SafeFormatter interface.</span>
+<span id="L252"><span class="lineNum">     252</span> <span class="tlaGNC">          84 : func (ss Status) SafeFormat(w redact.SafePrinter, _ rune) {</span></span>
+<span id="L253"><span class="lineNum">     253</span> <span class="tlaGNC">          84 :         ss.Health.SafeFormat(w, 's')</span></span>
+<span id="L254"><span class="lineNum">     254</span> <span class="tlaGNC">          84 :         w.Print(&quot; &quot;)</span></span>
+<span id="L255"><span class="lineNum">     255</span> <span class="tlaGNC">          84 :         ss.Disposition.SafeFormat(w, 's')</span></span>
+<span id="L256"><span class="lineNum">     256</span> <span class="tlaGNC">          84 : }</span></span>
+        </pre>
+              </td>
+            </tr>
+          </table>
+          <br>
+
+          <table width="100%" border=0 cellspacing=0 cellpadding=0>
+            <tr><td class="ruler"><img src="../glass.png" width=3 height=3 alt=""></td></tr>
+            <tr><td class="versionInfo">Generated by: <a href="https://github.com//linux-test-project/lcov" target="_parent">LCOV version 2.3.2-1</a></td></tr>
+          </table>
+          <br>
+
+</body>
+</html>
