@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/testutils/datapathutils"
 	"github.com/cockroachdb/cockroach/pkg/testutils/dd"
 	"github.com/cockroachdb/datadriven"
 	"github.com/cockroachdb/errors"
@@ -349,15 +350,18 @@ func testingAnalyzeFn(
 
 // TODO(sumeer): testing of query methods.
 func TestRangeAnalyzedConstraints(t *testing.T) {
-	interner := newStringInterner()
-	cm := newConstraintMatcher(interner)
-	ltInterner := newLocalityTierInterner(interner)
-	configs := map[string]*normalizedSpanConfig{}
-	stores := map[roachpb.StoreID]StoreAttributesAndLocality{}
-	var lastRangeAnalyzedConstraints *rangeAnalyzedConstraints
+	datadriven.Walk(t,
+		datapathutils.TestDataPath(t, "range_analyzed_constraints"),
+		func(t *testing.T, path string) {
+			// Initialize fresh state for each test file
+			interner := newStringInterner()
+			cm := newConstraintMatcher(interner)
+			ltInterner := newLocalityTierInterner(interner)
+			configs := map[string]*normalizedSpanConfig{}
+			stores := map[roachpb.StoreID]StoreAttributesAndLocality{}
+			var lastRangeAnalyzedConstraints *rangeAnalyzedConstraints
 
-	datadriven.RunTest(t, "testdata/range_analyzed_constraints",
-		func(t *testing.T, d *datadriven.TestData) string {
+			datadriven.RunTest(t, path, func(t *testing.T, d *datadriven.TestData) string {
 			switch d.Cmd {
 			case "store":
 				for _, line := range strings.Split(d.Input, "\n") {
@@ -508,4 +512,5 @@ func TestRangeAnalyzedConstraints(t *testing.T) {
 				return fmt.Sprintf("unknown command: %s", d.Cmd)
 			}
 		})
+	})
 }
