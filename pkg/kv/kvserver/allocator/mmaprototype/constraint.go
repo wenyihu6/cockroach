@@ -349,9 +349,20 @@ func makeNormalizedSpanConfig(
 	return nConf, err
 }
 
-// normalizeConstraints normalizes and interns the given constraints. Every
-// internedConstraintsConjunction has numReplicas > 0, and the sum of these
-// equals the parameter numReplicas.
+// normalizeConstraints normalizes and interns the given constraints for use by
+// the allocator. This function transforms raw SpanConfig constraints into a
+// canonical form that simplifies allocator decision-making.
+//
+// The allocator uses the normalized output to determine which stores are valid
+// candidates for replica placement. By ensuring every conjunction has a positive
+// replica count and the sum equals numReplicas, downstream code can treat each
+// conjunction uniformly without special-casing zero-replica or incomplete
+// configurations.
+//
+// Normalization guarantees:
+//  1. Every returned internedConstraintsConjunction has numReplicas > 0
+//  2. The sum of all numReplicas equals the input numReplicas parameter
+//  3. Constraints are interned for efficient comparison
 //
 // It returns an error if the input constraints don't satisfy the requirements
 // documented in roachpb.SpanConfig related to NumReplicas.
@@ -361,28 +372,48 @@ func normalizeConstraints(
 	var nc []roachpb.ConstraintsConjunction
 	haveZero := false
 	sumReplicas := int32(0)
+
+	// Phase 1: Separate zero-replica constraints from explicit-count constraints.
+	// Zero-replica constraints (NumReplicas=0) mean "apply to all replicas", so
+	// we merge all such constraints into a single conjunction that will apply to
+	// the full replica count. Non-zero constraints specify how many replicas must
+	// satisfy specific locality requirements.
 	for i := range constraints {
 		if constraints[i].NumReplicas == 0 {
 			haveZero = true
 			if len(nc) == 0 {
 				nc = append(nc, roachpb.ConstraintsConjunction{})
 			}
-			// Conjunction of conjunctions, since they all must be satisfied.
+			// Merge all zero-replica constraints into a single conjunction. This
+			// represents the logical AND of all these constraints, since they all
+			// must be satisfied by every replica.
 			nc[0].Constraints = append(nc[0].Constraints, constraints[i].Constraints...)
 		} else {
 			sumReplicas += constraints[i].NumReplicas
 		}
 	}
+
+	// Phase 2: Validate constraint configuration.
+	// Zero-replica and non-zero constraints cannot be mixed because they have
+	// incompatible semantics (apply to all vs. apply to subset).
 	if haveZero && sumReplicas > 0 {
 		return nil, errors.Errorf("invalid mix of constraints")
 	}
+	// Explicit replica counts cannot exceed the total number of replicas.
 	if sumReplicas > numReplicas {
 		return nil, errors.Errorf("constraint replicas add up to more than configured replicas")
 	}
+
+	// Phase 3: Finalize the constraint set.
 	if haveZero {
+		// Set the merged zero-replica conjunction to cover all replicas.
 		nc[0].NumReplicas = numReplicas
 	} else {
+		// Keep the explicit-count constraints as-is.
 		nc = append(nc, constraints...)
+		// If the sum of explicit counts is less than numReplicas, add an
+		// unconstrained conjunction for the remainder. This ensures the allocator
+		// can place the remaining replicas anywhere without constraint violations.
 		if sumReplicas < numReplicas {
 			cc := roachpb.ConstraintsConjunction{
 				NumReplicas: numReplicas - sumReplicas,
@@ -391,6 +422,8 @@ func normalizeConstraints(
 			nc = append(nc, cc)
 		}
 	}
+
+	// Phase 4: Intern constraints for efficient comparison in allocator hot paths.
 	var rv []internedConstraintsConjunction
 	for i := range nc {
 		icc := internedConstraintsConjunction{
@@ -402,20 +435,177 @@ func normalizeConstraints(
 	return rv, nil
 }
 
-// Structural normalization establishes relationships between every pair of
-// ConstraintsConjunctions in constraints and voterConstraints, and then tries
-// to map conjunctions in voterConstraints to narrower conjunctions in
-// constraints. This is done to handle configs which under-specify
-// conjunctions in voterConstraints under the assumption that one does not
-// need to repeat information provided in constraints (see the new
-// "strictness" comment in roachpb.SpanConfig which now requires users to
-// repeat the information).
+// doStructuralNormalization reconciles under-specified span configurations by
+// establishing proper relationships between all-replica constraints and voter
+// constraints, then normalizing both to ensure correct replica placement.
 //
-// This function mutates the conf argument. It does some structural
-// normalization even when returning an error. See the under-specified voter
-// constraint examples in the datadriven test -- we sometimes see these in
-// production settings, and we want to fix ones that we can, and raise an
-// error for users to fix their configs.
+// Users often configure span configs assuming voter constraints inherit from
+// all-replica constraints without explicit repetition. For example:
+//
+//	numReplicas = 6, numVoters = 5
+//	constraints:       [+region=us-west:2, +region=us-east:2, +region=us-central:2]
+//	voterConstraints:  [+region=us-west:2, +region=us-east:2]  // under-specified!
+//
+// The user expects 2 voters in us-west, 2 in us-east, 1 voter in us-central, and
+// the remaining non-voter also in us-central. However, the voterConstraints only
+// account for 4 voters when numVoters=5. The missing 5th voter could be placed
+// anywhere, potentially violating the intended us-west/us-east/us-central distribution.
+//
+// Historically, CockroachDB allowed this under-specification. The new strictness
+// requirement in roachpb.SpanConfig requires explicit repetition, but we
+// normalize existing configs for backwards compatibility and to avoid breaking
+// production deployments.
+//
+// # What This Function Achieves
+//
+//  1. **Voter Constraint Normalization**: Maps under-specified voter constraints
+//     to narrower all-replica constraints, ensuring every voter has an explicit
+//     placement constraint. In the example above, creates an implicit third voter
+//     constraint from the us-central all-replica constraint.
+//
+//  2. **All-Replica Constraint Normalization**: When an all-replica constraint
+//     has numReplicas < its corresponding voter constraint's numReplicas, borrows
+//     replicas from the empty constraint to increase the all-replica constraint's
+//     count. This prevents incorrect non-voter placement during temporary voter
+//     outages.
+//
+//  3. **Relationship Analysis**: Categorizes every pair of (voterConstraint,
+//     allReplicaConstraint) as: equal, strict subset, strict superset,
+//     non-intersecting, or possibly intersecting. Uses these relationships to
+//     guide the normalization.
+//
+// # High-Level Algorithm
+//
+// Phase 1: Build Relationships (lines 433-451)
+//   - Compute conjunctionRelationship for every (voter, all-replica) pair
+//   - Sort by relationship type for processing in optimal order
+//
+// Phase 2: Satisfy Voter Constraints from Equal/Subset Relationships (lines 518-541)
+//   - When voter constraint equals or is a subset of an all-replica constraint,
+//     allocate replicas from that constraint to satisfy the voter requirement
+//   - Track remaining replicas in each all-replica constraint
+//
+// Phase 3: Narrow Voter Constraints via Superset Relationships (lines 585-617)
+//   - When voter constraint is a superset of an all-replica constraint (e.g.,
+//     voter=+region=us-west, all=+region=us-west,+zone=west-1), create new
+//     tighter voter constraints to utilize available replica counts
+//   - Use "load-balancing": distribute replicas across multiple narrower
+//     constraints rather than greedily filling one
+//
+// Phase 4: Normalize All-Replica Constraints (lines 668-753)
+//   - Fix under-specified all-replica constraints by borrowing from the
+//     "empty" constraint (conjunction with no restrictions)
+//   - Ensures non-voters are placed correctly even during voter outages
+//
+// # Lifecycle and Mutations
+//
+// Called during span config initialization (makeNormalizedSpanConfig) before
+// any replica placement decisions are made. Mutates conf.voterConstraints and
+// conf.constraints in place:
+//   - May add new voter constraint conjunctions
+//   - May adjust numReplicas in existing constraints
+//   - May reorder constraints (empty constraint moved to end)
+//
+// Returns error for intersecting conjunctions or unsatisfiable configurations,
+// but continues normalization even after error to fix what it can.
+//
+// # Example Transformation
+//
+// Input:
+//
+//	constraints:       [+region=us-west,+zone=west-1:2, +region=us-east:2, {}:1]
+//	voterConstraints:  [+region=us-west:3, +region=us-east:2]  // needs 5 voters
+//
+// Output (normalized):
+//
+//	voterConstraints:  [+region=us-west,+zone=west-1:2,  // from constraint[0]
+//	                    +region=us-west:1,                // remaining from original
+//	                    +region=us-east:2]
+//	constraints:       [+region=us-west,+zone=west-1:2,   // unchanged
+//	                    +region=us-east:2,                 // unchanged
+//	                    {}:1]                              // unchanged
+//
+// The us-west voter constraint is split: 2 replicas must be in west-1 zone
+// (narrower), 1 can be anywhere in us-west (original broad constraint).
+//
+// # Additional Examples
+//
+// Example 1: Phase 5 - Empty voter satisfied from empty all-replica
+//
+//	Input:
+//	  constraints:       [+region=us-west:2, +region=us-east:1, {}:2]
+//	  voterConstraints:  [+region=us-west:2]  // only 2 of 3 voters specified
+//	Output:
+//	  voterConstraints:  [+region=us-west:2, {}:1]  // empty voter stays unconstrained
+//
+// The empty voter constraint gets satisfied from the empty all-replica constraint,
+// avoiding unnecessary narrowing. This preserves placement flexibility.
+//
+// Example 2: Load-balancing across multiple narrow constraints
+//
+//	Input:
+//	  constraints:       [+region=us-west,+zone=west-1:2,
+//	                      +region=us-west,+zone=west-2:2,
+//	                      +region=us-east:2]
+//	  voterConstraints:  [+region=us-west:4]
+//	Output:
+//	  voterConstraints:  [+region=us-west,+zone=west-1:2,
+//	                      +region=us-west,+zone=west-2:2]
+//
+// The broad us-west voter constraint (superset) is distributed evenly across
+// both narrower zone-specific constraints rather than greedily filling one.
+//
+// Example 3: Empty voter forced to narrow when empty all-replica is consumed
+//
+//	Input:
+//	  constraints:       [+region=a,+zone=a1:3, {}:2]
+//	  voterConstraints:  [+region=a:2, {}:1]
+//	Output:
+//	  voterConstraints:  [+region=a:2, +region=a,+zone=a1:1]
+//
+// Phase 4 gives the +region=a voter 2 replicas from the empty constraint.
+// Phase 5 can't help (empty all-replica is consumed). Phase 6 narrows the
+// empty voter to +region=a,+zone=a1 (only remaining option).
+//
+// Example 4: All-replica normalization to prevent voter outage issues
+//
+//	Input:
+//	  constraints:       [+region=us-west:1, +region=us-east:1, {}:4]
+//	  voterConstraints:  [+region=us-west:2, +region=us-east:2, {}:1]
+//	Output:
+//	  constraints:       [+region=us-west:2, +region=us-east:2, {}:2]
+//	  voterConstraints:  [+region=us-west:2, +region=us-east:2, {}:1]
+//
+// Phase 8 increases all-replica constraints to match voter constraints, borrowing
+// from the empty constraint. This ensures non-voters are placed correctly even
+// during temporary voter outages (e.g., can't place 2nd voter in us-east).
+//
+// Example 5: Three-way load-balancing
+//
+//	Input:
+//	  constraints:       [+region=us-west,+zone=west-1:3,
+//	                      +region=us-west,+zone=west-2:3,
+//	                      +region=us-west,+zone=west-3:3]
+//	  voterConstraints:  [+region=us-west:6]
+//	Output:
+//	  voterConstraints:  [+region=us-west,+zone=west-1:2,
+//	                      +region=us-west,+zone=west-2:2,
+//	                      +region=us-west,+zone=west-3:2]
+//
+// The 6 voters are evenly distributed (2 each) across the 3 zones rather than
+// greedily placing all in one zone.
+//
+// Example 6: Empty constraint consumed entirely and removed
+//
+//	Input:
+//	  constraints:       [+region=us-west:2, {}:3]
+//	  voterConstraints:  [+region=us-west:3, +region=us-east:2]
+//	Output:
+//	  constraints:       [+region=us-west:3, +region=us-east:2]
+//	  voterConstraints:  [+region=us-west:3, +region=us-east:2]
+//
+// The empty all-replica constraint is entirely consumed (1 goes to us-west to
+// make it 3, 2 go to create us-east). Since it has 0 remaining, it's removed.
 func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	if len(conf.constraints) == 0 || len(conf.voterConstraints) == 0 {
 		return nil
@@ -427,8 +617,15 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 		allIndex       int
 		voterAndAllRel conjunctionRelationship
 	}
+
+	// The index of the empty all replica constraint. At most one.
 	emptyConstraintIndex := -1
+	// The index of the empty voter constraint. At most one.
 	emptyVoterConstraintIndex := -1
+
+	// Each relationshipVoterAndAll (rel) represents the relationship between a
+	// voter constraint conf.voterConstraints[rel.voterIndex] and an all replica
+	// constraint conf.constraints[rel.allIndex].
 	var rels []relationshipVoterAndAll
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
