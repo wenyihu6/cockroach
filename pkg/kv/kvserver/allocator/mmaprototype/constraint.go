@@ -402,20 +402,26 @@ func normalizeConstraints(
 	return rv, nil
 }
 
-// Structural normalization establishes relationships between every pair of
-// ConstraintsConjunctions in constraints and voterConstraints, and then tries
-// to map conjunctions in voterConstraints to narrower conjunctions in
-// constraints. This is done to handle configs which under-specify
-// conjunctions in voterConstraints under the assumption that one does not
-// need to repeat information provided in constraints (see the new
-// "strictness" comment in roachpb.SpanConfig which now requires users to
-// repeat the information).
+// doStructuralNormalization reconciles under-specified span configurations by
+// establishing relationships between all-replica and voter constraints. Since
+// voters are a subset of all replicas, every voter constraint must be
+// satisfiable by all-replica constraints.
 //
-// This function mutates the conf argument. It does some structural
-// normalization even when returning an error. See the under-specified voter
-// constraint examples in the datadriven test -- we sometimes see these in
-// production settings, and we want to fix ones that we can, and raise an
-// error for users to fix their configs.
+// This function is necessary because user-provided span configs can be
+// under-specified or inconsistent. For example, a config might specify 1
+// replica in a region via constraints but require 2 voters in that region via
+// voterConstraints. This normalization tightens constraints and creates new
+// ones as needed so that replica placement decisions are consistent and don't
+// require moving replicas later to satisfy both sets of constraints.
+//
+// The function attempts to match voter constraints to all-replica constraints
+// based on their relationship (equal, subset, superset, or disjoint). It may
+// create additional voter constraints by narrowing broader ones, or adjust
+// all-replica constraint replica counts to match voter requirements.
+//
+// Returns an error if voter constraints cannot be satisfied (e.g., due to
+// intersecting or non-intersecting constraint conjunctions), but continues
+// normalization even in error cases to leave the config in a more usable state.
 func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	if len(conf.constraints) == 0 || len(conf.voterConstraints) == 0 {
 		return nil
@@ -427,8 +433,15 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 		allIndex       int
 		voterAndAllRel conjunctionRelationship
 	}
+	// The index of the empty all replica constraint. At most one.
 	emptyConstraintIndex := -1
+	// The index of the empty voter constraint. At most one.
 	emptyVoterConstraintIndex := -1
+
+	// Compute allReplicaConstraints for every (voter, all-replica) pair. Each
+	// relationshipVoterAndAll (rel) represents a relationship between voter
+	// constraint conf.voterConstraints[rel.voterIndex] and all-replica
+	// constraint conf.constraints[rel.allIndex].
 	var rels []relationshipVoterAndAll
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
@@ -455,11 +468,15 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	slices.SortFunc(rels, func(a, b relationshipVoterAndAll) int {
 		return cmp.Compare(a.voterAndAllRel, b.voterAndAllRel)
 	})
-	// First are the intersecting constraints, which cause an error (though we
-	// proceed with normalization). This is because when there are both shared
-	// and non shared conjuncts, we cannot be certain that the conjunctions are
-	// non-intersecting. When the conjunctions are intersecting, we cannot
-	// promote from one to the other to fill out the set of conjunctions.
+
+	// Phase one is for intersecting voter-replicas relationships, which cause
+	// an error (though we proceed with normalization). This is because when
+	// there are both shared and non shared conjuncts, we cannot be certain that
+	// the conjunctions are non-intersecting. When the conjunctions are
+	// intersecting, we cannot promote from one to the other to fill out the set
+	// of conjunctions. Note that when we proceed with normalization, we
+	// essentially treat relationship conjPossiblyIntersecting as
+	// conjNonIntersecting (just left as is).
 	//
 	// Example 1: +region=a,+zone=a1 and +region=a,+zone=a2 are classified as
 	// conjPossiblyIntersecting, but we could do better in knowing that the
@@ -483,10 +500,11 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	// Even if there was an error, we will continue normalization.
 
 	// For each all-replica constraint, track how many replicas are remaining
-	// (not already taken by a voter constraint). Additionally, when we find an
-	// all replica constraint that is a subset of one or more voter constraints,
-	// and create a new voter constraint, we record the index of that new voter
-	// constraint in newVoterIndex.
+	// (not already taken by a voter constraint). allReplicaConstraintsInfo.remainingReplicas starts out as conf.constraints[i].numReplicas and decreases as we satisfy voter constraints with it. Additionally, when we find an
+	// all replica constraint that is stricter than voter constraints
+	// (conjStrictSuperset), we create a new voter constraint, we record the
+	// index of that new voter constraint in newVoterIndex.
+	// len(allReplicaConstraints) == len(conf.constraints).
 	type allReplicaConstraintsInfo struct {
 		remainingReplicas int32
 		newVoterIndex     int
@@ -500,18 +518,24 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 				newVoterIndex:     -1,
 			})
 	}
-	// For each voter replica constraint, we keep the current
-	// internedConstraintsConjunction. The numReplicas start with 0 and build up
+
+	// For each voter constraint, we keep the current
+	// internedConstraintsConjunction.
+	// internedConstraintsConjunction.numReplicas start with 0 and build up
 	// towards the desired number in the corresponding un-normalized voter
 	// constraint. In addition, if the voter constraint had a superset
 	// relationship with one or more all-replica constraint, we may take some of
 	// its voter count and construct narrower voter constraints.
 	// additionalReplicas tracks the total count of replicas in such narrower
-	// voter constraints.
+	// voter constraints. len(voterConstraints) starts out as
+	// len(conf.voterConstraints) but may grow if we create new voter
+	// constraints to satisfy the strict superset relationships with all-replica
+	// constraints in phase 3.
 	type voterConstraintsAndAdditionalInfo struct {
 		internedConstraintsConjunction
 		additionalReplicas int32
 	}
+
 	var voterConstraints []voterConstraintsAndAdditionalInfo
 	for _, constraint := range conf.voterConstraints {
 		constraint.numReplicas = 0
@@ -519,17 +543,28 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 			internedConstraintsConjunction: constraint,
 		})
 	}
-	// Now resume iterating from index, and consume all relationships that are
-	// conjEqualSet and conjStrictSubset.
+
+	// Resume iterating from index. Phase two is for conjEqualSet and
+	// conjStrictSubset voter-replicas relationships, which means that
+	// satisfying the voter constraint will satisfy the corresponding
+	// all-replica constraint.
 	for ; index < len(rels) && rels[index].voterAndAllRel <= conjStrictSubset; index++ {
 		rel := rels[index]
 		if rel.voterIndex == emptyVoterConstraintIndex {
-			// Don't try to satisfy the empty constraint with the corresponding
-			// empty constraint since the latter may be needed by some other voter
-			// constraint.
+			// Don't try to satisfy the empty voter constraint with the corresponding
+			// empty all-replica constraint since the latter may be needed by some other voter
+			// constraint. Note that an empty voter constraint can only be
+			// corresponding to an empty all-replica constraint at this point
+			// since an empty voter constraint can only be a superset of a
+			// non-empty all-replica constraint.
 			continue
 		}
+		// remainingAll represents the number of replicas remaining to be
+		// satisfied by the all-replica constraint. We can use them to satisfy
+		// the voter constraint.
 		remainingAll := allReplicaConstraints[rel.allIndex].remainingReplicas
+		// neededVoterReplicas represents the number of voter replicas needed to
+		// satisfy conf.voterConstraints[rel.voterIndex].
 		// NB: we don't bother subtracting
 		// voterConstraints[rel.voterIndex].additionalReplicas since it is always
 		// 0 at this point in the code.
@@ -542,12 +577,12 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 			allReplicaConstraints[rel.allIndex].remainingReplicas -= toAdd
 		}
 	}
-	// The only relationships remaining are conjStrictSuperset and
-	// conjNonIntersecting. We don't care about the latter. conjStrictSuperset
-	// can be used to narrow a voter constraint. As a heuristic we try to even
-	// out the satisfaction across various constraints. For example, if we have
-	// a voter constraint with conjunction c1 that needs 2 more replicas, and we
-	// have all constraints with conjuctions:
+	// Phase three is for conjStrictSuperset relationships, which means that the
+	// all-replica constraint is stricter than the voter constraint. We can use
+	// the all-replica constraint to narrow down the voter constraint. As a
+	// heuristic we try to even out the satisfaction across various constraints.
+	// For example, if we have a voter constraint with conjunction c1 that needs
+	// 2 more replicas, and we have all constraints with conjuctions:
 	// - c1 and c2, with 2 remainingReplicas
 	// - c1 and c3, with 2 remainingReplicas
 	// instead of greedily adding a voter constraint c1 and c2 with 2 voter
@@ -557,6 +592,12 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	// empty: emptyVoterConstraintIndex and emptyConstraintIndex. We don't want
 	// to narrow unnecessarily, and so if emptyConstraintIndex has some
 	// remainingReplicas, we take them here.
+	//
+	// TODO(wenyihu6) check this example with replicas = [region=a, num=3],
+	// [empty, num=2] and voters = [region=a, num=2], [empty, num=1], we might
+	// end up using an empty replica constraint to satisfy the voter’s empty
+	// requirement. But a better assignment would be to use that empty voter
+	// slot to satisfy a non-empty replica constraint instead.
 	if emptyVoterConstraintIndex >= 0 && emptyConstraintIndex >= 0 {
 		neededReplicas := conf.voterConstraints[emptyVoterConstraintIndex].numReplicas
 		if voterConstraints[emptyVoterConstraintIndex].numReplicas != 0 {
@@ -614,6 +655,9 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 			break
 		}
 	}
+	// Note that len(conf.voterConstraints) and len(voterConstraints) may differ
+	// if there are additional voter constraints created to satisfy the strict
+	// superset relationships.
 	for i := range conf.voterConstraints {
 		neededReplicas := conf.voterConstraints[i].numReplicas
 		actualReplicas := voterConstraints[i].numReplicas + voterConstraints[i].additionalReplicas
