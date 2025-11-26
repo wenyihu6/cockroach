@@ -404,10 +404,12 @@ func normalizeConstraints(
 
 // doStructuralNormalization reconciles under-specified span configurations by
 // establishing relationships between all-replica and voter constraints. Since
-// voters are a subset of all replicas, every voter constraint must be
+// voters are a subset of all replicas, every voter constraint should be
 // satisfiable by all-replica constraints.
 //
-// This function is necessary because user-provided span configs can be
+// This function mainly does two things:
+
+// If the user-provided span configs can be
 // under-specified or inconsistent. For example, a config might specify 1
 // replica in a region via constraints but require 2 voters in that region via
 // voterConstraints. This normalization tightens constraints and creates new
@@ -500,8 +502,11 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	// Even if there was an error, we will continue normalization.
 
 	// For each all-replica constraint, track how many replicas are remaining
-	// (not already taken by a voter constraint). allReplicaConstraintsInfo.remainingReplicas starts out as conf.constraints[i].numReplicas and decreases as we satisfy voter constraints with it. Additionally, when we find an
-	// all replica constraint that is stricter than voter constraints
+	// (not already taken by a voter constraint).
+	// allReplicaConstraintsInfo.remainingReplicas starts out as
+	// conf.constraints[i].numReplicas and decreases as we satisfy voter
+	// constraints with it. During the phase for conjStrictSubset, when we find
+	// an all replica constraint that is stricter than voter constraints
 	// (conjStrictSuperset), we create a new voter constraint, we record the
 	// index of that new voter constraint in newVoterIndex.
 	// len(allReplicaConstraints) == len(conf.constraints).
@@ -543,6 +548,8 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 			internedConstraintsConjunction: constraint,
 		})
 	}
+
+	//  I understand that overlapping constraints are allowed. Given a voter constraint on [region: a: 1] and an all-replica constraint on [region a: 1, region a / zone b: 1], does it make sense to interpret the all-replica constraint as permitting two distinct replicas?
 
 	// Resume iterating from index. Phase two is for conjEqualSet and
 	// conjStrictSubset voter-replicas relationships, which means that
@@ -737,6 +744,7 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 		for rels[index].voterAndAllRel == conjPossiblyIntersecting {
 			index++
 		}
+
 		voterConstraintHasEqualityWithConstraint := make([]bool, len(conf.voterConstraints))
 		// For conjEqualSet, if we can grab from the emptyConstraintIndex, do so.
 		for ; index < len(rels) && rels[index].voterAndAllRel <= conjEqualSet; index++ {
@@ -757,6 +765,8 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 		}
 		// For conjStrictSubset, if the subset relationship is with
 		// emptyConstraintIndex, grab from there.
+		//
+		// This part feels wrong to me - we are not even checking if repl has matched the voter constraint? like dude we just noralized voter constraints and yall are not using it?????
 		for ; index < len(rels) && rels[index].voterAndAllRel <= conjStrictSubset; index++ {
 			rel := rels[index]
 			if rel.allIndex != emptyConstraintIndex {
