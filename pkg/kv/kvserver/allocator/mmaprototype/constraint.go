@@ -82,7 +82,7 @@ type normalizedSpanConfig struct {
 	//   this structural-normalization is not possible, we will log an error and
 	//   not switch the cluster to the new allocator until the operator fixes
 	//   their SpanConfigs and retries.
-
+	//
 	// constraints applies to all replicas.
 	constraints []internedConstraintsConjunction
 	// voterConstraints applies to voter replicas.
@@ -306,6 +306,9 @@ func makeNormalizedSpanConfig(
 	conf *roachpb.SpanConfig, interner *stringInterner,
 ) (*normalizedSpanConfig, error) {
 	numVoters := conf.GetNumVoters()
+	if numVoters == 0 || conf.NumReplicas == 0 {
+		return nil, errors.Errorf("numVoters and numReplicas must be non-zero")
+	}
 	var normalizedConstraints, normalizedVoterConstraints []internedConstraintsConjunction
 	var err error
 	if conf.VoterConstraints != nil {
@@ -391,6 +394,7 @@ func normalizeConstraints(
 			nc = append(nc, cc)
 		}
 	}
+	// TODO(wenyihu6): we do not want to reorder the constraints but want to do a cross product check of constraints on equality and sum up the numReplicas
 	var rv []internedConstraintsConjunction
 	for i := range nc {
 		icc := internedConstraintsConjunction{
@@ -409,6 +413,9 @@ func normalizeConstraints(
 //
 // This function mainly does two things:
 
+// If you had some replica constraints and they were also very loose, you make them more strict.
+// You are looking first at the voter constraints anyway.
+//
 // If the user-provided span configs can be
 // under-specified or inconsistent. For example, a config might specify 1
 // replica in a region via constraints but require 2 voters in that region via
@@ -425,6 +432,7 @@ func normalizeConstraints(
 // intersecting or non-intersecting constraint conjunctions), but continues
 // normalization even in error cases to leave the config in a more usable state.
 func doStructuralNormalization(conf *normalizedSpanConfig) error {
+	// TODO(wenyihu6): at the SQL land, we do some basic validation on the constraints and voterConstraints
 	if len(conf.constraints) == 0 || len(conf.voterConstraints) == 0 {
 		return nil
 	}
@@ -447,7 +455,9 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	var rels []relationshipVoterAndAll
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
+			// panic here instead
 			if emptyVoterConstraintIndex != -1 {
+				// empty constraint conjunction but numReplicas should be nonzero
 				return errors.Errorf("invalid configurations with empty voter constraint")
 			}
 			emptyVoterConstraintIndex = i
@@ -766,7 +776,6 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 		// For conjStrictSubset, if the subset relationship is with
 		// emptyConstraintIndex, grab from there.
 		//
-		// This part feels wrong to me - we are not even checking if repl has matched the voter constraint? like dude we just noralized voter constraints and yall are not using it?????
 		for ; index < len(rels) && rels[index].voterAndAllRel <= conjStrictSubset; index++ {
 			rel := rels[index]
 			if rel.allIndex != emptyConstraintIndex {
@@ -778,6 +787,10 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 				continue
 			}
 			availableCount := conf.constraints[emptyConstraintIndex].numReplicas
+			// here we are matching empty all-replica constraints with non-empty
+			// voter constraints; have we done this already at the earlier stage
+			// with conjStrictSubset though (we only skipped over
+			// emptyVoterConstraintIndex)?
 			toAddCount := conf.voterConstraints[rel.voterIndex].numReplicas
 			if availableCount > 0 && toAddCount > 0 {
 				add := min(availableCount, toAddCount)
