@@ -440,13 +440,13 @@ type relationshipVoterAndAll struct {
 }
 
 func buildVoterAndAllRelationships(
-	conf *normalizedSpanConfig,
+	conf *normalizedSpanConfig, scratch []relationshipVoterAndAll,
 ) (
 	rels []relationshipVoterAndAll, emptyConstraintIndex int, emptyVoterConstraintIndex int, err error,
 ) {
 	emptyConstraintIndex = -1
 	emptyVoterConstraintIndex = -1
-	rels = make([]relationshipVoterAndAll, 0, len(conf.voterConstraints)*len(conf.constraints))
+	rels = ensureSliceCapacity(rels, len(conf.voterConstraints)*len(conf.constraints))
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
 			if emptyVoterConstraintIndex != -1 {
@@ -508,21 +508,7 @@ func narrowEmptyConstraint(
 ) {
 	if emptyConstraintIndex >= 0 {
 		// Recompute the relationship since voterConstraints have changed.
-		rels = rels[:0]
-		for i := range conf.voterConstraints {
-			for j := range conf.constraints {
-				rels = append(rels, relationshipVoterAndAll{
-					voterIndex: i,
-					allIndex:   j,
-					voterAndAllRel: conf.voterConstraints[i].constraints.relationship(
-						conf.constraints[j].constraints),
-				})
-			}
-		}
-		// Sort these relationships in the order we want to examine them.
-		slices.SortFunc(rels, func(a, b relationshipVoterAndAll) int {
-			return cmp.Compare(a.voterAndAllRel, b.voterAndAllRel)
-		})
+		rels, _, _, _ = buildVoterAndAllRelationships(conf, rels)
 		// Ignore conjPossiblyIntersecting.
 		index := 0
 		for rels[index].voterAndAllRel == conjPossiblyIntersecting {
@@ -605,7 +591,7 @@ func doStructuralNormalization(conf *normalizedSpanConfig) error {
 	}
 	// Relationships between each voter constraint and each all replica
 	// constraint.
-	rels, emptyConstraintIndex, emptyVoterConstraintIndex, err := buildVoterAndAllRelationships(conf)
+	rels, emptyConstraintIndex, emptyVoterConstraintIndex, err := buildVoterAndAllRelationships(conf, nil)
 	if err != nil {
 		return err
 	}
@@ -878,6 +864,15 @@ func clear2DSlice[T any](v [][]T) [][]T {
 	}
 	v = v[:0]
 	return v
+}
+
+// ensureSliceCapacity resets the slice to length 0 and ensures it has at least
+// the specified capacity, reallocating if necessary.
+func ensureSliceCapacity[T any](v []T, minCap int) []T {
+	if cap(v) >= minCap {
+		return v[:0]
+	}
+	return make([]T, 0, minCap)
 }
 
 // rangeAnalyzedConstraints is a function of the spanConfig and the current
