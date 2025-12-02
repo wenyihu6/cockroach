@@ -1,0 +1,71 @@
+# This test simulates the allocbench/nodes=7/cpu=8/kv/r=95/access=skew
+# benchmark test. It sets up a 7-node cluster with two skewed access (zipfian)
+# read-heavy workloads. The test verifies that the allocator can rebalance
+# replicas and leases when there is skewed key access patterns.
+#
+# The allocbench test runs two smallReads workloads with:
+#   - readPercent: 95 (rw_ratio=0.95)
+#   - blockSize: 1
+#   - rate: 16500 each (33000 total)
+#   - splits: 210 ranges per workload
+#   - skew: true (zipfian access pattern)
+#
+# Expected outcome: The allocator should balance CPU load across all 7 nodes
+# despite the skewed access patterns. The challenge here is that zipfian access
+# causes some ranges to receive much more traffic than others.
+gen_cluster nodes=7 node_cpu_cores=8
+----
+
+setting split_queue_enabled=false
+----
+
+# First workload keyspace with even initial placement. The load imbalance comes
+# from the zipfian access pattern, not from uneven range placement.
+gen_ranges ranges=210 min_key=0 max_key=10000 placement_type=even
+----
+
+# First zipfian workload - high read ratio with skewed key access.
+# Using request_cpu_per_access to achieve ~35% CPU utilization on 7 nodes.
+gen_load rate=16500 rw_ratio=0.95 min_block=1 max_block=1 access_skew=true request_cpu_per_access=700000 raft_cpu_per_write=200000 min_key=0 max_key=10000
+----
+11.55 access-vcpus, 0.17 raft-vcpus, 825 B/s goodput
+
+# Second workload keyspace with even initial placement.
+gen_ranges ranges=210 min_key=10001 max_key=20000 placement_type=even
+----
+
+# Second zipfian workload - same parameters as the first.
+gen_load rate=16500 rw_ratio=0.95 min_block=1 max_block=1 access_skew=true request_cpu_per_access=700000 raft_cpu_per_write=200000 min_key=10001 max_key=20000
+----
+11.55 access-vcpus, 0.17 raft-vcpus, 825 B/s goodput
+
+eval duration=25m samples=1 seed=42 cfgs=(mma-only,mma-count) metrics=(cpu,cpu_util,write_bytes_per_second,replicas,leases)
+----
+cpu#1: last:  [s1=14163579928, s2=1538679866, s3=1335103999, s4=2581935017, s5=1230893258, s6=1468802999, s7=1772379799] (stddev=4396813071.17, mean=3441624980.86, sum=24091374866)
+cpu#1: thrash_pct: [s1=4%, s2=2%, s3=2%, s4=3%, s5=2%, s6=2%, s7=2%]  (sum=17%)
+cpu_util#1: last:  [s1=1.77, s2=0.19, s3=0.17, s4=0.32, s5=0.15, s6=0.18, s7=0.22] (stddev=0.55, mean=0.43, sum=3)
+cpu_util#1: thrash_pct: [s1=4%, s2=2%, s3=2%, s4=3%, s5=2%, s6=2%, s7=2%]  (sum=17%)
+leases#1: first: [s1=60, s2=60, s3=60, s4=60, s5=60, s6=60, s7=60] (stddev=0.00, mean=60.00, sum=420)
+leases#1: last:  [s1=58, s2=60, s3=60, s4=61, s5=61, s6=60, s7=60] (stddev=0.93, mean=60.00, sum=420)
+leases#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%]  (sum=0%)
+replicas#1: first: [s1=180, s2=180, s3=180, s4=180, s5=180, s6=180, s7=180] (stddev=0.00, mean=180.00, sum=1260)
+replicas#1: last:  [s1=180, s2=180, s3=180, s4=180, s5=180, s6=180, s7=180] (stddev=0.00, mean=180.00, sum=1260)
+replicas#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%]  (sum=0%)
+write_bytes_per_second#1: last:  [s1=1188, s2=1180, s3=1180, s4=371, s5=371, s6=353, s7=309] (stddev=412.02, mean=707.43, sum=4952)
+write_bytes_per_second#1: thrash_pct: [s1=25%, s2=13%, s3=13%, s4=22%, s5=22%, s6=17%, s7=18%]  (sum=129%)
+artifacts[mma-only]: 31e87106c7c2488b
+==========================
+cpu#1: last:  [s1=14163579928, s2=1538679866, s3=1335103999, s4=2581935017, s5=1230893258, s6=1468802999, s7=1772379799] (stddev=4396813071.17, mean=3441624980.86, sum=24091374866)
+cpu#1: thrash_pct: [s1=4%, s2=2%, s3=2%, s4=3%, s5=2%, s6=2%, s7=2%]  (sum=17%)
+cpu_util#1: last:  [s1=1.77, s2=0.19, s3=0.17, s4=0.32, s5=0.15, s6=0.18, s7=0.22] (stddev=0.55, mean=0.43, sum=3)
+cpu_util#1: thrash_pct: [s1=4%, s2=2%, s3=2%, s4=3%, s5=2%, s6=2%, s7=2%]  (sum=17%)
+leases#1: first: [s1=60, s2=60, s3=60, s4=60, s5=60, s6=60, s7=60] (stddev=0.00, mean=60.00, sum=420)
+leases#1: last:  [s1=58, s2=60, s3=60, s4=61, s5=61, s6=60, s7=60] (stddev=0.93, mean=60.00, sum=420)
+leases#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%]  (sum=0%)
+replicas#1: first: [s1=180, s2=180, s3=180, s4=180, s5=180, s6=180, s7=180] (stddev=0.00, mean=180.00, sum=1260)
+replicas#1: last:  [s1=180, s2=180, s3=180, s4=180, s5=180, s6=180, s7=180] (stddev=0.00, mean=180.00, sum=1260)
+replicas#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%, s6=0%, s7=0%]  (sum=0%)
+write_bytes_per_second#1: last:  [s1=1188, s2=1180, s3=1180, s4=371, s5=371, s6=353, s7=309] (stddev=412.02, mean=707.43, sum=4952)
+write_bytes_per_second#1: thrash_pct: [s1=25%, s2=13%, s3=13%, s4=22%, s5=22%, s6=17%, s7=18%]  (sum=129%)
+artifacts[mma-count]: 31e87106c7c2488b
+==========================
