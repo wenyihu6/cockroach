@@ -384,6 +384,11 @@ func computeMeansForStoreSet(
 				means.storeLoad.capacity[j] = UnknownCapacity
 			} else if means.storeLoad.capacity[j] != UnknownCapacity {
 				means.storeLoad.capacity[j] += sload.capacity[j]
+				// Accumulate individual store utilization for averaging.
+				if sload.capacity[j] > 0 {
+					means.storeLoad.util[j] +=
+						float64(sload.reportedLoad[j]) / float64(sload.capacity[j])
+				}
 			}
 		}
 		for j := range sload.reportedSecondaryLoad {
@@ -398,8 +403,8 @@ func computeMeansForStoreSet(
 	}
 	for i := range means.storeLoad.load {
 		if means.storeLoad.capacity[i] != UnknownCapacity {
-			means.storeLoad.util[i] =
-				float64(means.storeLoad.load[i]) / float64(means.storeLoad.capacity[i])
+			// util is sum of individual utilizations; divide by n to get average.
+			means.storeLoad.util[i] /= float64(n)
 			means.storeLoad.capacity[i] /= LoadValue(n)
 		} else {
 			means.storeLoad.util[i] = 0
@@ -415,8 +420,10 @@ func computeMeansForStoreSet(
 		means.nodeLoad.loadCPU += nl.ReportedCPU
 		means.nodeLoad.capacityCPU += nl.CapacityCPU
 	}
-	means.nodeLoad.utilCPU =
-		float64(means.nodeLoad.loadCPU) / float64(means.nodeLoad.capacityCPU)
+	if means.nodeLoad.capacityCPU > 0 {
+		means.nodeLoad.utilCPU =
+			float64(means.nodeLoad.loadCPU) / float64(means.nodeLoad.capacityCPU)
+	}
 	means.nodeLoad.loadCPU /= LoadValue(n)
 	means.nodeLoad.capacityCPU /= LoadValue(n)
 	return means
