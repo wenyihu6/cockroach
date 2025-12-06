@@ -83,6 +83,7 @@ func RegisterTests(r registry.Registry) {
 	registerJobsMixedVersions(r)
 	registerKerberosConnectionStressTest(r)
 	registerKV(r)
+	registerKVSkewedAccess(r)
 	registerKVBench(r)
 	registerKVContention(r)
 	registerKVGracefulDraining(r)
