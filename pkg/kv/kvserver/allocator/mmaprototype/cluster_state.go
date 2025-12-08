@@ -1340,8 +1340,18 @@ func (cs *clusterState) processStoreLoadMsg(ctx context.Context, storeMsg *Store
 		// replicas.
 		cs.applyChangeLoadDelta(change.ReplicaChange)
 	}
-	log.KvDistribution.VEventf(ctx, 2, "processStoreLoadMsg for store s%v: %v, capacity: %v",
+	log.KvDistribution.VEventf(ctx, 2, "processStoreLoadMsg for store s%v: load=%v, capacity=%v",
 		storeMsg.StoreID, ss.adjusted.load, ss.storeLoad.capacity)
+	// Log CPU-specific values for debugging rebalancing.
+	cpuLoad := storeMsg.Load[CPURate]
+	cpuCapacity := storeMsg.Capacity[CPURate]
+	cpuUtilization := float64(0)
+	if cpuCapacity > 0 {
+		cpuUtilization = float64(cpuLoad) / float64(cpuCapacity) * 100
+	}
+	log.KvDistribution.VEventf(ctx, 0, "s%v CPU: load=%.0f (%.3fms/s) capacity=%.0f utilization=%.1f%% node_cpu=%.0f node_capacity=%.0f",
+		storeMsg.StoreID, float64(cpuLoad), float64(cpuLoad)/1e6, float64(cpuCapacity), cpuUtilization,
+		float64(ns.ReportedCPU), float64(ns.CapacityCPU))
 }
 
 func (cs *clusterState) processStoreLeaseholderMsg(

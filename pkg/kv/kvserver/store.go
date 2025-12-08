@@ -3187,7 +3187,14 @@ func (s *Store) Capacity(ctx context.Context, useCached bool) (roachpb.StoreCapa
 		// starts? We can't easily have a countdown as its value changes like for
 		// leases/replicas.
 		// TODO(a-robinson): Calculate percentiles for qps? Get rid of other percentiles?
-		totalStoreCPUTimePerSecond += usage.RequestCPUNanosPerSecond + usage.RaftCPUNanosPerSecond
+		replicaCPU := usage.RequestCPUNanosPerSecond + usage.RaftCPUNanosPerSecond
+		if replicaCPU > 0 {
+			log.VEventf(ctx, 2, "s%d r%d cpu: req=%.0f raft=%.0f total=%.0f (%.3fms/s)",
+				s.StoreID(), r.RangeID,
+				usage.RequestCPUNanosPerSecond, usage.RaftCPUNanosPerSecond,
+				replicaCPU, replicaCPU/1e6)
+		}
+		totalStoreCPUTimePerSecond += replicaCPU
 		totalQueriesPerSecond += usage.QueriesPerSecond
 		totalWritesPerSecond += usage.WritesPerSecond
 		totalWriteBytesPerSecond += usage.WriteBytesPerSecond
@@ -3209,9 +3216,13 @@ func (s *Store) Capacity(ctx context.Context, useCached bool) (roachpb.StoreCapa
 	// towards this store as it will appear underfull.
 	if !grunning.Supported {
 		totalStoreCPUTimePerSecond = -1
+		log.VEventf(ctx, 2, "s%d grunning not supported, setting cpu to -1", s.StoreID())
 	} else {
 		totalStoreCPUTimePerSecond = math.Max(totalStoreCPUTimePerSecond, 0)
 	}
+	log.VEventf(ctx, 2, "s%d store capacity: ranges=%d leases=%d totalCPU=%.0f (%.3fms/s) qps=%.1f",
+		s.StoreID(), rangeCount, leaseCount, totalStoreCPUTimePerSecond,
+		totalStoreCPUTimePerSecond/1e6, totalQueriesPerSecond)
 
 	capacity.RangeCount = rangeCount
 	capacity.LeaseCount = leaseCount
@@ -3505,6 +3516,12 @@ func (s *Store) updateReplicationGauges(ctx context.Context) error {
 		averageReadBytesPerSecond += loadStats.ReadBytesPerSecond
 		averageWriteBytesPerSecond += loadStats.WriteBytesPerSecond
 		replicaCPUNanosPerSecond := loadStats.RaftCPUNanosPerSecond + loadStats.RequestCPUNanosPerSecond
+		if replicaCPUNanosPerSecond > 0 {
+			log.VEventf(ctx, 2, "s%d r%d metrics cpu: req=%.0f raft=%.0f total=%.0f (%.3fms/s) qps=%.1f",
+				s.StoreID(), rep.RangeID,
+				loadStats.RequestCPUNanosPerSecond, loadStats.RaftCPUNanosPerSecond,
+				replicaCPUNanosPerSecond, replicaCPUNanosPerSecond/1e6, loadStats.QueriesPerSecond)
+		}
 		averageCPUNanosPerSecond += replicaCPUNanosPerSecond
 		s.metrics.RecentReplicaCPUNanosPerSecond.RecordValue(replicaCPUNanosPerSecond)
 		s.metrics.RecentReplicaQueriesPerSecond.RecordValue(loadStats.QueriesPerSecond)
@@ -3562,6 +3579,8 @@ func (s *Store) updateReplicationGauges(ctx context.Context) error {
 	s.metrics.AverageReadBytesPerSecond.Update(averageReadBytesPerSecond)
 	s.metrics.AverageWriteBytesPerSecond.Update(averageWriteBytesPerSecond)
 	s.metrics.AverageCPUNanosPerSecond.Update(averageCPUNanosPerSecond)
+	log.VEventf(ctx, 2, "s%d rebalancing.cpunanospersecond metric updated: %.0f (%.3fms/s) qps=%.1f",
+		s.StoreID(), averageCPUNanosPerSecond, averageCPUNanosPerSecond/1e6, averageQueriesPerSecond)
 	// TODO(wenyihu6): call RecordNewPerSecondStats with write bytes here
 	s.storeGossip.RecordNewPerSecondStats(averageQueriesPerSecond, averageWritesPerSecond,
 		averageWriteBytesPerSecond, averageCPUNanosPerSecond)

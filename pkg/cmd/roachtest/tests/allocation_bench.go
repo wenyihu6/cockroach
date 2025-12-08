@@ -38,7 +38,7 @@ const (
 	defaultAllocBenchConcurrency = 512
 	// defaultAllocBenchDuration is the number of times that the spec is re-run
 	// in order to find a summary run value.
-	defaultBenchSamples = 5
+	defaultBenchSamples = 1
 )
 
 type allocationBenchSpec struct {
@@ -305,7 +305,7 @@ func setupAllocationBench(
 		settings.Env = append(settings.Env, "COCKROACH_ALLOW_MMA=true")
 		startOpts := option.NewStartOpts(option.NoBackupSchedule)
 		startOpts.RoachprodOpts.ExtraArgs = append(startOpts.RoachprodOpts.ExtraArgs,
-			"--vmodule=store_rebalancer=2,allocator=2,replicate_queue=2")
+			"--vmodule=store_rebalancer=2,allocator=2,replicate_queue=2,replica=3,replica_load=3,store=2")
 		c.Start(ctx, t.L(), startOpts, settings, c.Node(i))
 	}
 	require.NotEmpty(t, spec.lbrMode, "lbrMode must be set")

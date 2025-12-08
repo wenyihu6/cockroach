@@ -2769,6 +2769,10 @@ func init() {
 func (r *Replica) MeasureReqCPUNanos(ctx context.Context, start time.Duration) {
 	r.measureNanosRunning(start, func(dur float64) {
 		r.loadStats.RecordReqCPUNanos(dur)
+		if dur > 0 {
+			log.VEventf(ctx, 3, "r%d recorded req cpu nanos: %.0f (%.3fms)",
+				r.RangeID, dur, dur/1e6)
+		}
 		// NB: the caller also has a tenant ID, but we use the replica's here for
 		// simplicity. There is no established pattern for short-lived references
 		// to a specific tenant's metrics.
@@ -2791,6 +2795,10 @@ func (r *Replica) MeasureReqCPUNanos(ctx context.Context, start time.Duration) {
 func (r *Replica) MeasureRaftCPUNanos(start time.Duration) {
 	r.measureNanosRunning(start, func(dur float64) {
 		r.loadStats.RecordRaftCPUNanos(dur)
+		if dur > 0 {
+			log.VEventf(r.AnnotateCtx(context.Background()), 3,
+				"r%d recorded raft cpu nanos: %.0f (%.3fms)", r.RangeID, dur, dur/1e6)
+		}
 	})
 }
 
