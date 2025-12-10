@@ -574,8 +574,7 @@ normalizeVoterConstraints:
  constraints:
    +region=a:2
  voter-constraints:
-   +region=a:1
-   +region=a:1
+   +region=a:2
 after:
  (unchanged)
 

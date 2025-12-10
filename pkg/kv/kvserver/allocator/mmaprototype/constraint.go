@@ -140,6 +140,11 @@ func (ic internedConstraint) less(b internedConstraint) bool {
 // constraints are in increasing order using internedConstraint.less.
 type constraintsConj []internedConstraint
 
+// hash returns a FNV-1a hash for a constraintsConj. Reuses constraintsDisj.hash().
+func (cc constraintsConj) hash() uint64 {
+	return constraintsDisj{cc}.hash()
+}
+
 // conjunctionRelationship describes the binary relationship between sets of
 // stores satisfying two constraint conjunctions. A constraint conjunction
 // (constraintsConj) represents all possible sets of stores that satisfy all
@@ -709,18 +714,58 @@ func makeNormalizedConstraintsEnv(conf *normalizedSpanConfig) normalizedConstrai
 	}
 }
 
+// combineConstraints combines duplicate constraint conjunctions (those with
+// the same constraints) by summing their numReplicas.
+// Example:
+// constraints: [+region=us-west-1]: 1, [+region=us-west-1]: 1, []: 3, []: 1
+// result: [+region=us-west-1]: 2, []: 4
+func combineConstraints(constraints []internedConstraintsConjunction) []internedConstraintsConjunction {
+	if len(constraints) <= 1 {
+		return constraints
+	}
+	// Group by constraint hash, summing numReplicas for duplicates.
+	seen := make(map[uint64][]int) // hash -> indices in result (slice to handle collisions)
+	result := make([]internedConstraintsConjunction, 0, len(constraints))
+	for i := range constraints {
+		if constraints[i].numReplicas == 0 {
+			continue
+		}
+		h := constraints[i].constraints.hash()
+		if indices, ok := seen[h]; ok {
+			// Hash match - check for actual equality to handle collisions.
+			found := false
+			for _, idx := range indices {
+				if result[idx].constraints.relationship(constraints[i].constraints) == conjEqualSet {
+					// Duplicate constraint - sum the numReplicas.
+					result[idx].numReplicas += constraints[i].numReplicas
+					found = true
+					break
+				}
+			}
+			if found {
+				continue
+			}
+			// Hash collision - different constraint with same hash.
+			seen[h] = append(seen[h], len(result))
+		} else {
+			seen[h] = []int{len(result)}
+		}
+		result = append(result, constraints[i])
+	}
+	return result
+}
+
 // buildVoterConstraints returns the final normalized voter constraints. It
 // filters out any constraints with numReplicas=0, which indicates an original
 // voter constraint was completely narrowed and replaced by stricter
-// constraints.
+// constraints. It also combines duplicate constraint conjunctions (those with
+// the same constraints) by summing their numReplicas.
 func (ncEnv *normalizedConstraintsEnv) buildVoterConstraints() []internedConstraintsConjunction {
 	vc := make([]internedConstraintsConjunction, 0, len(ncEnv.voterConstraints))
 	for i := range ncEnv.voterConstraints {
-		if ncEnv.voterConstraints[i].numReplicas > 0 {
-			vc = append(vc, ncEnv.voterConstraints[i].internedConstraintsConjunction)
-		}
+		vc = append(vc, ncEnv.voterConstraints[i].internedConstraintsConjunction)
 	}
-	return vc
+	return combineConstraints(vc)
 }
 
 // moveToEnd moves the voter constraint at idx to the end of the slice. This is
