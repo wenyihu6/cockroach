@@ -501,7 +501,9 @@ after:
    +region=a:2
    +region=a,+zone=a1:2
 
-# TODO(wenyihu6): Duplicate constraints not merged
+# Duplicate constraints are now merged by combineConstraints in
+# doStructuralNormalization. Input has two identical [+region=a,+zone=a1]:2
+# constraints which are combined into [+region=a,+zone=a1]:4.
 normalize num-replicas=6 num-voters=3
 constraint num-replicas=2 +region=a +zone=a1
 constraint num-replicas=2 +region=a +zone=a1
@@ -524,6 +526,58 @@ after:
    +region=a,+zone=a1:3
  voter-constraints:
    +region=a,+zone=a1:3
+
+# Duplicate empty voter constraints from basic normalization are combined.
+# Input [:]:1 + synthesized [:]:2 = combined into [:]:3.
+normalize num-replicas=5 num-voters=3
+voter-constraint num-replicas=1
+----
+basic:
+ num-replicas=5 num-voters=3
+ constraints:
+   :5
+ voter-constraints:
+   :1
+   :2
+normalizeVoterConstraints:
+ (unchanged)
+after:
+ (unchanged)
+err=multiple empty voter constraints: {1 []} and {2 []}
+
+# Step 4 narrowing creates duplicate voter constraints which are combined.
+# Initial: [+region=a]:1 voter + [:]:1 empty voter. Step 2 satisfies
+# [+region=a]:1 from [+region=a]:2 (leaving remainingAll=1). Step 4 narrows
+# [:]:1 by borrowing from [+region=a]:2's remaining 1 replica, creating a NEW
+# [+region=a]:1 voter constraint.
+#
+# Without combineConstraints fix, this would produce INVALID output:
+#   voter-constraints:
+#     +region=a:1
+#     +region=a:1   <-- duplicate!
+#
+# With the fix, buildVoterConstraints combines them into [+region=a]:2.
+normalize num-replicas=2 num-voters=2
+constraint num-replicas=2 +region=a
+voter-constraint num-replicas=1 +region=a
+voter-constraint num-replicas=1
+----
+basic:
+ num-replicas=2 num-voters=2
+ constraints:
+   +region=a:2
+ voter-constraints:
+   +region=a:1
+   :1
+normalizeVoterConstraints:
+ num-replicas=2 num-voters=2
+ constraints:
+   +region=a:2
+ voter-constraints:
+   +region=a:1
+   +region=a:1
+after:
+ (unchanged)
 
 # From #106559: num_voters (5) exceeds explicit voter constraints (4), creating
 # implicit empty voter [:]:1. normalizeVoterConstraints makes voters stricter by
