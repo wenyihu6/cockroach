@@ -502,7 +502,7 @@ after:
    +region=a,+zone=a1:2
 
 # Duplicate constraints are now merged by combineConstraints in
-# doStructuralNormalization. Input has two identical [+region=a,+zone=a1]:2
+# normalizeConstraints. Input has two identical [+region=a,+zone=a1]:2
 # constraints which are combined into [+region=a,+zone=a1]:4.
 normalize num-replicas=6 num-voters=3
 constraint num-replicas=2 +region=a +zone=a1
@@ -512,20 +512,14 @@ voter-constraint num-replicas=3 +region=a +zone=a1
 basic:
  num-replicas=6 num-voters=3
  constraints:
-   +region=a,+zone=a1:2
-   +region=a,+zone=a1:2
+   +region=a,+zone=a1:4
    :2
  voter-constraints:
    +region=a,+zone=a1:3
 normalizeVoterConstraints:
  (unchanged)
 after:
- num-replicas=6 num-voters=3
- constraints:
-   +region=a,+zone=a1:3
-   +region=a,+zone=a1:3
- voter-constraints:
-   +region=a,+zone=a1:3
+ (unchanged)
 
 # Duplicate empty voter constraints from basic normalization are combined.
 # Input [:]:1 + synthesized [:]:2 = combined into [:]:3.
@@ -537,13 +531,11 @@ basic:
  constraints:
    :5
  voter-constraints:
-   :1
-   :2
+   :3
 normalizeVoterConstraints:
  (unchanged)
 after:
  (unchanged)
-err=multiple empty voter constraints: {1 []} and {2 []}
 
 # Step 4 narrowing creates duplicate voter constraints which are combined.
 # Initial: [+region=a]:1 voter + [:]:1 empty voter. Step 2 satisfies

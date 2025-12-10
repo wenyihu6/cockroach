@@ -563,7 +563,9 @@ func normalizeConstraints(
 			constraints: interner.internConstraintsConj(nil),
 		})
 	}
-	return rv, nil
+	// Combine any duplicate constraints (including empty ones) that may result
+	// from user input or synthesized constraints.
+	return combineConstraints(rv), nil
 }
 
 // relationshipVoterAndAll represents the relationship between a voter constraint

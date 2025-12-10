@@ -952,7 +952,7 @@ func TestNormalizedVoterAllRelationships(t *testing.T) {
 func TestCombineConstraints(t *testing.T) {
 	interner := newStringInterner()
 
-	datadriven.RunTest(t, datapathutils.TestDataPath(t, "combine_constraints"),
+	datadriven.RunTest(t, datapathutils.TestDataPath(t, t.Name()),
 		func(t *testing.T, d *datadriven.TestData) string {
 			switch d.Cmd {
 			case "combine":
@@ -965,18 +965,9 @@ func TestCombineConstraints(t *testing.T) {
 					return fmt.Sprintf("err: %s\n", err)
 				}
 
-				// Format output.
+				// Format output using printSpanConfig like TestNormalizedSpanConfig.
 				var b strings.Builder
-				fmt.Fprintf(&b, "constraints:\n")
-				for _, icc := range nConf.constraints {
-					fmt.Fprintf(&b, "  %s\n", icc.unintern(interner).String())
-				}
-				if len(nConf.voterConstraints) > 0 {
-					fmt.Fprintf(&b, "voter-constraints:\n")
-					for _, icc := range nConf.voterConstraints {
-						fmt.Fprintf(&b, "  %s\n", icc.unintern(interner).String())
-					}
-				}
+				printSpanConfig(&b, nConf.uninternedConfig())
 				return b.String()
 			default:
 				return fmt.Sprintf("unknown command: %s", d.Cmd)
