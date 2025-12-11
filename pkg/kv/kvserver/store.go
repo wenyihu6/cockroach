@@ -3212,6 +3212,9 @@ func (s *Store) Capacity(ctx context.Context, useCached bool) (roachpb.StoreCapa
 	} else {
 		totalStoreCPUTimePerSecond = math.Max(totalStoreCPUTimePerSecond, 0)
 	}
+	log.VEventf(ctx, 0, "s%d store capacity: ranges=%d leases=%d totalCPU=%.0f (%.3fms/s) qps=%.1f",
+		s.StoreID(), rangeCount, leaseCount, totalStoreCPUTimePerSecond,
+		totalStoreCPUTimePerSecond/1e6, totalQueriesPerSecond)
 
 	capacity.RangeCount = rangeCount
 	capacity.LeaseCount = leaseCount

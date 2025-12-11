@@ -6,9 +6,12 @@
 package load
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/replicastats"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
@@ -180,8 +183,15 @@ func (rl *ReplicaLoad) getLocked(stat LoadStat) float64 {
 	var ret float64
 	// Only return the value if the statistics have been gathered for longer
 	// than the minimum duration.
-	if val, dur := rl.mu.stats[stat].AverageRatePerSecond(timeutil.Unix(0, rl.clock.PhysicalNow())); dur >= replicastats.MinStatsDuration {
+	val, dur := rl.mu.stats[stat].AverageRatePerSecond(timeutil.Unix(0, rl.clock.PhysicalNow()))
+	if dur >= replicastats.MinStatsDuration {
 		ret = val
+	} else if stat == ReqCPUNanos || stat == RaftCPUNanos {
+		// Log when CPU stats are blocked by MinStatsDuration.
+		sum, _ := rl.mu.stats[stat].Sum()
+		log.VEventf(context.Background(), 3,
+			"load stat %d blocked by MinStatsDuration: dur=%v < %v, val=%.0f, sum=%.0f",
+			stat, dur, replicastats.MinStatsDuration, val, sum)
 	}
 	return ret
 }
