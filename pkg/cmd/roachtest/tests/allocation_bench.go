@@ -287,6 +287,7 @@ func registerAllocationBenchSpec(r registry.Registry, allocSpec allocationBenchS
 		Suites:            registry.Suites(registry.Weekly),
 		Run: func(ctx context.Context, t test.Test, c cluster.Cluster) {
 			runAllocationBench(ctx, t, c, allocSpec)
+			t.Fatal("test passed but collect artifacts")
 		},
 	})
 }
