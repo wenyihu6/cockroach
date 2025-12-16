@@ -468,6 +468,10 @@ func (re *rebalanceEnv) rebalanceReplicas(
 			continue
 		}
 		re.ensureAnalyzedConstraints(rstate)
+		if rstate.constraints == nil {
+			log.KvDistribution.VEventf(ctx, 2, "skipping r%d: constraints not initialized", rangeID)
+			continue
+		}
 		isVoter, isNonVoter := rstate.constraints.replicaRole(store.StoreID)
 		if !isVoter && !isNonVoter {
 			// Due to REQUIREMENT(change-computation), the top-k is up to date, so

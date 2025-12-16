@@ -437,7 +437,10 @@ func TestRangeAnalyzedConstraints(t *testing.T) {
 					buf.tryAddingStore(roachpb.StoreID(storeID), typ,
 						ltInterner.intern(stores[roachpb.StoreID(storeID)].NodeLocality))
 				}
-				rac.finishInit(nConf, cm, leaseholder)
+				if !rac.finishInit(nConf, cm, leaseholder) {
+					releaseRangeAnalyzedConstraints(rac)
+					return "error: finishInit failed due to invalid state, skipping range"
+				}
 				var b strings.Builder
 				printRangeAnalyzedConstraints(&b, rac, ltInterner)
 				// If there is a previous rangeAnalyzedConstraints, release it before

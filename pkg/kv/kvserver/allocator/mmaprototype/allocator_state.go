@@ -738,6 +738,10 @@ func (cs *clusterState) ensureAnalyzedConstraints(rstate *rangeState) {
 	if rstate.constraints != nil {
 		return
 	}
+	// Skip the range if the configuration is invalid for constraint analysis.
+	if !rstate.canAnalyzeConstraints() {
+		return
+	}
 	// Populate the constraints.
 	rac := newRangeAnalyzedConstraints()
 	buf := rac.stateForInit()
@@ -762,7 +766,11 @@ func (cs *clusterState) ensureAnalyzedConstraints(rstate *rangeState) {
 			"mma: no leaseholders found in %v, skipping constraint analysis", rstate.replicas)
 		return
 	}
-	rac.finishInit(rstate.conf, cs.constraintMatcher, leaseholder)
+	if !rac.finishInit(rstate.conf, cs.constraintMatcher, leaseholder) {
+		// Initialization failed due to invalid state, skip the range.
+		releaseRangeAnalyzedConstraints(rac)
+		return
+	}
 	rstate.constraints = rac
 }
 

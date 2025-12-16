@@ -672,18 +672,20 @@ func (conf *normalizedSpanConfig) buildVoterAndAllRelationships() (
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
 			if emptyVoterConstraintIndex != -1 {
-				log.KvDistribution.Warningf(context.Background(),
-					"mma: multiple empty voter constraints: %v and %v",
+				err = errors.Errorf(
+					"mma: multiple empty voter constraints: %v and %v, skipping range",
 					conf.voterConstraints[emptyVoterConstraintIndex], conf.voterConstraints[i])
+				return nil, -1, -1, err
 			}
 			emptyVoterConstraintIndex = i
 		}
 		for j := range conf.constraints {
 			if len(conf.constraints[j].constraints) == 0 {
 				if emptyConstraintIndex != -1 && emptyConstraintIndex != j {
-					log.KvDistribution.Warningf(context.Background(),
-						"mma: multiple empty constraints: %v and %v",
+					err = errors.Errorf(
+						"mma: multiple empty constraints: %v and %v, skipping range",
 						conf.constraints[emptyConstraintIndex], conf.constraints[j])
+					return nil, -1, -1, err
 				}
 				emptyConstraintIndex = j
 			}
@@ -884,7 +886,11 @@ func (conf *normalizedSpanConfig) normalizeEmptyConstraints() {
 	// This is technically true, but once we have the required second voter in
 	// us-east-1, both places in that empty constraint will be consumed, and we
 	// will need to move that non-voter to us-central-1, which is wasteful.
-	rels, emptyConstraintIndex, _, _ := conf.buildVoterAndAllRelationships()
+	rels, emptyConstraintIndex, _, err := conf.buildVoterAndAllRelationships()
+	if err != nil {
+		// Skip this range due to invalid constraint configuration.
+		return
+	}
 	if emptyConstraintIndex >= 0 {
 		// Ignore conjPossiblyIntersecting.
 		index := 0
@@ -997,11 +1003,15 @@ func (conf *normalizedSpanConfig) normalizeVoterConstraints() error {
 	// more details): conjPossiblyIntersecting, conjEqualSet, conjStrictSubset,
 	// conjStrictSuperset, and conjNonIntersecting. See inline comments below for
 	// details on how each relationship type is handled.
-	rels, emptyConstraintIndex, emptyVoterConstraintIndex, err := conf.buildVoterAndAllRelationships()
-	if err != nil {
-		return err
+	rels, emptyConstraintIndex, emptyVoterConstraintIndex, buildErr := conf.buildVoterAndAllRelationships()
+	if buildErr != nil {
+		// Skip this range due to invalid constraint configuration.
+		return buildErr
 	}
 
+	// err tracks normalization errors that don't prevent best-effort normalization
+	// from completing, but should still be returned to the caller.
+	var err error
 	ncEnv := makeNormalizedConstraintsEnv(conf)
 
 	// Step 1: Handle conjPossiblyIntersecting relationships.
@@ -1196,8 +1206,10 @@ func (conf *normalizedSpanConfig) normalizeVoterConstraints() error {
 		neededReplicas := conf.voterConstraints[i].numReplicas
 		actualReplicas := ncEnv.voterConstraints[i].numReplicas + ncEnv.voterConstraints[i].additionalReplicas
 		if actualReplicas > neededReplicas {
-			log.KvDistribution.Warningf(context.Background(),
-				"mma: code bug: actualReplicas (%d) > neededReplicas (%d) for voter constraint %d",
+			// This indicates a code bug; skip the range rather than proceeding
+			// with invalid state.
+			return errors.Errorf(
+				"mma: code bug: actualReplicas (%d) > neededReplicas (%d) for voter constraint %d, skipping range",
 				actualReplicas, neededReplicas, i)
 		}
 		if actualReplicas < neededReplicas {
@@ -1713,11 +1725,14 @@ func diversityScore(
 // initializes the constraints and voterConstraints, determines the leaseholder
 // preference index for all voter replicas, builds locality tier information,
 // and computes diversity scores.
+//
+// Returns true if initialization was successful, false if the range should be
+// skipped due to invalid state (e.g., leaseholder not found in replicas).
 func (rac *rangeAnalyzedConstraints) finishInit(
 	spanConfig *normalizedSpanConfig,
 	constraintMatcher storeMatchesConstraintInterface,
 	leaseholder roachpb.StoreID,
-) {
+) bool {
 	rac.spanConfig = spanConfig
 	rac.numNeededReplicas[voterIndex] = spanConfig.numVoters
 	rac.numNeededReplicas[nonVoterIndex] = spanConfig.numReplicas - spanConfig.numVoters
@@ -1753,7 +1768,8 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 		}
 		if rac.leaseholderPreferenceIndex == -1 {
 			log.KvDistribution.Warningf(context.Background(),
-				"mma: leaseholder s%v not found in replicas during constraint analysis", leaseholder)
+				"mma: leaseholder s%v not found in replicas during constraint analysis, skipping range", leaseholder)
+			return false
 		}
 	}
 
@@ -1769,6 +1785,7 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 	rac.voterLocalityTiers = makeReplicasLocalityTiers(voterLocalityTiers)
 
 	rac.votersDiversityScore, rac.replicasDiversityScore = diversityScore(rac.replicas)
+	return true
 }
 
 // Disjunction of conjunctions.

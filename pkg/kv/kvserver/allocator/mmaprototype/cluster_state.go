@@ -1082,6 +1082,10 @@ type rangeState struct {
 	// mostly being defensive to avoid any chance of internal inconsistency.
 	replicas []StoreIDAndReplicaState
 	conf     *normalizedSpanConfig
+	// confNormalizationErr is set when the span config normalization encountered
+	// an error. When this is non-nil, the range should be skipped for constraint
+	// analysis since the normalized config may be invalid or incomplete.
+	confNormalizationErr error
 
 	load RangeLoad
 
@@ -1145,6 +1149,13 @@ func newRangeState(localRangeOwner roachpb.StoreID) *rangeState {
 		pendingChanges:  []*pendingReplicaChange{},
 		localRangeOwner: localRangeOwner,
 	}
+}
+
+// canAnalyzeConstraints returns true if the range has a valid configuration
+// that can be used for constraint analysis. Returns false if the span config
+// is nil or if normalization encountered an error.
+func (rs *rangeState) canAnalyzeConstraints() bool {
+	return rs.conf != nil && rs.confNormalizationErr == nil
 }
 
 func (rs *rangeState) setReplica(repl StoreIDAndReplicaState) {
@@ -1539,20 +1550,11 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		if rangeMsg.MaybeSpanConfIsPopulated {
 			normSpanConfig, err := makeNormalizedSpanConfig(&rangeMsg.MaybeSpanConf, cs.constraintMatcher.interner)
 			if err != nil {
-				if normSpanConfig == nil {
-					// TODO: the roachpb.SpanConfig violated the basic requirements
-					// documented in the proto. We need to ensure that the checks that
-					// happened here are also done when the user set the ZoneConfig, so
-					// that we can reject such violations up front. At this point in the
-					// code we have no way of continuing, so we panic, but we must ensure
-					// we never get here in production for user specified input.
-					panic(err)
-				} else {
-					log.KvDistribution.Warningf(
-						ctx, "range r%v span config had errors in normalization: %v", rangeMsg.RangeID, err)
-				}
+				log.KvDistribution.Warningf(
+					ctx, "range r%v span config had errors in normalization: %v", rangeMsg.RangeID, err)
 			}
 			rs.conf = normSpanConfig
+			rs.confNormalizationErr = err
 		}
 		// Ensure (later) recomputation of the analyzed range constraints for the
 		// range, by clearing the existing analyzed constraints. This is done
