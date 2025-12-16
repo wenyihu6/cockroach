@@ -672,7 +672,8 @@ func (conf *normalizedSpanConfig) buildVoterAndAllRelationships() (
 	for i := range conf.voterConstraints {
 		if len(conf.voterConstraints[i].constraints) == 0 {
 			if emptyVoterConstraintIndex != -1 {
-				log.KvDistribution.Fatalf(context.Background(), "multiple empty voter constraints: %v and %v",
+				log.KvDistribution.Warningf(context.Background(),
+					"mma: multiple empty voter constraints: %v and %v",
 					conf.voterConstraints[emptyVoterConstraintIndex], conf.voterConstraints[i])
 			}
 			emptyVoterConstraintIndex = i
@@ -680,7 +681,8 @@ func (conf *normalizedSpanConfig) buildVoterAndAllRelationships() (
 		for j := range conf.constraints {
 			if len(conf.constraints[j].constraints) == 0 {
 				if emptyConstraintIndex != -1 && emptyConstraintIndex != j {
-					log.KvDistribution.Fatalf(context.Background(), "multiple empty constraints: %v and %v",
+					log.KvDistribution.Warningf(context.Background(),
+						"mma: multiple empty constraints: %v and %v",
 						conf.constraints[emptyConstraintIndex], conf.constraints[j])
 				}
 				emptyConstraintIndex = j
@@ -1194,7 +1196,9 @@ func (conf *normalizedSpanConfig) normalizeVoterConstraints() error {
 		neededReplicas := conf.voterConstraints[i].numReplicas
 		actualReplicas := ncEnv.voterConstraints[i].numReplicas + ncEnv.voterConstraints[i].additionalReplicas
 		if actualReplicas > neededReplicas {
-			panic("code bug")
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: code bug: actualReplicas (%d) > neededReplicas (%d) for voter constraint %d",
+				actualReplicas, neededReplicas, i)
 		}
 		if actualReplicas < neededReplicas {
 			err = errors.Errorf("could not satisfy all voter constraints due to " +
@@ -1748,7 +1752,8 @@ func (rac *rangeAnalyzedConstraints) finishInit(
 			}
 		}
 		if rac.leaseholderPreferenceIndex == -1 {
-			panic("leaseholder not found in replicas")
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: leaseholder s%v not found in replicas during constraint analysis", leaseholder)
 		}
 	}
 
@@ -2186,7 +2191,9 @@ func (si *stringInterner) toCode(s string) stringCode {
 	if !ok {
 		n := len(si.stringToCode)
 		if n == math.MaxUint32 {
-			panic("overflowed stringInterner")
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: overflowed stringInterner, returning max code")
+			return stringCode(math.MaxUint32 - 1)
 		}
 		code = stringCode(n)
 		si.stringToCode[s] = code

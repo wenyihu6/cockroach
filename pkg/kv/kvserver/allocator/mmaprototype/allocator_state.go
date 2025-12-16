@@ -145,9 +145,11 @@ func (a *allocatorState) ensureMetricsForLocalStoreLocked(
 	if a.mrProvider != nil {
 		mr := a.mrProvider.GetStoreMetricRegistry(localStoreID)
 		if mr == nil {
-			panic(errors.AssertionFailedf("no MetricRegistry for store s%v", localStoreID))
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: no MetricRegistry for store s%v, metrics will not be registered", localStoreID)
+		} else {
+			mr.AddMetricStruct(*m)
 		}
-		mr.AddMetricStruct(*m)
 	}
 	a.counters[localStoreID] = m
 	return m
@@ -163,9 +165,11 @@ func (a *allocatorState) preparePassMetricsAndLoggerLocked(
 		if a.mrProvider != nil {
 			mr := a.mrProvider.GetStoreMetricRegistry(localStoreID)
 			if mr == nil {
-				panic(errors.AssertionFailedf("no MetricRegistry for store s%v", localStoreID))
+				log.KvDistribution.Warningf(context.Background(),
+					"mma: no MetricRegistry for store s%v, metrics will not be registered", localStoreID)
+			} else {
+				mr.AddMetricStruct(m.m)
 			}
-			mr.AddMetricStruct(m.m)
 		}
 	}
 	m.resetForRebalancingPass()
@@ -255,7 +259,9 @@ func (a *allocatorState) AdjustPendingChangeDisposition(change ExternalRangeChan
 			RangeID:               change.RangeID,
 			pendingReplicaChanges: changes,
 		}); err != nil {
-			panic(err)
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: pre-check failed for undo replica changes r%v: %v", change.RangeID, err)
+			return
 		}
 	}
 	for _, c := range changes {
@@ -293,10 +299,13 @@ func (a *allocatorState) ComputeChanges(
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if msg.StoreID != opts.LocalStoreID {
-		panic(fmt.Sprintf("ComputeChanges: expected StoreID %d, got %d", opts.LocalStoreID, msg.StoreID))
+		log.KvDistribution.Warningf(ctx,
+			"mma: ComputeChanges: expected StoreID %d, got %d, skipping", opts.LocalStoreID, msg.StoreID)
+		return nil
 	}
 	if opts.DryRun {
-		panic(errors.AssertionFailedf("unsupported dry-run mode"))
+		log.KvDistribution.Warningf(ctx, "mma: unsupported dry-run mode, skipping")
+		return nil
 	}
 	counterMetrics := a.ensureMetricsForLocalStoreLocked(opts.LocalStoreID)
 	a.cs.processStoreLeaseholderMsg(ctx, msg, counterMetrics)
@@ -318,7 +327,7 @@ func (a *allocatorState) AdminRelocateOne(
 ) ([]pendingReplicaChange, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	panic("unimplemented")
+	return nil, errors.New("mma: AdminRelocateOne is not implemented")
 }
 
 // AdminScatterOne implements the Allocator interface.
@@ -327,7 +336,7 @@ func (a *allocatorState) AdminScatterOne(
 ) ([]pendingReplicaChange, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	panic("unimplemented")
+	return nil, errors.New("mma: AdminScatterOne is not implemented")
 }
 
 // KnownStores implements the Allocator interface.
@@ -388,7 +397,7 @@ func (i ignoreLevel) String() string {
 	case ignoreHigherThanLoadThreshold:
 		return "only consider targets <= load threshold"
 	default:
-		panic(fmt.Sprintf("unknown: %d", i))
+		return fmt.Sprintf("unknown ignoreLevel: %d", i)
 	}
 }
 
@@ -489,7 +498,9 @@ func sortTargetCandidateSetAndPick(
 	}
 
 	if loadThreshold <= loadNoChange {
-		panic("loadThreshold must be > loadNoChange")
+		log.KvDistribution.Warningf(ctx, "mma: loadThreshold (%v) must be > loadNoChange (%v), skipping",
+			loadThreshold, loadNoChange)
+		return 0
 	}
 	slices.SortFunc(cands.candidates, func(a, b candidateInfo) int {
 		if diversityScoresAlmostEqual(a.diversityScore, b.diversityScore) {
@@ -636,7 +647,9 @@ func sortTargetCandidateSetAndPick(
 	// size, and we want to have a true picture of all of these potential
 	// candidates before we start using the ones with load >= loadNoChange.
 	if lowestLoadSet > loadThreshold {
-		panic("candidates should not have lowestLoad > loadThreshold")
+		log.KvDistribution.Warningf(ctx, "mma: candidates should not have lowestLoad (%v) > loadThreshold (%v), skipping",
+			lowestLoadSet, loadThreshold)
+		return 0
 	}
 	// INVARIANT: lowestLoad <= loadThreshold.
 	if lowestLoadSet == loadThreshold && ignoreLevel < ignoreHigherThanLoadThreshold {
@@ -708,8 +721,10 @@ func sortTargetCandidateSetAndPick(
 	if ignoreLevel == ignoreLoadNoChangeAndHigher && cands.candidates[j].sls >= loadNoChange ||
 		ignoreLevel == ignoreLoadThresholdAndHigher && cands.candidates[j].sls >= loadThreshold ||
 		ignoreLevel == ignoreHigherThanLoadThreshold && cands.candidates[j].sls > loadThreshold {
-		panic(errors.AssertionFailedf("saw higher load %v candidate than expected, ignoreLevel=%v",
-			cands.candidates[j].sls, ignoreLevel))
+		log.KvDistribution.Warningf(ctx,
+			"mma: saw higher load %v candidate than expected, ignoreLevel=%v, skipping",
+			cands.candidates[j].sls, ignoreLevel)
+		return 0
 	}
 	return cands.candidates[j].StoreID
 }
@@ -743,7 +758,9 @@ func (cs *clusterState) ensureAnalyzedConstraints(rstate *rangeState) {
 		// that there is a new leaseholder (and thus should drop this range).
 		// However, even in this case, replica.IsLeaseholder should still be there
 		// based on to the stale state, so this should still be impossible to hit.
-		panic(errors.AssertionFailedf("no leaseholders found in %v", rstate.replicas))
+		log.KvDistribution.Warningf(context.Background(),
+			"mma: no leaseholders found in %v, skipping constraint analysis", rstate.replicas)
+		return
 	}
 	rac.finishInit(rstate.conf, cs.constraintMatcher, leaseholder)
 	rstate.constraints = rac

@@ -16,7 +16,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/errors"
 	"github.com/cockroachdb/logtags"
 	"github.com/cockroachdb/redact"
 )
@@ -473,10 +472,11 @@ func (re *rebalanceEnv) rebalanceReplicas(
 		if !isVoter && !isNonVoter {
 			// Due to REQUIREMENT(change-computation), the top-k is up to date, so
 			// this must never happen.
-			panic(errors.AssertionFailedf("internal state inconsistency: "+
-				"store=%v range_id=%v pending-changes=%v "+
-				"rstate_replicas=%v rstate_constraints=%v",
-				store.StoreID, rangeID, rstate.pendingChanges, rstate.replicas, rstate.constraints))
+			log.KvDistribution.Warningf(ctx,
+				"mma: internal state inconsistency: store=%v range_id=%v pending-changes=%v "+
+					"rstate_replicas=%v rstate_constraints=%v, skipping range",
+				store.StoreID, rangeID, rstate.pendingChanges, rstate.replicas, rstate.constraints)
+			continue
 		}
 		var conj constraintsConj
 		var err error
@@ -578,16 +578,19 @@ func (re *rebalanceEnv) rebalanceReplicas(
 			StoreID: ss.StoreID,
 		}
 		if addTarget.StoreID == removeTarget.StoreID {
-			panic(fmt.Sprintf("internal state inconsistency: "+
-				"add=%v==remove_target=%v range_id=%v candidates=%v",
-				addTarget, removeTarget, rangeID, cands.candidates))
+			log.KvDistribution.Warningf(ctx,
+				"mma: internal state inconsistency: add=%v==remove_target=%v range_id=%v candidates=%v, skipping",
+				addTarget, removeTarget, rangeID, cands.candidates)
+			continue
 		}
 		replicaChanges := makeRebalanceReplicaChanges(
 			rangeID, rstate.replicas, rstate.load, addTarget, removeTarget)
 		rangeChange := MakePendingRangeChange(rangeID, replicaChanges[:])
 		if err = re.preCheckOnApplyReplicaChanges(rangeChange); err != nil {
-			panic(errors.Wrapf(err, "pre-check failed for replica changes: %v for %v",
-				replicaChanges, rangeID))
+			log.KvDistribution.Warningf(ctx,
+				"mma: pre-check failed for replica changes: %v for r%v: %v, skipping",
+				replicaChanges, rangeID, err)
+			continue
 		}
 		re.addPendingRangeChange(rangeChange)
 		re.changes = append(re.changes,
@@ -650,27 +653,35 @@ func (re *rebalanceEnv) rebalanceLeasesFromLocalStoreID(
 				// has pending changes, which while not necessary for the
 				// is-leaseholder assertion, makes the case where we assert
 				// even narrower.
-				log.KvDistribution.Fatalf(ctx,
-					"internal state inconsistency: replica considered for lease shedding has no pending"+
-						" changes but is not leaseholder: %+v", rstate)
+				log.KvDistribution.Warningf(ctx,
+					"mma: internal state inconsistency: replica considered for lease shedding has no pending"+
+						" changes but is not leaseholder: %+v, skipping range", rstate)
+				continue
 			}
 			foundLocalReplica = true
 			break
 		}
 		if !foundLocalReplica {
-			log.KvDistribution.Fatalf(
-				ctx, "internal state inconsistency: local store is not a replica: %+v", rstate)
+			log.KvDistribution.Warningf(ctx,
+				"mma: internal state inconsistency: local store is not a replica: %+v, skipping range", rstate)
+			continue
 		}
 		if re.now.Sub(rstate.lastFailedChange) < re.lastFailedChangeDelayDuration {
 			log.KvDistribution.VEventf(ctx, 2, "skipping r%d: too soon after failed change", rangeID)
 			continue
 		}
 		re.ensureAnalyzedConstraints(rstate)
+		if rstate.constraints == nil {
+			log.KvDistribution.Warningf(ctx,
+				"mma: constraints not initialized for range r%v, skipping", rangeID)
+			continue
+		}
 		if rstate.constraints.leaseholderID != store.StoreID {
 			// See the earlier comment about assertions.
-			panic(fmt.Sprintf("internal state inconsistency: "+
-				"store=%v range_id=%v should be leaseholder but isn't",
-				store.StoreID, rangeID))
+			log.KvDistribution.Warningf(ctx,
+				"mma: internal state inconsistency: store=%v range_id=%v should be leaseholder but isn't, skipping",
+				store.StoreID, rangeID)
+			continue
 		}
 		cands, _ := rstate.constraints.candidatesToMoveLease()
 		var candsPL storeSet
@@ -746,10 +757,9 @@ func (re *rebalanceEnv) rebalanceLeasesFromLocalStoreID(
 		// Only adding leaseholder CPU.
 		addedLoad[CPURate] = rstate.load.Load[CPURate] - rstate.load.RaftCPU
 		if addedLoad[CPURate] < 0 {
-			// TODO(sumeer): remove this panic once we are not in an
-			// experimental phase.
+			log.KvDistribution.Warningf(ctx,
+				"mma: raft cpu higher than total cpu for r%v, clamping to 0", rangeID)
 			addedLoad[CPURate] = 0
-			panic("raft cpu higher than total cpu")
 		}
 		if !re.canShedAndAddLoad(ctx, ss, targetSS, addedLoad, &means, true, CPURate) {
 			re.passObs.leaseShed(noCandidateToAcceptLoad)
@@ -769,7 +779,9 @@ func (re *rebalanceEnv) rebalanceLeasesFromLocalStoreID(
 			rangeID, rstate.replicas, rstate.load, addTarget, removeTarget)
 		leaseChange := MakePendingRangeChange(rangeID, replicaChanges[:])
 		if err := re.preCheckOnApplyReplicaChanges(leaseChange); err != nil {
-			panic(errors.Wrapf(err, "pre-check failed for lease transfer %v", leaseChange))
+			log.KvDistribution.Warningf(ctx,
+				"mma: pre-check failed for lease transfer %v: %v, skipping", leaseChange, err)
+			continue
 		}
 		re.addPendingRangeChange(leaseChange)
 		re.changes = append(re.changes,

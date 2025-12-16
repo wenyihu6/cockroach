@@ -6,9 +6,11 @@
 package mmaprototype
 
 import (
+	"context"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
-	"github.com/cockroachdb/errors"
+	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/redact"
 )
 
@@ -58,7 +60,8 @@ func MakeExternalRangeChange(
 	for i, rc := range change.pendingReplicaChanges {
 		changeType := rc.replicaChangeType()
 		if changeType == Unknown {
-			panic(errors.AssertionFailedf("unknown replica change type"))
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: unknown replica change type for r%v, using Unknown", change.RangeID)
 		}
 		changes[i] = ExternalReplicaChange{
 			changeID:   rc.changeID,
@@ -96,7 +99,7 @@ func (rc *ExternalRangeChange) SafeFormat(w redact.SafePrinter, _ rune) {
 		found = true
 	}
 	if !found {
-		panic("unknown change type")
+		w.Printf("unknown_change_type")
 	}
 	w.Print(" cids=")
 	for i, c := range rc.Changes {
@@ -147,8 +150,10 @@ func (rc *ExternalRangeChange) IsPureTransferLease() bool {
 		}
 	}
 	if addLease != 1 || removeLease != 1 {
-		panic(errors.AssertionFailedf("unexpected add (%d) or remove lease (%d) in lease transfer",
-			addLease, removeLease))
+		log.KvDistribution.Warningf(context.Background(),
+			"mma: unexpected add (%d) or remove lease (%d) in lease transfer for r%v",
+			addLease, removeLease, rc.RangeID)
+		return false
 	}
 	return true
 }
@@ -169,7 +174,9 @@ func (rc *ExternalRangeChange) IsPureTransferLease() bool {
 // IsChangeReplicas).
 func (rc *ExternalRangeChange) ReplicationChanges() kvpb.ReplicationChanges {
 	if !rc.IsChangeReplicas() {
-		panic("RangeChange is not a change replicas")
+		log.KvDistribution.Warningf(context.Background(),
+			"mma: ReplicationChanges called on non-change-replicas for r%v, returning empty", rc.RangeID)
+		return nil
 	}
 	chgs := make([]kvpb.ReplicationChange, 0, len(rc.Changes))
 	newLeaseholderIndex := -1
@@ -178,7 +185,9 @@ func (rc *ExternalRangeChange) ReplicationChanges() kvpb.ReplicationChanges {
 		case ChangeReplica, AddReplica, RemoveReplica:
 			// These are the only permitted cases.
 		default:
-			panic(errors.AssertionFailedf("change type %v is not a change replicas", c.ChangeType))
+			log.KvDistribution.Warningf(context.Background(),
+				"mma: change type %v is not a change replicas for r%v, skipping", c.ChangeType, rc.RangeID)
+			continue
 		}
 		// The kvserver code represents a change in replica type as an
 		// addition and a removal of the same replica. For example, if a
@@ -199,12 +208,15 @@ func (rc *ExternalRangeChange) ReplicationChanges() kvpb.ReplicationChanges {
 			case roachpb.NON_VOTER:
 				chg.ChangeType = roachpb.ADD_NON_VOTER
 			default:
-				panic(errors.AssertionFailedf("unexpected replica type %s", c.Next.ReplicaType.ReplicaType))
+				log.KvDistribution.Warningf(context.Background(),
+					"mma: unexpected replica type %s for add in r%v, skipping",
+					c.Next.ReplicaType.ReplicaType, rc.RangeID)
+				continue
 			}
 			if isNewLeaseholder {
 				if newLeaseholderIndex >= 0 {
-					panic(errors.AssertionFailedf(
-						"multiple new leaseholders in change replicas"))
+					log.KvDistribution.Warningf(context.Background(),
+						"mma: multiple new leaseholders in change replicas for r%v", rc.RangeID)
 				}
 				newLeaseholderIndex = len(chgs)
 			}
@@ -219,7 +231,10 @@ func (rc *ExternalRangeChange) ReplicationChanges() kvpb.ReplicationChanges {
 			case roachpb.NON_VOTER:
 				chg.ChangeType = roachpb.REMOVE_NON_VOTER
 			default:
-				panic(errors.AssertionFailedf("unexpected replica type %s", c.Prev.ReplicaType.ReplicaType))
+				log.KvDistribution.Warningf(context.Background(),
+					"mma: unexpected replica type %s for remove in r%v, skipping",
+					c.Prev.ReplicaType.ReplicaType, rc.RangeID)
+				continue
 			}
 			chgs = append(chgs, chg)
 		}
@@ -236,26 +251,34 @@ func (rc *ExternalRangeChange) ReplicationChanges() kvpb.ReplicationChanges {
 // operation.
 func (rc *ExternalRangeChange) LeaseTransferTarget() roachpb.StoreID {
 	if !rc.IsPureTransferLease() {
-		panic("pendingRangeChange is not a lease transfer")
+		log.KvDistribution.Warningf(context.Background(),
+			"mma: LeaseTransferTarget called on non-lease-transfer for r%v, returning 0", rc.RangeID)
+		return 0
 	}
 	for _, c := range rc.Changes {
 		if !c.Prev.IsLeaseholder && c.Next.IsLeaseholder {
 			return c.Target.StoreID
 		}
 	}
-	panic("unreachable")
+	log.KvDistribution.Warningf(context.Background(),
+		"mma: no lease transfer target found for r%v, returning 0", rc.RangeID)
+	return 0
 }
 
 // LeaseTransferFrom returns the store ID of the store that is the source of
-// the lease transfer. It panics if the range change is not a transfer lease.
+// the lease transfer. It returns 0 if the range change is not a transfer lease.
 func (rc *ExternalRangeChange) LeaseTransferFrom() roachpb.StoreID {
 	if !rc.IsPureTransferLease() {
-		panic("pendingRangeChange is not a lease transfer")
+		log.KvDistribution.Warningf(context.Background(),
+			"mma: LeaseTransferFrom called on non-lease-transfer for r%v, returning 0", rc.RangeID)
+		return 0
 	}
 	for _, c := range rc.Changes {
 		if c.Prev.IsLeaseholder && !c.Next.IsLeaseholder {
 			return c.Target.StoreID
 		}
 	}
-	panic("unreachable")
+	log.KvDistribution.Warningf(context.Background(),
+		"mma: no lease transfer source found for r%v, returning 0", rc.RangeID)
+	return 0
 }
