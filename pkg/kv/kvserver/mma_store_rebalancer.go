@@ -99,18 +99,14 @@ func (m *mmaStoreRebalancer) run(ctx context.Context, stopper *stop.Stopper) {
 	}
 }
 
-// TODO(mma): We should add an integration struct (see server.go gossip
-// callback), which will be responsible for:
-//   - registering the gossip callback (see server.go)
-//   - Allocator.SetStore() upon a new store being seen (triggered via
-//     gossip callback presumably).
-//   - Allocator.UpdateFailureDetectionSummary() upon node liveness
-//     status changing. (draining|dead|live|unavailable).
+// Integration with external systems:
+//   - Gossip callback in server.go handles Allocator.SetStore() upon new stores.
+//   - Store status (health, disposition) is refreshed from StorePool before
+//     making decisions via mmaintegration.RefreshStoreStatus(). This translates
+//     StorePool's (liveness, membership, draining, throttled, suspect) into
+//     MMA's (health, lease-disposition, replica-disposition) model.
 //
-// In the future, it would also be responsible for:
-//   - Allocator.UpdateStoreMembership() upon a store being marked as
-//     decommissioning. We can defer this for now, since we don't need to
-//     necessarily support decommissioning stores in the prototype
+// TODO(mma): In the future, we should also be responsible for:
 //   - updating the StorePool with enacted changes made by this rebalancer and
 //     vice-versa for the replicate queue, lease queue and store rebalancer
 
@@ -128,6 +124,10 @@ func (m *mmaStoreRebalancer) start(ctx context.Context, stopper *stop.Stopper) {
 // rebalance may return true if errors happen in the process and fail to apply
 // the changes successfully.
 func (m *mmaStoreRebalancer) rebalance(ctx context.Context, periodicCall bool) bool {
+	// Refresh store status from StorePool before making decisions. This ensures
+	// MMA has fresh health and disposition information computed at decision time.
+	mmaintegration.RefreshStoreStatus(ctx, m.sp, m.mma)
+
 	knownStoresByMMA := m.mma.KnownStores()
 	storeLeaseholderMsg, numIgnoredRanges := m.store.MakeStoreLeaseholderMsg(ctx, knownStoresByMMA)
 	if numIgnoredRanges > 0 {

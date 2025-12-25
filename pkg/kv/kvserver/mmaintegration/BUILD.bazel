@@ -22,7 +22,6 @@ go_library(
         "//pkg/roachpb",
         "//pkg/settings/cluster",
         "//pkg/util/log",
-        "//pkg/util/stop",
         "//pkg/util/syncutil",
         "//pkg/util/timeutil",
         "@com_github_cockroachdb_errors//:errors",

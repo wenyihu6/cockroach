@@ -918,11 +918,6 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		return mmaAllocState, allocatorSync
 	}()
 
-	// Create and start the MMA store status integration which periodically
-	// updates MMA with store health/disposition information from StorePool.
-	mmaStoreStatusIntegration := mmaintegration.NewStoreStatusIntegration(storePool, mmaAlloc)
-	mmaStoreStatusIntegration.Start(ctx, stopper)
-
 	g.RegisterCallback(
 		gossip.MakePrefixPattern(gossip.KeyStoreDescPrefix),
 		func(_ string, content roachpb.Value, origTimestampNanos int64) {

@@ -7,73 +7,44 @@ package mmaintegration
 
 import (
 	"context"
-	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
-	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
-	"github.com/cockroachdb/cockroach/pkg/util/stop"
 )
 
-// StoreStatusIntegration manages the periodic updates of store status from
-// StorePool to MMA. It translates the outside world's (liveness, membership,
-// draining, throttled, suspect) signals into MMA's (health, disposition) model.
+// RefreshStoreStatus queries StorePool for all stores known to MMA and updates
+// MMA with the translated status. This should be called before making allocation
+// decisions to ensure MMA has fresh store health and disposition information.
 //
 // Design doc: https://gist.github.com/tbg/48e52790c9e9f50046583a94dbed856f
-type StoreStatusIntegration struct {
-	storePool *storepool.StorePool
-	mma       mmaprototype.Allocator
-}
-
-// NewStoreStatusIntegration creates a new StoreStatusIntegration.
-func NewStoreStatusIntegration(
-	sp *storepool.StorePool, mma mmaprototype.Allocator,
-) *StoreStatusIntegration {
-	return &StoreStatusIntegration{
-		storePool: sp,
-		mma:       mma,
-	}
-}
-
-// Start launches a background goroutine that periodically queries StorePool
-// and updates MMA with the current store status.
-func (s *StoreStatusIntegration) Start(ctx context.Context, stopper *stop.Stopper) {
-	_ = stopper.RunAsyncTask(ctx, "mma-store-status-updater", func(ctx context.Context) {
-		// Update status every 10 seconds, matching the gossip interval.
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ticker.C:
-				s.updateAllStoreStatus(ctx)
-			case <-stopper.ShouldQuiesce():
-				return
-			}
-		}
-	})
-}
-
-// updateAllStoreStatus queries StorePool for all known stores and updates MMA
-// with the translated status.
-func (s *StoreStatusIntegration) updateAllStoreStatus(ctx context.Context) {
-	for storeID := range s.mma.KnownStores() {
-		status, err := s.ComputeMMAStatus(storeID)
+//
+// We chose an on-demand approach (refresh before decision) over periodic background
+// updates because:
+//  1. Always-fresh data at decision time
+//  2. No background goroutine to manage
+//  3. No wasted updates when no decisions are being made
+//  4. Matches StorePool's pattern of computing status on-demand
+func RefreshStoreStatus(
+	ctx context.Context,
+	sp *storepool.StorePool,
+	mma mmaprototype.Allocator,
+) {
+	for storeID := range mma.KnownStores() {
+		spStatus, err := sp.GetStoreStatus(storeID)
 		if err != nil {
 			// Log at a low level - this is expected for stores that are not yet
 			// known to StorePool but are known to MMA.
-			log.VEventf(ctx, 2, "failed to compute MMA status for store %d: %v", storeID, err)
+			log.VEventf(ctx, 2, "failed to get store status for s%d: %v", storeID, err)
 			continue
 		}
-		s.mma.UpdateStoreStatus(storeID, status)
+		mma.UpdateStoreStatus(storeID, TranslateStorePoolStatusToMMA(spStatus))
 	}
 }
 
-// ComputeMMAStatus computes the MMA status for a store by querying StorePool
-// and translating its status to MMA's (health, disposition) model.
-//
-// Translation table (from design doc):
+// TranslateStorePoolStatusToMMA translates a StorePool status to MMA's (health,
+// disposition) model. This is a pure function that implements the translation
+// table from the design doc:
 //
 //	| StorePool Status    | MMA Health      | MMA Lease Disposition | MMA Replica Disposition |
 //	|---------------------|-----------------|-----------------------|-------------------------|
@@ -84,19 +55,6 @@ func (s *StoreStatusIntegration) updateAllStoreStatus(ctx context.Context) {
 //	| Throttled           | HealthOK        | OK                    | Refusing (temp)         |
 //	| Suspect             | HealthUnhealthy | Shedding              | Shedding                |
 //	| Available           | HealthOK        | OK                    | OK                      |
-func (s *StoreStatusIntegration) ComputeMMAStatus(
-	storeID roachpb.StoreID,
-) (mmaprototype.Status, error) {
-	spStatus, err := s.storePool.GetStoreStatus(storeID)
-	if err != nil {
-		return mmaprototype.Status{}, err
-	}
-	return TranslateStorePoolStatusToMMA(spStatus), nil
-}
-
-// TranslateStorePoolStatusToMMA translates a StorePool status to MMA's (health,
-// disposition) model. This is a pure function that implements the translation
-// table from the design doc.
 func TranslateStorePoolStatusToMMA(spStatus storepool.StoreStatus) mmaprototype.Status {
 	switch spStatus {
 	case storepool.StoreStatusDead:
