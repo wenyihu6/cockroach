@@ -152,6 +152,9 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 			msr.pendingChangeIdx = 0
 			msr.lastRebalanceTime = tick
 			log.KvDistribution.VInfof(ctx, 1, "no more pending changes to process, will call compute changes again")
+			// Refresh store status from simulator state before computing changes.
+			// This ensures MMA has up-to-date health and disposition information.
+			RefreshMMAStoreStatus(s, msr.allocator)
 			storeLeaseholderMsg := MakeStoreLeaseholderMsgFromState(s, msr.localStoreID)
 			pendingChanges := msr.allocator.ComputeChanges(ctx, &storeLeaseholderMsg, mmaprototype.ChangeOptions{
 				LocalStoreID: roachpb.StoreID(msr.localStoreID),
