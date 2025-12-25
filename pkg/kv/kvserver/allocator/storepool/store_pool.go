@@ -78,38 +78,39 @@ type StoreDetailMu struct {
 	LastUnavailable hlc.Timestamp
 }
 
-// storeStatus is the current status of a store.
-type storeStatus int
+// StoreStatus is the current status of a store.
+type StoreStatus int
 
-// These are the possible values for a storeStatus.
+// These are the possible values for a StoreStatus.
 const (
-	_ storeStatus = iota
-	// The store's node is not live or no gossip has been received from
-	// the store for more than the timeUntilNodeDead threshold.
-	storeStatusDead
-	// The store isn't available because it hasn't gossiped yet. This
-	// status lasts until either gossip is received from the store or
-	// the timeUntilNodeDead threshold has passed, at which point its
+	_ StoreStatus = iota
+	// StoreStatusDead indicates the store's node is not live or no gossip has
+	// been received from the store for more than the timeUntilNodeDead threshold.
+	StoreStatusDead
+	// StoreStatusUnknown indicates the store isn't available because it hasn't
+	// gossiped yet. This status lasts until either gossip is received from the
+	// store or the timeUntilNodeDead threshold has passed, at which point its
 	// status will change to dead.
-	storeStatusUnknown
-	// The store is alive but it is throttled.
-	storeStatusThrottled
-	// The store is alive and available.
-	storeStatusAvailable
-	// The store is decommissioning.
-	storeStatusDecommissioning
-	// The store failed it's liveness heartbeat recently and is considered
-	// suspect. Consequently, stores always move from `storeStatusUnknown`
-	// (indicating a node that has a non-live node liveness record) to
-	// `storeStatusSuspect`.
-	storeStatusSuspect
-	// The store is alive but is currently marked as draining, so it is not a
-	// candidate for lease transfers or replica rebalancing.
-	storeStatusDraining
+	StoreStatusUnknown
+	// StoreStatusThrottled indicates the store is alive but it is throttled.
+	StoreStatusThrottled
+	// StoreStatusAvailable indicates the store is alive and available.
+	StoreStatusAvailable
+	// StoreStatusDecommissioning indicates the store is decommissioning.
+	StoreStatusDecommissioning
+	// StoreStatusSuspect indicates the store failed its liveness heartbeat
+	// recently and is considered suspect. Consequently, stores always move from
+	// `StoreStatusUnknown` (indicating a node that has a non-live node liveness
+	// record) to `StoreStatusSuspect`.
+	StoreStatusSuspect
+	// StoreStatusDraining indicates the store is alive but is currently marked
+	// as draining, so it is not a candidate for lease transfers or replica
+	// rebalancing.
+	StoreStatusDraining
 )
 
-func (ss storeStatus) String() string {
-	if ss < storeStatusDead || ss > storeStatusDraining {
+func (ss StoreStatus) String() string {
+	if ss < StoreStatusDead || ss > StoreStatusDraining {
 		panic(fmt.Sprintf("unknown store status: %d", ss))
 	}
 	return [...]string{"",
@@ -118,7 +119,7 @@ func (ss storeStatus) String() string {
 }
 
 // SafeValue implements the redact.SafeValue interface.
-func (ss storeStatus) SafeValue() {}
+func (ss StoreStatus) SafeValue() {}
 
 // Copy returns a deep copy of the StoreDetailMu.
 func (sd *StoreDetailMu) Copy() *StoreDetailMu {
@@ -146,19 +147,19 @@ func (sd *StoreDetailMu) status(
 	deadThreshold time.Duration,
 	nl NodeLivenessFunc,
 	suspectDuration time.Duration,
-) storeStatus {
+) StoreStatus {
 	sd.RLock() // all exist paths will RUnlock() the lock.
 	// During normal operation, we expect the state transitions for stores to look like the following:
 	//
 	//      +-----------------------+
-	//   +- |  storeStatusUnknown   |
+	//   +- |  StoreStatusUnknown   |
 	//   |  +-----------------------+             Successful heartbeats
 	//   |                                        throughout the suspect
 	//   |      +-----------------------+         duration
-	//   +----->| storeStatusAvailable  |<-+---------------------------+
+	//   +----->| StoreStatusAvailable  |<-+---------------------------+
 	//          +-----------------------+  |                           |
 	//                                     |                   +--------------------+
-	//                                     |                   | storeStatusSuspect |
+	//                                     |                   | StoreStatusSuspect |
 	//      +------------------------------+                   +--------------------+
 	//      |      Failed liveness                                     ^
 	//      |      heartbeat                                           |
@@ -173,8 +174,8 @@ func (sd *StoreDetailMu) status(
 	// write lock, updates the LastUnavailable timestamp, returns the store
 	// status, and unlocks the write lock.
 	updateLastUnavailableAndReturnStatusRLocked := func(
-		lastUnavailable hlc.Timestamp, returnStatus storeStatus,
-	) storeStatus {
+		lastUnavailable hlc.Timestamp, returnStatus StoreStatus,
+	) StoreStatus {
 		sd.RUnlock()
 		sd.Lock()
 		defer sd.Unlock()
@@ -183,7 +184,7 @@ func (sd *StoreDetailMu) status(
 	}
 
 	// returnStatusRLocked unlocks the read lock and returns the store status.
-	returnStatusRLocked := func(returnStatus storeStatus) storeStatus {
+	returnStatusRLocked := func(returnStatus StoreStatus) StoreStatus {
 		defer sd.RUnlock()
 		return returnStatus
 	}
@@ -194,12 +195,12 @@ func (sd *StoreDetailMu) status(
 	// even before the first gossip arrives for a store.
 	deadAsOf := sd.LastUpdatedTime.AddDuration(deadThreshold)
 	if now.After(deadAsOf) {
-		return updateLastUnavailableAndReturnStatusRLocked(now, storeStatusDead)
+		return updateLastUnavailableAndReturnStatusRLocked(now, StoreStatusDead)
 	}
 	// If there's no descriptor (meaning no gossip ever arrived for this
 	// store), return unavailable.
 	if sd.Desc == nil {
-		return returnStatusRLocked(storeStatusUnknown)
+		return returnStatusRLocked(StoreStatusUnknown)
 	}
 
 	// Even if the store has been updated via gossip, we still rely on
@@ -209,31 +210,31 @@ func (sd *StoreDetailMu) status(
 	// dead -> decommissioning -> unknown -> draining -> suspect -> available.
 	switch nl(sd.Desc.Node.NodeID) {
 	case livenesspb.NodeLivenessStatus_DEAD, livenesspb.NodeLivenessStatus_DECOMMISSIONED:
-		return updateLastUnavailableAndReturnStatusRLocked(now, storeStatusDead)
+		return updateLastUnavailableAndReturnStatusRLocked(now, StoreStatusDead)
 	case livenesspb.NodeLivenessStatus_DECOMMISSIONING:
-		return returnStatusRLocked(storeStatusDecommissioning)
+		return returnStatusRLocked(StoreStatusDecommissioning)
 	case livenesspb.NodeLivenessStatus_UNAVAILABLE:
-		return updateLastUnavailableAndReturnStatusRLocked(now, storeStatusUnknown)
+		return updateLastUnavailableAndReturnStatusRLocked(now, StoreStatusUnknown)
 	case livenesspb.NodeLivenessStatus_UNKNOWN:
-		return returnStatusRLocked(storeStatusUnknown)
+		return returnStatusRLocked(StoreStatusUnknown)
 	case livenesspb.NodeLivenessStatus_DRAINING:
-		return updateLastUnavailableAndReturnStatusRLocked(now, storeStatusDraining)
+		return updateLastUnavailableAndReturnStatusRLocked(now, StoreStatusDraining)
 	}
 
 	// A store is throttled if it has missed receiving snapshots recently.
 	if sd.ThrottledUntil.After(now) {
-		return returnStatusRLocked(storeStatusThrottled)
+		return returnStatusRLocked(StoreStatusThrottled)
 	}
 
 	// Check whether the store is currently suspect. We measure that by
 	// looking at the time it was last unavailable making sure we have not seen any
 	// failures for a period of time defined by StoreSuspectDuration.
 	if sd.LastUnavailable.AddDuration(suspectDuration).After(now) {
-		return returnStatusRLocked(storeStatusSuspect)
+		return returnStatusRLocked(StoreStatusSuspect)
 	}
 
 	// Clear out the LastUnavailable once we return available status.
-	return returnStatusRLocked(storeStatusAvailable)
+	return returnStatusRLocked(StoreStatusAvailable)
 }
 
 // localityWithString maintains a string representation of each locality along
@@ -462,7 +463,7 @@ func (sp *StorePool) statusString(nl NodeLivenessFunc) redact.RedactableString {
 		}
 		buf.Print(id)
 		status := detail.status(now, timeUntilNodeDead, nl, timeAfterNodeSuspect)
-		if status != storeStatusAvailable {
+		if status != StoreStatusAvailable {
 			buf.Printf(" (status=%s)", status)
 		}
 		detail.RLock()
@@ -766,7 +767,7 @@ func (sp *StorePool) decommissioningReplicasWithLiveness(
 	for _, repl := range repls {
 		detail := sp.GetStoreDetail(repl.StoreID)
 		switch detail.status(now, timeUntilNodeDead, nl, timeAfterNodeSuspect) {
-		case storeStatusDecommissioning:
+		case StoreStatusDecommissioning:
 			decommissioningReplicas = append(decommissioningReplicas, repl)
 		}
 	}
@@ -817,7 +818,7 @@ func (sp *StorePool) IsDead(storeID roachpb.StoreID) (bool, time.Duration, error
 	return false, deadAsOf.GoTime().Sub(now.GoTime()), nil
 }
 
-// IsUnknown returns true if the given store's status is `storeStatusUnknown`
+// IsUnknown returns true if the given store's status is `StoreStatusUnknown`
 // (i.e. it just failed a liveness heartbeat and we cannot ascertain its
 // liveness or deadness at the moment) or an error if the store is not found in
 // the pool.
@@ -826,17 +827,17 @@ func (sp *StorePool) IsUnknown(storeID roachpb.StoreID) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return status == storeStatusUnknown, nil
+	return status == StoreStatusUnknown, nil
 }
 
-// IsDraining returns true if the given store's status is `storeStatusDraining`
+// IsDraining returns true if the given store's status is `StoreStatusDraining`
 // or an error if the store is not found in the pool.
 func (sp *StorePool) IsDraining(storeID roachpb.StoreID) (bool, error) {
 	status, err := sp.storeStatus(storeID, sp.NodeLivenessFn)
 	if err != nil {
 		return false, err
 	}
-	return status == storeStatusDraining, nil
+	return status == StoreStatusDraining, nil
 }
 
 // IsLive returns true if the node is considered alive by the store pool or an error
@@ -846,7 +847,7 @@ func (sp *StorePool) IsLive(storeID roachpb.StoreID) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return status == storeStatusAvailable, nil
+	return status == StoreStatusAvailable, nil
 }
 
 // IsStoreHealthy returns whether we believe this store can serve requests
@@ -859,7 +860,7 @@ func (sp *StorePool) IsStoreHealthy(storeID roachpb.StoreID) bool {
 		return false
 	}
 	switch status {
-	case storeStatusAvailable, storeStatusDecommissioning, storeStatusDraining:
+	case StoreStatusAvailable, StoreStatusDecommissioning, StoreStatusDraining:
 		return true
 	default:
 		return false
@@ -868,10 +869,10 @@ func (sp *StorePool) IsStoreHealthy(storeID roachpb.StoreID) bool {
 
 func (sp *StorePool) storeStatus(
 	storeID roachpb.StoreID, nl NodeLivenessFunc,
-) (storeStatus, error) {
+) (StoreStatus, error) {
 	sd, ok := sp.Details.StoreDetails.Load(storeID)
 	if !ok {
-		return storeStatusUnknown, errors.Errorf("store %d was not found", storeID)
+		return StoreStatusUnknown, errors.Errorf("store %d was not found", storeID)
 	}
 	// NB: We use clock.Now() instead of clock.PhysicalTime() is order to
 	// take clock signals from remote nodes into consideration.
@@ -881,11 +882,18 @@ func (sp *StorePool) storeStatus(
 	return sd.status(now, timeUntilNodeDead, nl, timeAfterNodeSuspect), nil
 }
 
+// GetStoreStatus returns the current status of a store. This is used by the
+// MMA integration layer to translate StorePool's status to MMA's (health,
+// disposition) model.
+func (sp *StorePool) GetStoreStatus(storeID roachpb.StoreID) (StoreStatus, error) {
+	return sp.storeStatus(storeID, sp.NodeLivenessFn)
+}
+
 // LiveAndDeadReplicas divides the provided repls slice into two slices: the
 // first for live replicas, and the second for dead replicas.
 //
 // - Replicas for which liveness or deadness cannot be ascertained
-// (storeStatusUnknown) are excluded from the returned slices.
+// (StoreStatusUnknown) are excluded from the returned slices.
 //
 // - Replicas on decommissioning node/store are considered live.
 //
@@ -915,17 +923,17 @@ func (sp *StorePool) liveAndDeadReplicasWithLiveness(
 		// Mark replica as dead if store is dead.
 		status := detail.status(now, timeUntilNodeDead, nl, timeAfterNodeSuspect)
 		switch status {
-		case storeStatusDead:
+		case StoreStatusDead:
 			deadReplicas = append(deadReplicas, repl)
-		case storeStatusAvailable, storeStatusThrottled, storeStatusDecommissioning:
+		case StoreStatusAvailable, StoreStatusThrottled, StoreStatusDecommissioning:
 			// We count both available and throttled stores to be live for the
 			// purpose of computing quorum.
 			// We count decommissioning replicas to be alive because they are readable
 			// and should be used for up-replication if necessary.
 			liveReplicas = append(liveReplicas, repl)
-		case storeStatusUnknown:
+		case StoreStatusUnknown:
 		// No-op.
-		case storeStatusSuspect, storeStatusDraining:
+		case StoreStatusSuspect, StoreStatusDraining:
 			if includeSuspectAndDrainingStores {
 				liveReplicas = append(liveReplicas, repl)
 			}
@@ -1216,7 +1224,7 @@ func (sp *StorePool) getStoreListFromIDs(
 			continue
 		}
 		switch s := detail.status(now, timeUntilNodeDead, nl, timeAfterNodeSuspect); s {
-		case storeStatusThrottled:
+		case StoreStatusThrottled:
 			aliveStoreCount++
 			detail.RLock()
 			throttled = append(throttled, detail.throttledBecause)
@@ -1224,14 +1232,14 @@ func (sp *StorePool) getStoreListFromIDs(
 				storeDescriptors = append(storeDescriptors, *detail.Desc)
 			}
 			detail.RUnlock()
-		case storeStatusAvailable:
+		case StoreStatusAvailable:
 			aliveStoreCount++
 			detail.RLock()
 			storeDescriptors = append(storeDescriptors, *detail.Desc)
 			detail.RUnlock()
-		case storeStatusDraining:
+		case StoreStatusDraining:
 			throttled = append(throttled, fmt.Sprintf("s%d: draining", storeID))
-		case storeStatusSuspect:
+		case StoreStatusSuspect:
 			aliveStoreCount++
 			throttled = append(throttled, fmt.Sprintf("s%d: suspect", storeID))
 			if filter != StoreFilterThrottled && filter != StoreFilterSuspect {
@@ -1239,7 +1247,7 @@ func (sp *StorePool) getStoreListFromIDs(
 				storeDescriptors = append(storeDescriptors, *detail.Desc)
 				detail.RUnlock()
 			}
-		case storeStatusDead, storeStatusUnknown, storeStatusDecommissioning:
+		case StoreStatusDead, StoreStatusUnknown, StoreStatusDecommissioning:
 			// Do nothing; this store cannot be used.
 		default:
 			panic(fmt.Sprintf("unknown store status: %d", s))
@@ -1400,9 +1408,9 @@ func (sp *StorePool) isStoreReadyForRoutineReplicaTransferInternal(
 		return false
 	}
 	switch status {
-	case storeStatusThrottled, storeStatusAvailable:
+	case StoreStatusThrottled, StoreStatusAvailable:
 		return true
-	case storeStatusDead, storeStatusUnknown, storeStatusDecommissioning, storeStatusSuspect, storeStatusDraining:
+	case StoreStatusDead, StoreStatusUnknown, StoreStatusDecommissioning, StoreStatusSuspect, StoreStatusDraining:
 		log.VEventf(ctx, 3,
 			"not considering non-live store s%d (%v)", targetStoreID, status)
 		return false

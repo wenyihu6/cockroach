@@ -2180,16 +2180,11 @@ func (cs *clusterState) setStore(sal storeAttributesAndLocalityWithNodeTier) {
 	if !ok {
 		// This is the first time seeing this store.
 		ss := newStoreState()
-		// TODO(tbg): below is what we should be doing once asim and production code actually
-		// have a way to update the health status. For now, we just set it to healthy initially
-		// and that's where it will stay (outside of unit tests).
-		//
-		// At this point, the store's health is unknown. It will need to be marked
-		// as healthy separately. Until we know more, we won't place leases or
-		// replicas on it (nor will we try to shed any that are already reported to
-		// have replicas on it).
-		// ss.status = MakeStatus(HealthUnknown, LeaseDispositionRefusing, ReplicaDispositionRefusing)
-		ss.status = MakeStatus(HealthOK, LeaseDispositionOK, ReplicaDispositionOK)
+		// At this point, the store's health is unknown. It will be updated by the
+		// StoreStatusIntegration when it queries StorePool. Until we know more, we
+		// won't place leases or replicas on it (nor will we try to shed any that
+		// are already reported to have replicas on it).
+		ss.status = MakeStatus(HealthUnknown, LeaseDispositionRefusing, ReplicaDispositionRefusing)
 		ss.overloadStartTime = cs.ts.Now()
 		ss.overloadEndTime = cs.ts.Now()
 		cs.stores[sal.StoreID] = ss
@@ -2214,6 +2209,20 @@ func (cs *clusterState) setStore(sal storeAttributesAndLocalityWithNodeTier) {
 		cs.stores[sal.StoreID].storeAttributesAndLocalityWithNodeTier = sal
 		cs.constraintMatcher.setStore(sal)
 	}
+}
+
+// updateStoreStatus updates the health and disposition for a store. This is
+// called by the integration layer when the store's liveness, membership, or
+// draining status changes.
+func (cs *clusterState) updateStoreStatus(storeID roachpb.StoreID, status Status) {
+	ss, ok := cs.stores[storeID]
+	if !ok {
+		// Store not known yet - ignore the update. The store will be added via
+		// setStore when gossip arrives, and then subsequent status updates will
+		// take effect.
+		return
+	}
+	ss.status = status
 }
 
 //======================================================================

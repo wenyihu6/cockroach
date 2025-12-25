@@ -204,6 +204,13 @@ func (a *allocatorState) ProcessStoreLoadMsg(ctx context.Context, msg *StoreLoad
 	a.cs.processStoreLoadMsg(ctx, msg)
 }
 
+// UpdateStoreStatus implements the Allocator interface.
+func (a *allocatorState) UpdateStoreStatus(storeID roachpb.StoreID, status Status) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cs.updateStoreStatus(storeID, status)
+}
+
 // AdjustPendingChangeDisposition implements the Allocator interface.
 func (a *allocatorState) AdjustPendingChangeDisposition(
 	ctx context.Context, change ExternalRangeChange, success bool,

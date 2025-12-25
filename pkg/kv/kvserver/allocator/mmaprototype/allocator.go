@@ -60,6 +60,13 @@ type Allocator interface {
 	// associated node in the cluster.
 	ProcessStoreLoadMsg(ctx context.Context, msg *StoreLoadMsg)
 
+	// UpdateStoreStatus updates the health and disposition for a store. This is
+	// called by the integration layer when the store's liveness, membership, or
+	// draining status changes. The Status translates the outside world's
+	// (liveness, membership, draining) signals into MMA's (health, disposition)
+	// model. See the design doc for the translation table.
+	UpdateStoreStatus(storeID roachpb.StoreID, status Status)
+
 	// Methods related to making changes.
 
 	// AdjustPendingChangeDisposition is optional feedback to inform the
