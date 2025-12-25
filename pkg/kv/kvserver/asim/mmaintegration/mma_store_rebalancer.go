@@ -12,6 +12,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/op"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
@@ -29,6 +30,7 @@ type MMAStoreRebalancer struct {
 	localStoreID state.StoreID
 	controller   op.Controller
 	allocator    mmaprototype.Allocator
+	storePool    *storepool.StorePool
 	as           *mmaintegration.AllocatorSync
 	settings     *config.SimulationSettings
 
@@ -66,6 +68,7 @@ func NewMMAStoreRebalancer(
 	localStoreID state.StoreID,
 	localNodeID state.NodeID,
 	allocator mmaprototype.Allocator,
+	storePool *storepool.StorePool,
 	as *mmaintegration.AllocatorSync,
 	controller op.Controller,
 	settings *config.SimulationSettings,
@@ -74,6 +77,7 @@ func NewMMAStoreRebalancer(
 		AmbientContext:       log.MakeTestingAmbientCtxWithNewTracer(),
 		localStoreID:         localStoreID,
 		allocator:            allocator,
+		storePool:            storePool,
 		as:                   as,
 		controller:           controller,
 		settings:             settings,
@@ -152,9 +156,11 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 			msr.pendingChangeIdx = 0
 			msr.lastRebalanceTime = tick
 			log.KvDistribution.VInfof(ctx, 1, "no more pending changes to process, will call compute changes again")
-			// Refresh store status from simulator state before computing changes.
-			// This ensures MMA has up-to-date health and disposition information.
-			RefreshMMAStoreStatus(s, msr.allocator)
+			// Refresh store status from StorePool before computing changes.
+			// This uses the real production RefreshStoreStatus, which queries
+			// StorePool (backed by StatusTracker via NodeLivenessFn) and
+			// translates to MMA's status model.
+			mmaintegration.RefreshStoreStatus(ctx, msr.storePool, msr.allocator)
 			storeLeaseholderMsg := MakeStoreLeaseholderMsgFromState(s, msr.localStoreID)
 			pendingChanges := msr.allocator.ComputeChanges(ctx, &storeLeaseholderMsg, mmaprototype.ChangeOptions{
 				LocalStoreID: roachpb.StoreID(msr.localStoreID),

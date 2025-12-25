@@ -214,6 +214,7 @@ func (s *Simulator) addStore(storeID state.StoreID, tick time.Time) {
 		storeID,
 		store.NodeID(),
 		s.state.Node(store.NodeID()).MMAllocator(),
+		s.state.Node(store.NodeID()).StorePool(),
 		s.state.Node(store.NodeID()).AllocatorSync(),
 		s.controllers[storeID],
 		s.settings,

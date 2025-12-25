@@ -234,6 +234,9 @@ type Node interface {
 	MMAllocator() mmaprototype.Allocator
 	// AllocatorSync returns the AllocatorSync for this node.
 	AllocatorSync() *mmaintegration.AllocatorSync
+	// StorePool returns the concrete StorePool for this node. This is used by
+	// MMA integration to call the production RefreshStoreStatus.
+	StorePool() *storepool.StorePool
 }
 
 // Store is a container for replicas.

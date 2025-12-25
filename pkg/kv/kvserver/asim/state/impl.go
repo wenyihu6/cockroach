@@ -1543,6 +1543,10 @@ func (n *node) AllocatorSync() *mmaintegration.AllocatorSync {
 	return n.as
 }
 
+func (n *node) StorePool() *storepool.StorePool {
+	return n.storepool
+}
+
 // store is an implementation of the Store interface.
 type store struct {
 	storeID StoreID
