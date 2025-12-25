@@ -7,10 +7,8 @@ package mmaintegration
 
 import (
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mmaintegration"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 )
 
@@ -31,58 +29,74 @@ func RefreshMMAStoreStatus(s state.State, mma mmaprototype.Allocator) {
 		}
 		storeStatus := s.StoreStatus(state.StoreID(storeID))
 		nodeStatus := s.NodeStatus(store.NodeID())
-		spStatus := TranslateAsimStatusToStorePoolStatus(storeStatus.Liveness, nodeStatus)
-		// Reuse the production translation logic.
-		mma.UpdateStoreStatus(storeID, mmaintegration.TranslateStorePoolStatusToMMA(spStatus))
+		mma.UpdateStoreStatus(storeID, TranslateAsimStatusToMMA(storeStatus.Liveness, nodeStatus))
 	}
 }
 
-// TranslateAsimStatusToStorePoolStatus translates asim's store/node status to
-// storepool.StoreStatus. This allows us to reuse the production
-// TranslateStorePoolStatusToMMA logic, ensuring asim behavior matches
-// production as closely as possible.
+// TranslateAsimStatusToMMA translates asim's store/node status to MMA's (health,
+// disposition) model. This translation mirrors the behavior of the production
+// kvserver mmaintegration.TranslateStorePoolStatusToMMA function.
 //
-// The translation table from asim state to StorePool status:
+// The translation table (matches production behavior):
 //
-//	| Asim State                              | StorePool Status        |
-//	|-----------------------------------------|-------------------------|
-//	| Decommissioning                         | StoreStatusDecommissioning |
-//	| Decommissioned                          | StoreStatusDecommissioning |
-//	| Draining                                | StoreStatusDraining     |
-//	| LivenessDead                            | StoreStatusDead         |
-//	| LivenessUnavailable                     | StoreStatusSuspect      |
-//	| LivenessLive (active, not draining)     | StoreStatusAvailable    |
+//	| Asim State                              | MMA Health      | MMA Lease Disp | MMA Replica Disp |
+//	|-----------------------------------------|-----------------|----------------|------------------|
+//	| Decommissioning/Decommissioned          | HealthOK        | Shedding       | Shedding         |
+//	| Draining                                | HealthOK        | Shedding       | Refusing         |
+//	| LivenessDead                            | HealthDead      | Shedding       | Shedding         |
+//	| LivenessUnavailable (suspect)           | HealthUnhealthy | Shedding       | Shedding         |
+//	| LivenessLive (active, not draining)     | HealthOK        | OK             | OK               |
 //
-// Note: asim doesn't simulate throttling, so StoreStatusThrottled is never
-// returned. StoreStatusUnknown is also not used since asim always has
-// explicit liveness state.
-func TranslateAsimStatusToStorePoolStatus(
+// Note: asim doesn't simulate throttling or unknown states, so those production
+// cases are not represented here.
+func TranslateAsimStatusToMMA(
 	storeLiveness state.LivenessState, nodeStatus state.NodeStatus,
-) storepool.StoreStatus {
+) mmaprototype.Status {
 	// Handle membership first - decommissioning/decommissioned takes priority.
-	// Note: In production, decommissioned nodes eventually become dead, but in
-	// asim we treat both as decommissioning to match the StorePool behavior
-	// during the decommissioning process.
+	// Matches production: StoreStatusDecommissioning → HealthOK + Shedding both.
 	switch nodeStatus.Membership {
 	case livenesspb.MembershipStatus_DECOMMISSIONING, livenesspb.MembershipStatus_DECOMMISSIONED:
-		return storepool.StoreStatusDecommissioning
+		return mmaprototype.MakeStatus(
+			mmaprototype.HealthOK,
+			mmaprototype.LeaseDispositionShedding,
+			mmaprototype.ReplicaDispositionShedding,
+		)
 	}
 
-	// Handle draining.
+	// Handle draining - sheds leases but refuses new replicas (keeps existing).
+	// Matches production: StoreStatusDraining → HealthOK + Shedding/Refusing.
 	if nodeStatus.Draining {
-		return storepool.StoreStatusDraining
+		return mmaprototype.MakeStatus(
+			mmaprototype.HealthOK,
+			mmaprototype.LeaseDispositionShedding,
+			mmaprototype.ReplicaDispositionRefusing,
+		)
 	}
 
 	// Handle store liveness.
 	switch storeLiveness {
 	case state.LivenessDead:
-		return storepool.StoreStatusDead
+		// Matches production: StoreStatusDead → HealthDead + Shedding both.
+		return mmaprototype.MakeStatus(
+			mmaprototype.HealthDead,
+			mmaprototype.LeaseDispositionShedding,
+			mmaprototype.ReplicaDispositionShedding,
+		)
 	case state.LivenessUnavailable:
-		// Unavailable maps to Suspect - the store recently failed its liveness
-		// heartbeat but hasn't been down long enough to be considered dead.
-		return storepool.StoreStatusSuspect
+		// Unavailable maps to suspect behavior - recently failed heartbeat.
+		// Matches production: StoreStatusSuspect → HealthUnhealthy + Shedding both.
+		return mmaprototype.MakeStatus(
+			mmaprototype.HealthUnhealthy,
+			mmaprototype.LeaseDispositionShedding,
+			mmaprototype.ReplicaDispositionShedding,
+		)
 	default: // LivenessLive
-		return storepool.StoreStatusAvailable
+		// Matches production: StoreStatusAvailable → HealthOK + OK both.
+		return mmaprototype.MakeStatus(
+			mmaprototype.HealthOK,
+			mmaprototype.LeaseDispositionOK,
+			mmaprototype.ReplicaDispositionOK,
+		)
 	}
 }
 
@@ -97,6 +111,5 @@ func TranslateAsimStatusToMMAForStore(
 	}
 	storeStatus := s.StoreStatus(state.StoreID(storeID))
 	nodeStatus := s.NodeStatus(store.NodeID())
-	spStatus := TranslateAsimStatusToStorePoolStatus(storeStatus.Liveness, nodeStatus)
-	return mmaintegration.TranslateStorePoolStatusToMMA(spStatus), true
+	return TranslateAsimStatusToMMA(storeStatus.Liveness, nodeStatus), true
 }
