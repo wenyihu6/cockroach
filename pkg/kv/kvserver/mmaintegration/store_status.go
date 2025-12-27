@@ -10,7 +10,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/storepool"
-	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
 // RefreshStoreStatus queries StorePool for all stores known to MMA and updates
@@ -26,18 +25,14 @@ import (
 //  3. No wasted updates when no decisions are being made
 //  4. Matches StorePool's pattern of computing status on-demand
 func RefreshStoreStatus(
-	ctx context.Context,
+	_ context.Context,
 	sp *storepool.StorePool,
 	mma mmaprototype.Allocator,
 ) {
-	for storeID := range mma.KnownStores() {
-		spStatus, err := sp.GetStoreStatus(storeID)
-		if err != nil {
-			// Log at a low level - this is expected for stores that are not yet
-			// known to StorePool but are known to MMA.
-			log.VEventf(ctx, 2, "failed to get store status for s%d: %v", storeID, err)
-			continue
-		}
+	// Use batch method to compute shared values (clock, settings) once.
+	// Stores not found in StorePool are silently skipped.
+	statuses := sp.GetStoreStatuses(mma.KnownStores())
+	for storeID, spStatus := range statuses {
 		mma.UpdateStoreStatus(storeID, TranslateStorePoolStatusToMMA(spStatus))
 	}
 }
@@ -117,4 +112,3 @@ func TranslateStorePoolStatusToMMA(spStatus storepool.StoreStatus) mmaprototype.
 		)
 	}
 }
-

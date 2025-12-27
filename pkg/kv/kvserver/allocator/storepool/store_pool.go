@@ -889,6 +889,31 @@ func (sp *StorePool) GetStoreStatus(storeID roachpb.StoreID) (StoreStatus, error
 	return sp.storeStatus(storeID, sp.NodeLivenessFn)
 }
 
+// GetStoreStatuses returns the status of multiple stores in a single call.
+// This is more efficient than calling GetStoreStatus repeatedly because it
+// computes shared values (clock timestamp, settings) only once. Stores not
+// found in the pool are silently skipped.
+func (sp *StorePool) GetStoreStatuses(
+	storeIDs map[roachpb.StoreID]struct{},
+) map[roachpb.StoreID]StoreStatus {
+	// Compute shared values once, rather than per-store.
+	now := sp.clock.Now()
+	timeUntilNodeDead := liveness.TimeUntilNodeDead.Get(&sp.st.SV)
+	timeAfterNodeSuspect := liveness.TimeAfterNodeSuspect.Get(&sp.st.SV)
+	nl := sp.NodeLivenessFn
+
+	result := make(map[roachpb.StoreID]StoreStatus, len(storeIDs))
+	for storeID := range storeIDs {
+		sd, ok := sp.Details.StoreDetails.Load(storeID)
+		if !ok {
+			// Store not found in pool - skip it.
+			continue
+		}
+		result[storeID] = sd.status(now, timeUntilNodeDead, nl, timeAfterNodeSuspect)
+	}
+	return result
+}
+
 // LiveAndDeadReplicas divides the provided repls slice into two slices: the
 // first for live replicas, and the second for dead replicas.
 //
