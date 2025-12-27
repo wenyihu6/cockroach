@@ -46,15 +46,15 @@ func RefreshStoreStatus(
 // disposition) model. This is a pure function that implements the translation
 // table from the design doc:
 //
-//	| StorePool Status    | MMA Health      | MMA Lease Disposition | MMA Replica Disposition |
-//	|---------------------|-----------------|-----------------------|-------------------------|
-//	| Dead                | HealthDead      | Shedding              | Shedding                |
-//	| Unknown             | HealthUnknown   | Refusing              | Refusing                |
-//	| Decommissioning     | HealthOK        | Shedding              | Shedding                |
-//	| Draining            | HealthOK        | Shedding              | Refusing (keep, no add) |
-//	| Throttled           | HealthOK        | OK                    | Refusing (temp)         |
-//	| Suspect             | HealthUnhealthy | Shedding              | Shedding                |
-//	| Available           | HealthOK        | OK                    | OK                      |
+//	| StorePool Status    | MMA Health      | MMA Lease Disposition | MMA Replica Disposition | SMA Behavior Reference                          |
+//	|---------------------|-----------------|-----------------------|-------------------------|-------------------------------------------------|
+//	| Dead                | HealthDead      | Shedding              | Shedding                | Replicas marked dead, triggers replacement      |
+//	| Unknown             | HealthUnknown   | Refusing              | Refusing                | No-op: neither live nor dead (store_pool:934)   |
+//	| Decommissioning     | HealthOK        | Shedding              | Shedding                | Triggers ReplaceDecommissioning (allocator:1120)|
+//	| Draining            | HealthOK        | Shedding              | Refusing (keep, no add) | Lease shed active (store:1874), no replica move |
+//	| Throttled           | HealthOK        | OK                    | Refusing (temp)         | Filtered for replicas only (store_pool:1231)    |
+//	| Suspect             | HealthUnhealthy | Shedding              | Refusing                | Filtered as target (allocator:2481), no removal |
+//	| Available           | HealthOK        | OK                    | OK                      | Normal allocation target                        |
 func TranslateStorePoolStatusToMMA(spStatus storepool.StoreStatus) mmaprototype.Status {
 	switch spStatus {
 	case storepool.StoreStatusDead:
@@ -93,10 +93,14 @@ func TranslateStorePoolStatusToMMA(spStatus storepool.StoreStatus) mmaprototype.
 			mmaprototype.ReplicaDispositionRefusing,
 		)
 	case storepool.StoreStatusSuspect:
+		// Suspect stores were recently unavailable. SMA excludes them as lease
+		// targets (allocator.go:2481, 2881) so we shed leases. For replicas,
+		// SMA just filters them out (store_pool.go:1245) without actively removing,
+		// so we use Refusing (don't add new, but don't actively remove existing).
 		return mmaprototype.MakeStatus(
 			mmaprototype.HealthUnhealthy,
 			mmaprototype.LeaseDispositionShedding,
-			mmaprototype.ReplicaDispositionShedding,
+			mmaprototype.ReplicaDispositionRefusing,
 		)
 	case storepool.StoreStatusAvailable:
 		return mmaprototype.MakeStatus(
