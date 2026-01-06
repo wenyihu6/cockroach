@@ -947,8 +947,10 @@ func (cs *clusterState) computeCandidatesForReplicaTransfer(
 	}
 
 	sheddingSLS = cs.computeLoadSummary(ctx, loadSheddingStore, &effectiveMeans.storeLoad, &effectiveMeans.nodeLoad)
-	if sheddingSLS.sls <= loadNoChange && sheddingSLS.nls <= loadNoChange {
-		// In this set of stores, this store no longer looks overloaded.
+	if sheddingSLS.sls <= loadNoChange {
+		// In this set of stores, this store no longer looks overloaded at the
+		// store level. Even if the node is overloaded (nls > loadNoChange), that's
+		// due to other stores on this node, still skip shedding for this store.
 		passObs.replicaShed(notOverloaded)
 		return candidateSet{}, sheddingSLS
 	}
