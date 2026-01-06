@@ -1,0 +1,120 @@
+# Reproduction test for panic when sls=loadNoChange but nls>loadNoChange.
+#
+# The bug occurs in computeCandidatesForReplicaTransfer when:
+# - After constraint filtering, the shedding store's sls becomes loadNoChange
+# - But the node's nls remains > loadNoChange (e.g., overloadSlow)
+#
+# The check at line 922 uses AND:
+#   if sheddingSLS.sls <= loadNoChange && sheddingSLS.nls <= loadNoChange
+# This passes through when sls=loadNoChange but nls=overloadSlow, then
+# sortTargetCandidateSetAndPick panics because loadThreshold >= loadNoChange.
+#
+# Setup: 4 stores, each on separate nodes. Nodes 1 and 2 have high capacity (2000),
+# nodes 3 and 4 have normal capacity (1000).
+#
+# - N1/S1: 420 CPU, capacity 2000 (high capacity store, "hot" data)
+# - N2/S2: 380 CPU, capacity 2000 (high capacity store)
+# - N3/S3: 100 CPU, capacity 1000 (normal store)
+# - N4/S4: 100 CPU, capacity 1000 (normal store)
+#
+# Global evaluation:
+# - Store mean: (420 + 380 + 100 + 100) / 4 = 250
+# - Node mean: (420 + 380 + 100 + 100) / 4 = 250
+# - S1: 420/250 = 1.68x -> overloaded (added to shedding list)
+# - N1: 420/250 = 1.68x -> overloaded
+#
+# Range r1 has replicas on S1,S3,S4 (3 replicas). We want to move S1's replica.
+# Constraint requires attr=hot (only S1 and S2 have this attribute).
+#
+# After constraint filtering to S1 and S2:
+# - Store mean: (420 + 380) / 2 = 400
+# - Node mean: (420 + 380) / 2 = 400
+# - S1: 420/400 = 1.05x -> 5% above -> loadNoChange
+# - N1 node has different capacity, so node-level calc might differ
+#
+# However with same structure, we need asymmetry between store and node means.
+# Let's make N1 have a second store S5 (co-located) that adds to node load but
+# isn't in the filtered candidate set.
+
+set-store
+  store-id=1 node-id=1 attrs=hot locality-tiers=region=us
+  store-id=5 node-id=1 attrs=cold locality-tiers=region=us
+  store-id=2 node-id=2 attrs=hot locality-tiers=region=us
+  store-id=3 node-id=3 attrs=cold locality-tiers=region=us
+  store-id=4 node-id=4 attrs=cold locality-tiers=region=us
+----
+node-id=1 locality-tiers=region=us,node=1
+  store-id=1 attrs=hot
+  store-id=5 attrs=cold
+node-id=2 locality-tiers=region=us,node=2
+  store-id=2 attrs=hot
+node-id=3 locality-tiers=region=us,node=3
+  store-id=3 attrs=cold
+node-id=4 locality-tiers=region=us,node=4
+  store-id=4 attrs=cold
+
+# N1: S1=420 + S5=500 -> node CPU = 920
+# N2: S2=380 -> node CPU = 380
+# N3: S3=100 -> node CPU = 100
+# N4: S4=100 -> node CPU = 100
+#
+# Global store mean: (420 + 500 + 380 + 100 + 100) / 5 = 300
+# Global node mean: (920 + 380 + 100 + 100) / 4 = 375
+# S1: 420/300 = 1.4x -> overloaded
+# N1: 920/375 = 2.45x -> overloaded
+
+store-load-msg
+  store-id=1 node-id=1 load=[420,0,0] capacity=[1000,1000,1000] secondary-load=0 load-time=0s
+----
+
+store-load-msg
+  store-id=5 node-id=1 load=[500,0,0] capacity=[1000,1000,1000] secondary-load=0 load-time=0s
+----
+
+store-load-msg
+  store-id=2 node-id=2 load=[380,0,0] capacity=[1000,1000,1000] secondary-load=0 load-time=0s
+----
+
+store-load-msg
+  store-id=3 node-id=3 load=[100,0,0] capacity=[1000,1000,1000] secondary-load=0 load-time=0s
+----
+
+store-load-msg
+  store-id=4 node-id=4 load=[100,0,0] capacity=[1000,1000,1000] secondary-load=0 load-time=0s
+----
+
+get-load-info
+----
+store-id=1 node-id=1 status=ok accepting all reported=[cpu:420ns/s, write-bandwidth:0 B/s, byte-size:0 B] adjusted=[cpu:420ns/s, write-bandwidth:0 B/s, byte-size:0 B] node-reported-cpu=920 node-adjusted-cpu=920 seq=1
+store-id=2 node-id=2 status=ok accepting all reported=[cpu:380ns/s, write-bandwidth:0 B/s, byte-size:0 B] adjusted=[cpu:380ns/s, write-bandwidth:0 B/s, byte-size:0 B] node-reported-cpu=380 node-adjusted-cpu=380 seq=1
+store-id=3 node-id=3 status=ok accepting all reported=[cpu:100ns/s, write-bandwidth:0 B/s, byte-size:0 B] adjusted=[cpu:100ns/s, write-bandwidth:0 B/s, byte-size:0 B] node-reported-cpu=100 node-adjusted-cpu=100 seq=1
+store-id=4 node-id=4 status=ok accepting all reported=[cpu:100ns/s, write-bandwidth:0 B/s, byte-size:0 B] adjusted=[cpu:100ns/s, write-bandwidth:0 B/s, byte-size:0 B] node-reported-cpu=100 node-adjusted-cpu=100 seq=1
+store-id=5 node-id=1 status=ok accepting all reported=[cpu:500ns/s, write-bandwidth:0 B/s, byte-size:0 B] adjusted=[cpu:500ns/s, write-bandwidth:0 B/s, byte-size:0 B] node-reported-cpu=920 node-adjusted-cpu=920 seq=1
+
+# Range r1 on S1 (leaseholder), S3, S4 (3 replicas)
+# Constraint requires attr=hot, which only S1 and S2 have.
+# This means for replica transfer, only S2 is a valid target.
+#
+# After filtering to stores with attr=hot (S1 and S2):
+# - Store mean: (420 + 380) / 2 = 400
+# - Node mean: (920 + 380) / 2 = 650 (N1 and N2 are in filtered set)
+# - S1: 420/400 = 1.05x -> 5% above -> loadNoChange
+# - N1: 920/650 = 1.42x -> overloaded
+#
+# Bug: sls=loadNoChange, nls=overloaded -> passes check -> panic
+
+store-leaseholder-msg
+store-id=1
+  range-id=1 load=[100,0,0] raft-cpu=10
+    store-id=1 replica-id=1 type=VOTER_FULL leaseholder=true
+    store-id=3 replica-id=3 type=VOTER_FULL
+    store-id=4 replica-id=4 type=VOTER_FULL
+    config=num_replicas=3 constraints={'+hot':1} voter_constraints={}
+----
+
+# Run rebalance from S1's perspective
+# Set max-lease-transfer-count=0 to skip lease transfers and go directly to replica transfers.
+# This forces us into the computeCandidatesForReplicaTransfer path where the bug exists.
+rebalance-stores store-id=1 max-lease-transfer-count=0
+----
+
