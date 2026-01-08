@@ -489,6 +489,14 @@ func (i ignoreLevel) SafeFormat(s interfaces.SafePrinter, verb rune) {
 // caller should set loadThreshold to overloadSlow and ignoreLevel to
 // ignoreHigherThanLoadThreshold, to maximize the probability of finding a
 // candidate.
+//
+// Note on disk utilization: This function does not explicitly filter candidates
+// based on disk utilization. Candidates are pre-filtered by disposition in
+// retainReadyReplicaTargetStoresOnly (which uses adjusted load to set disposition).
+// If a candidate's adjusted load increases during the pass due to proposed changes,
+// canShedAndAddLoad will catch it when checking post-transfer utilization. We accept
+// this tradeoff (potentially picking a candidate that fails canShedAndAddLoad) since
+// it's just one round and will be corrected in the next rebalancing pass.
 func sortTargetCandidateSetAndPick(
 	ctx context.Context,
 	cands candidateSet,
@@ -498,13 +506,6 @@ func sortTargetCandidateSetAndPick(
 	rng *rand.Rand,
 	maxFractionPendingThreshold float64,
 	failLogger func(shedResult),
-	// checkHighDiskUtil returns true if the store has high disk utilization.
-	// This is used to filter out candidates that are running out of disk space.
-	// NB: For replica transfers, disk utilization is handled via disposition
-	// (ReplicaDispositionRefusing/Shedding) in retainReadyReplicaTargetStoresOnly.
-	// This callback is still needed for lease transfers since disk utilization
-	// only affects replica disposition, not lease disposition.
-	checkHighDiskUtil func(roachpb.StoreID) bool,
 ) roachpb.StoreID {
 	var b strings.Builder
 	var formatCandidatesLog = func(b *strings.Builder, candidates []candidateInfo) redact.SafeString {
@@ -552,12 +553,12 @@ func sortTargetCandidateSetAndPick(
 	})
 	bestDiversity := cands.candidates[0].diversityScore
 	j := 0
-	// Iterate over candidates with the same diversity. First such set that is
-	// not disk capacity constrained is where we stop. Even if they can't accept
-	// because they have too many pending changes or can't handle the addition
-	// of the range. That is, we are not willing to reduce diversity when
-	// rebalancing ranges. When rebalancing leases, the diversityScore of all
-	// the candidates will be 0.
+	// Iterate over candidates with the same diversity. We stop at the first set
+	// of candidates with the same diversity. Even if they can't accept because
+	// they have too many pending changes or can't handle the addition of the
+	// range. That is, we are not willing to reduce diversity when rebalancing
+	// ranges. When rebalancing leases, the diversityScore of all the candidates
+	// will be 0.
 	for i, cand := range cands.candidates {
 		if !diversityScoresAlmostEqual(bestDiversity, cand.diversityScore) {
 			if j == 0 {
@@ -571,21 +572,8 @@ func sortTargetCandidateSetAndPick(
 				break
 			}
 		}
-		// Diversity is the same. Include if not reaching disk capacity.
-		// NB: For replica transfers, this is redundant with disposition filtering
-		// in retainReadyReplicaTargetStoresOnly. For lease transfers, this is
-		// still needed since disk utilization only affects replica disposition.
-		if !checkHighDiskUtil(cand.StoreID) {
-			cands.candidates[j] = cand
-			j++
-		} else {
-			log.KvDistribution.VEventf(ctx, 2, "discarding candidate due to high disk space utilization: %v", cand.StoreID)
-		}
-	}
-	if j == 0 {
-		log.KvDistribution.VEventf(ctx, 2, "sortTargetCandidateSetAndPick: no candidates due to disk space util")
-		failLogger(noCandidateDiskSpaceUtil)
-		return 0
+		cands.candidates[j] = cand
+		j++
 	}
 
 	// Every candidate in [0:j] has same diversity and is sorted by increasing

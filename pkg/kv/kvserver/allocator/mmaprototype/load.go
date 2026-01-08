@@ -666,6 +666,10 @@ func highDiskSpaceUtilization(load LoadValue, capacity LoadValue, threshold floa
 		log.KvDistribution.Errorf(context.Background(), "disk capacity is unknown")
 		return false
 	}
+	if threshold == 0 {
+		// Threshold not set; don't trigger high disk utilization check.
+		return false
+	}
 	fractionUsed := float64(load) / float64(capacity)
 	return fractionUsed >= threshold
 }

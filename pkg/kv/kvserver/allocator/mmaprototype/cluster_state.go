@@ -2218,7 +2218,8 @@ func (cs *clusterState) setStore(sal storeAttributesAndLocalityWithNodeTier) {
 // updateStoreStatuses updates each known store's health and disposition from storeStatuses.
 // Stores unknown in mma yet but are known to store pool are ignored with logging.
 //
-// The disposition is augmented based on disk utilization using the store's reported load:
+// The disposition is augmented based on disk utilization using the store's adjusted load
+// (which includes pending changes to account for in-flight replica additions):
 // - Above shedAndBlockAllThreshold: ReplicaDispositionShedding
 // - Above rebalanceToThreshold: ReplicaDispositionRefusing
 func (cs *clusterState) updateStoreStatuses(
@@ -2239,9 +2240,10 @@ func (cs *clusterState) updateStoreStatuses(
 		}
 
 		// Augment the replica disposition based on disk utilization.
-		// Use the same data that highDiskSpaceUtilization() uses.
+		// We use adjusted load (which includes pending changes) to account for
+		// in-flight replica additions that haven't completed yet.
 		if ss.capacity[ByteSize] != UnknownCapacity && ss.capacity[ByteSize] > 0 {
-			diskUtil := float64(ss.reportedLoad[ByteSize]) / float64(ss.capacity[ByteSize])
+			diskUtil := float64(ss.adjusted.load[ByteSize]) / float64(ss.capacity[ByteSize])
 			switch {
 			case diskUtil >= shedAndBlockAllThreshold:
 				// Above max threshold: shed replicas.
