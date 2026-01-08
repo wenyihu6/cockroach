@@ -206,11 +206,13 @@ func (a *allocatorState) ProcessStoreLoadMsg(ctx context.Context, msg *StoreLoad
 
 // UpdateStoresStatus implements the Allocator interface.
 func (a *allocatorState) UpdateStoresStatuses(
-	ctx context.Context, storeStatuses map[roachpb.StoreID]Status,
+	ctx context.Context,
+	storeStatuses map[roachpb.StoreID]Status,
+	rebalanceToThreshold, shedAndBlockAllThreshold float64,
 ) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.cs.updateStoreStatuses(ctx, storeStatuses)
+	a.cs.updateStoreStatuses(ctx, storeStatuses, rebalanceToThreshold, shedAndBlockAllThreshold)
 }
 
 // AdjustPendingChangeDisposition implements the Allocator interface.
@@ -498,8 +500,10 @@ func sortTargetCandidateSetAndPick(
 	failLogger func(shedResult),
 	// checkHighDiskUtil returns true if the store has high disk utilization.
 	// This is used to filter out candidates that are running out of disk space.
-	// TODO(tbg): remove this check once high disk utilization is handled via
-	// disposition filtering in retainReadyLeaseTargetStoresOnly.
+	// NB: For replica transfers, disk utilization is handled via disposition
+	// (ReplicaDispositionRefusing/Shedding) in retainReadyReplicaTargetStoresOnly.
+	// This callback is still needed for lease transfers since disk utilization
+	// only affects replica disposition, not lease disposition.
 	checkHighDiskUtil func(roachpb.StoreID) bool,
 ) roachpb.StoreID {
 	var b strings.Builder
@@ -568,9 +572,9 @@ func sortTargetCandidateSetAndPick(
 			}
 		}
 		// Diversity is the same. Include if not reaching disk capacity.
-		// TODO(tbg): remove checkHighDiskUtil check here. These candidates
-		// should instead be filtered out by retainReadyLeaseTargetStoresOnly (which
-		// filters down the initial candidate set before computing the mean).
+		// NB: For replica transfers, this is redundant with disposition filtering
+		// in retainReadyReplicaTargetStoresOnly. For lease transfers, this is
+		// still needed since disk utilization only affects replica disposition.
 		if !checkHighDiskUtil(cand.StoreID) {
 			cands.candidates[j] = cand
 			j++
@@ -1024,10 +1028,10 @@ func retainReadyReplicaTargetStoresOnly(
 		case ss.status.Disposition.Replica != ReplicaDispositionOK:
 			log.KvDistribution.VEventf(ctx, 2, "skipping s%d for replica transfer: replica disposition %v (health %v)", storeID, ss.status.Disposition.Replica, ss.status.Health)
 		case highDiskSpaceUtilization(ss.reportedLoad[ByteSize], ss.capacity[ByteSize]):
-			// TODO(tbg): remove this from mma and just let the caller set this
-			// disposition based on the following cluster settings:
-			// - kv.allocator.max_disk_utilization_threshold
-			// - kv.allocator.rebalance_to_max_disk_utilization_threshold
+			// NB: The caller should set ReplicaDispositionRefusing/Shedding based on
+			// disk utilization via translateStorePoolStatusToMMAWithDiskUtil. This
+			// check serves as a safety net in case the disposition hasn't been
+			// updated yet (due to timing differences between status and load messages).
 			log.KvDistribution.VEventf(ctx, 2, "skipping s%d for replica transfer: high disk utilization (health %v)", storeID, ss.status.Health)
 		default:
 			out = append(out, storeID)

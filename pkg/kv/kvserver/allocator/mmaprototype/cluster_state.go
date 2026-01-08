@@ -2212,18 +2212,48 @@ func (cs *clusterState) setStore(sal storeAttributesAndLocalityWithNodeTier) {
 
 // updateStoreStatuses updates each known store's health and disposition from storeStatuses.
 // Stores unknown in mma yet but are known to store pool are ignored with logging.
+//
+// The disposition is augmented based on disk utilization using the store's reported load:
+// - Above shedAndBlockAllThreshold: ReplicaDispositionShedding
+// - Above rebalanceToThreshold: ReplicaDispositionRefusing
 func (cs *clusterState) updateStoreStatuses(
-	ctx context.Context, storeStatuses map[roachpb.StoreID]Status,
+	ctx context.Context,
+	storeStatuses map[roachpb.StoreID]Status,
+	rebalanceToThreshold, shedAndBlockAllThreshold float64,
 ) {
 	for storeID, storeStatus := range storeStatuses {
-		if _, ok := cs.stores[storeID]; !ok {
+		ss, ok := cs.stores[storeID]
+		if !ok {
 			// Store not known to mma yet but is known to store pool - ignore the update. The store will be added via
 			// setStore when gossip arrives, and then subsequent status updates will
 			// take effect.
 			log.KvDistribution.Infof(ctx, "store %d not found in cluster state, skipping update", storeID)
 			continue
 		}
-		cs.stores[storeID].status = storeStatus
+
+		// Augment the replica disposition based on disk utilization.
+		// Use the same data that highDiskSpaceUtilization() uses.
+		if ss.capacity[ByteSize] != UnknownCapacity && ss.capacity[ByteSize] > 0 {
+			diskUtil := float64(ss.reportedLoad[ByteSize]) / float64(ss.capacity[ByteSize])
+			switch {
+			case diskUtil >= shedAndBlockAllThreshold:
+				// Above max threshold: shed replicas.
+				if storeStatus.Disposition.Replica < ReplicaDispositionShedding {
+					storeStatus.Disposition.Replica = ReplicaDispositionShedding
+					log.KvDistribution.VEventf(ctx, 2, "store %d: upgrading replica disposition to Shedding due to high disk utilization (%.1f%% >= %.1f%%)",
+						storeID, diskUtil*100, shedAndBlockAllThreshold*100)
+				}
+			case diskUtil >= rebalanceToThreshold:
+				// Above rebalance threshold: refuse new replicas.
+				if storeStatus.Disposition.Replica < ReplicaDispositionRefusing {
+					storeStatus.Disposition.Replica = ReplicaDispositionRefusing
+					log.KvDistribution.VEventf(ctx, 2, "store %d: upgrading replica disposition to Refusing due to disk utilization (%.1f%% >= %.1f%%)",
+						storeID, diskUtil*100, rebalanceToThreshold*100)
+				}
+			}
+		}
+
+		ss.status = storeStatus
 	}
 }
 

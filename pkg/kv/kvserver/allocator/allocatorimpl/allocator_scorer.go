@@ -49,7 +49,7 @@ const (
 
 	// defaultMaxDiskUtilizationThreshold is the default maximum threshold for
 	// disk utilization. The value is used as the default in the cluster setting
-	// maxDiskUtilizationThreshold.
+	// MaxDiskUtilizationThreshold.
 	defaultMaxDiskUtilizationThreshold = 0.95
 
 	// defaultMaxDiskUtilizationThreshold is the default maximum threshold for a
@@ -249,11 +249,11 @@ var DiskUnhealthyIOOverloadScore = settings.RegisterFloatSetting(
 	"the IO overload score to assign to a store when its disk is unhealthy",
 	DefaultLeaseIOOverloadShedThreshold)
 
-// maxDiskUtilizationThreshold controls the point at which the store cedes
+// MaxDiskUtilizationThreshold controls the point at which the store cedes
 // having room for new replicas. If the fraction used of a store descriptor
 // capacity is greater than this value, it will never be used as a rebalance or
 // allocate target and we will actively try to move replicas off of it.
-var maxDiskUtilizationThreshold = settings.RegisterFloatSetting(
+var MaxDiskUtilizationThreshold = settings.RegisterFloatSetting(
 	settings.SystemOnly,
 	"kv.allocator.max_disk_utilization_threshold",
 	"maximum disk utilization before a store will never be used as a rebalance "+
@@ -264,14 +264,14 @@ var maxDiskUtilizationThreshold = settings.RegisterFloatSetting(
 	settings.FloatInRange(0, 0.99),
 )
 
-// rebalanceToMaxDiskUtilizationThreshold: if the fraction used of a store
+// RebalanceToMaxDiskUtilizationThreshold: if the fraction used of a store
 // descriptor capacity is greater than this value, it will never be used as a
 // rebalance target. This is important for providing a buffer between fully
 // healthy stores and full stores (as determined by
 // allocator.MaxFractionUsedThreshold).  Without such a buffer, replicas could
 // hypothetically ping pong back and forth between two nodes, making one full
 // and then the other.
-var rebalanceToMaxDiskUtilizationThreshold = settings.RegisterFloatSetting(
+var RebalanceToMaxDiskUtilizationThreshold = settings.RegisterFloatSetting(
 	settings.SystemOnly,
 	"kv.allocator.rebalance_to_max_disk_utilization_threshold",
 	"maximum disk utilization before a store will never be used as a rebalance "+
@@ -756,14 +756,16 @@ type DiskCapacityOptions struct {
 	ShedAndBlockAllThreshold float64
 }
 
-func makeDiskCapacityOptions(sv *settings.Values) DiskCapacityOptions {
+// MakeDiskCapacityOptions returns disk capacity options based on cluster settings.
+func MakeDiskCapacityOptions(sv *settings.Values) DiskCapacityOptions {
 	return DiskCapacityOptions{
-		RebalanceToThreshold:     rebalanceToMaxDiskUtilizationThreshold.Get(sv),
-		ShedAndBlockAllThreshold: maxDiskUtilizationThreshold.Get(sv),
+		RebalanceToThreshold:     RebalanceToMaxDiskUtilizationThreshold.Get(sv),
+		ShedAndBlockAllThreshold: MaxDiskUtilizationThreshold.Get(sv),
 	}
 }
 
-func defaultDiskCapacityOptions() DiskCapacityOptions {
+// DefaultDiskCapacityOptions returns disk capacity options with default thresholds.
+func DefaultDiskCapacityOptions() DiskCapacityOptions {
 	return DiskCapacityOptions{
 		RebalanceToThreshold:     defaultRebalanceToMaxDiskUtilizationThreshold,
 		ShedAndBlockAllThreshold: defaultMaxDiskUtilizationThreshold,

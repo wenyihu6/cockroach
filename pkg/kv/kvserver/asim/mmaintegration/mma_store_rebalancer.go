@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/allocatorimpl"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/op"
@@ -156,7 +157,8 @@ func (msr *MMAStoreRebalancer) Tick(ctx context.Context, tick time.Time, s state
 			// This uses the real production RefreshStoreStatus, which queries
 			// StorePool (backed by StatusTracker via NodeLivenessFn) and
 			// translates to MMA's status model.
-			msr.allocator.UpdateStoresStatuses(ctx, msr.as.GetMMAStoreStatuses())
+			diskOpts := allocatorimpl.MakeDiskCapacityOptions(&msr.settings.ST.SV)
+			msr.allocator.UpdateStoresStatuses(ctx, msr.as.GetMMAStoreStatuses(), diskOpts.RebalanceToThreshold, diskOpts.ShedAndBlockAllThreshold)
 			storeLeaseholderMsg := MakeStoreLeaseholderMsgFromState(s, msr.localStoreID)
 			pendingChanges := msr.allocator.ComputeChanges(ctx, &storeLeaseholderMsg, mmaprototype.ChangeOptions{
 				LocalStoreID: roachpb.StoreID(msr.localStoreID),
