@@ -1,0 +1,80 @@
+# This test verifies that MMA correctly filters out high disk utilization stores
+# as rebalance targets, even when MMA has load-based motivation to use them.
+#
+# Key insight: We create a scenario where MMA WANTS to move replicas to s4/s5
+# due to CPU load imbalance, but s4/s5 have high disk utilization (93%) which
+# gives them ReplicaDispositionRefusing. This should prevent MMA from sending
+# replicas there despite the load imbalance.
+#
+# Setup:
+# - 5-node cluster, 10GiB stores
+# - All replicas start on s1, s2, s3 with s1 as leaseholder (high CPU load on s1)
+# - s4 and s5 start empty (no replicas) but have 93% disk utilization
+# - CPU-heavy workload causes s1 to be overloaded
+#
+# Expected behavior:
+# - MMA wants to balance CPU by moving replicas/leases away from s1
+# - s4/s5 appear attractive (no load) but have disposition = Refusing
+# - MMA should NOT move replicas to s4/s5 despite the load imbalance
+# - Replicas should only move between s1, s2, s3 (all have OK disposition)
+gen_cluster nodes=5 store_byte_capacity_gib=10
+----
+
+setting split_queue_enabled=false
+----
+
+setting replicate_queue_enabled=false
+----
+
+# All 20 ranges start on s1, s2, s3 with s1 as leaseholder.
+# s4 and s5 have no replicas initially.
+gen_ranges ranges=20 repl_factor=3 placement_type=replica_placement
+{s1:*,s2,s3}:20
+----
+{s1:*,s2,s3}:20
+
+# Store 4: 93% disk utilization (above 92.5% refuse threshold)
+# Should refuse new replicas despite having no load
+set_capacity store=4 capacity=10737418240 available=752414918
+----
+
+# Store 5: 93% disk utilization (above 92.5% refuse threshold)
+# Should refuse new replicas despite having no load
+set_capacity store=5 capacity=10737418240 available=752414918
+----
+
+# CPU-heavy workload: s1 (leaseholder) gets high CPU load.
+# This creates motivation for MMA to move leases/replicas to balance CPU.
+# Without disk utilization filtering, MMA would want to use s4/s5 (no load).
+gen_load rate=5000 rw_ratio=1.0 min_block=1 max_block=1 cpu_per_access=10000
+----
+0.05 vcpus
+
+# s4 and s5 should have 0 replicas despite MMA's desire to balance load there.
+# This proves the disk utilization-based ReplicaDispositionRefusing works.
+assertion type=stat stat=replicas stores=(4) exact_bound=0 ticks=6
+----
+
+assertion type=stat stat=replicas stores=(5) exact_bound=0 ticks=6
+----
+
+# Verify MMA does NOT move replicas to s4/s5 despite load imbalance.
+# Even though s4/s5 have zero load and would help balance CPU,
+# their high disk utilization (93%) means disposition = Refusing.
+# Results should show s4=0 and s5=0 replicas throughout.
+eval duration=6m seed=42 metrics=(disk_fraction_used,replicas,leases,cpu) cfgs=(mma-only)
+----
+cpu#1: first: [s1=0.00, s2=0.00, s3=0.00, s4=0.00, s5=0.00] (stddev=0.00, mean=0.00, sum=0)
+cpu#1: last:  [s1=0.05, s2=0.00, s3=0.00, s4=0.00, s5=0.00] (stddev=0.02, mean=0.01, sum=0)
+cpu#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=0%)
+disk_fraction_used#1: first: [s1=0.00, s2=0.00, s3=0.00, s4=0.93, s5=0.93] (stddev=0.44, mean=0.37, sum=2)
+disk_fraction_used#1: last:  [s1=0.00, s2=0.00, s3=0.00, s4=0.93, s5=0.93] (stddev=0.44, mean=0.37, sum=2)
+disk_fraction_used#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=0%)
+leases#1: first: [s1=20, s2=0, s3=0, s4=0, s5=0] (stddev=8.00, mean=4.00, sum=20)
+leases#1: last:  [s1=20, s2=0, s3=0, s4=0, s5=0] (stddev=8.00, mean=4.00, sum=20)
+leases#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=0%)
+replicas#1: first: [s1=20, s2=20, s3=20, s4=0, s5=0] (stddev=9.80, mean=12.00, sum=60)
+replicas#1: last:  [s1=20, s2=20, s3=20, s4=0, s5=0] (stddev=9.80, mean=12.00, sum=60)
+replicas#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=0%)
+artifacts[mma-only]: placeholder
+==========================

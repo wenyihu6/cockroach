@@ -1,0 +1,71 @@
+# This test verifies that MMA correctly upgrades store disposition based on
+# disk utilization thresholds, independent of load balancing (CPU/write bandwidth).
+#
+# Key insight: There is NO workload in this test. CPU and write bandwidth are
+# perfectly balanced (all zeros). MMA's only motivation to move replicas is the
+# disk utilization-based disposition upgrade in updateStoreStatuses:
+# - Stores above kv.allocator.max_disk_utilization_threshold (0.95)
+#   get ReplicaDispositionShedding (actively shed replicas)
+# - Stores above kv.allocator.rebalance_to_max_disk_utilization_threshold (0.925)
+#   get ReplicaDispositionRefusing (won't accept new replicas)
+#
+# Setup: 5-node cluster with 10GiB stores. Initially ranges are evenly placed.
+# At t=0, we set s1's capacity to simulate 96% disk usage (above shed threshold)
+# and s2's capacity to simulate 93% disk usage (above refuse threshold).
+#
+# Expected behavior (driven purely by disposition, not load balancing):
+# - s1 (96%): Should actively shed replicas (disposition = Shedding)
+# - s2 (93%): Should not accept new replicas (disposition = Refusing), stays at 9
+# - s3, s4, s5: Should receive replicas from s1 (disposition = OK)
+gen_cluster nodes=5 store_byte_capacity_gib=10
+----
+
+setting split_queue_enabled=false
+----
+
+setting replicate_queue_enabled=false
+----
+
+# 15 ranges with 3 replicas each, evenly distributed = 9 replicas per store
+# NOTE: No gen_load command - CPU and write bandwidth are all zeros/balanced.
+# Any replica movement is purely due to disk utilization disposition.
+gen_ranges ranges=15 bytes_mib=100 repl_factor=3 placement_type=even
+----
+
+# Store 1: 96% disk utilization (above 95% shed threshold)
+# Total capacity = 10GiB, used = 9.6GiB, available = 0.4GiB
+# 9.6 GiB = 10,307,921,510 bytes, available = 429,496,729 bytes
+set_capacity store=1 capacity=10737418240 available=429496729
+----
+
+# Store 2: 93% disk utilization (above 92.5% refuse threshold, below 95% shed)
+# Total capacity = 10GiB, used = 9.3GiB, available = 0.7GiB
+# 9.3 GiB = 9,985,003,322 bytes, available = 752,414,918 bytes
+set_capacity store=2 capacity=10737418240 available=752414918
+----
+
+# s1 (96% full) should shed replicas - expect fewer than initial 9
+# s2 (93% full) should refuse new replicas but NOT shed (stays at 9)
+# s3, s4, s5 should gain replicas from s1
+assertion type=stat stat=replicas stores=(1) upper_bound=6 ticks=6
+----
+
+# Verify MMA sheds replicas from s1 based purely on disk utilization disposition.
+# With no workload, CPU and write bandwidth are balanced - only disk util drives movement.
+# Results show:
+# - s1 (96%): 9 → 6 replicas (shedding due to disposition)
+# - s2 (93%): stays at 9 (refuses new replicas, doesn't receive from s1)
+# - s3/s4/s5 (9%): 9 → 10 each (receive replicas from s1)
+eval duration=6m seed=42 metrics=(disk_fraction_used,replicas,leases) cfgs=(mma-only)
+----
+disk_fraction_used#1: first: [s1=0.96, s2=0.93, s3=0.09, s4=0.09, s5=0.09] (stddev=0.39, mean=0.45, sum=2)
+disk_fraction_used#1: last:  [s1=0.93, s2=0.93, s3=0.12, s4=0.12, s5=0.12] (stddev=0.38, mean=0.44, sum=2)
+disk_fraction_used#1: thrash_pct: [s1=11%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=11%)
+leases#1: first: [s1=3, s2=3, s3=3, s4=3, s5=3] (stddev=0.00, mean=3.00, sum=15)
+leases#1: last:  [s1=2, s2=3, s3=3, s4=3, s5=4] (stddev=0.63, mean=3.00, sum=15)
+leases#1: thrash_pct: [s1=0%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=0%)
+replicas#1: first: [s1=9, s2=9, s3=9, s4=9, s5=9] (stddev=0.00, mean=9.00, sum=45)
+replicas#1: last:  [s1=6, s2=9, s3=10, s4=10, s5=10] (stddev=1.55, mean=9.00, sum=45)
+replicas#1: thrash_pct: [s1=11%, s2=0%, s3=0%, s4=0%, s5=0%]  (sum=11%)
+artifacts[mma-only]: placeholder
+==========================
