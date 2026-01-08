@@ -589,7 +589,7 @@ func (re *rebalanceEnv) rebalanceReplicas(
 			re.fractionPendingIncreaseOrDecreaseThreshold, re.passObs.replicaShed,
 			func(storeID roachpb.StoreID) bool {
 				ss := re.stores[storeID]
-				return highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize])
+				return highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize], re.rebalanceToThreshold)
 			})
 		if targetStoreID == 0 {
 			log.KvDistribution.VEventf(ctx, 2, "result(failed): no suitable target found among candidates for r%d "+
@@ -810,7 +810,7 @@ func (re *rebalanceEnv) rebalanceLeasesFromLocalStoreID(
 			re.fractionPendingIncreaseOrDecreaseThreshold, re.passObs.leaseShed,
 			func(storeID roachpb.StoreID) bool {
 				ss := re.stores[storeID]
-				return highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize])
+				return highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize], re.rebalanceToThreshold)
 			})
 		if targetStoreID == 0 {
 			log.KvDistribution.Infof(

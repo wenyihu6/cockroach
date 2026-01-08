@@ -992,13 +992,13 @@ func (cs *clusterState) computeCandidatesForReplicaTransfer(
 
 // retainReadyReplicaTargetStoresOnly filters the input set to only those stores
 // that are ready to accept a replica. A store is not ready if it has a non-OK
-// replica disposition. In practice, the input set is already filtered by
-// constraints.
+// replica disposition (which includes high disk utilization - the disposition
+// is set based on disk utilization thresholds in updateStoreStatuses).
 //
 // Stores already housing a replica (on top of being in the input storeSet)
-// bypass this disposition check since they already have the replica - its load
-// should be in the mean regardless of its disposition, as we'll pick candidates
-// based on improving clustering around the mean.
+// bypass this check since they already have the replica - its load should be in
+// the mean regardless of its disposition, as we'll pick candidates based on
+// improving clustering around the mean.
 //
 // The input storeSet is mutated (and returned as the result).
 func retainReadyReplicaTargetStoresOnly(
@@ -1024,16 +1024,9 @@ func retainReadyReplicaTargetStoresOnly(
 			continue
 		}
 		ss := stores[storeID]
-		switch {
-		case ss.status.Disposition.Replica != ReplicaDispositionOK:
+		if ss.status.Disposition.Replica != ReplicaDispositionOK {
 			log.KvDistribution.VEventf(ctx, 2, "skipping s%d for replica transfer: replica disposition %v (health %v)", storeID, ss.status.Disposition.Replica, ss.status.Health)
-		case highDiskSpaceUtilization(ss.reportedLoad[ByteSize], ss.capacity[ByteSize]):
-			// NB: The caller should set ReplicaDispositionRefusing/Shedding based on
-			// disk utilization via translateStorePoolStatusToMMAWithDiskUtil. This
-			// check serves as a safety net in case the disposition hasn't been
-			// updated yet (due to timing differences between status and load messages).
-			log.KvDistribution.VEventf(ctx, 2, "skipping s%d for replica transfer: high disk utilization (health %v)", storeID, ss.status.Health)
-		default:
+		} else {
 			out = append(out, storeID)
 		}
 	}

@@ -1292,6 +1292,11 @@ type clusterState struct {
 	meansMemo *meansMemo
 
 	mmaid int // a counter for rebalanceStores calls, for logging
+
+	// rebalanceToThreshold is the disk utilization threshold above which a store
+	// should not be used as a rebalance target. This is set by updateStoreStatuses
+	// and used by highDiskSpaceUtilization checks.
+	rebalanceToThreshold float64
 }
 
 func newClusterState(ts timeutil.TimeSource, interner *stringInterner) *clusterState {
@@ -1669,7 +1674,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		} else {
 			topk.dim = WriteBandwidth
 		}
-		if highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize]) {
+		if highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize], cs.rebalanceToThreshold) {
 			// If disk space is running out, shedding bytes becomes the top priority.
 			topk.dim = ByteSize
 		} else if sls.sls > loadNoChange {
@@ -2221,6 +2226,8 @@ func (cs *clusterState) updateStoreStatuses(
 	storeStatuses map[roachpb.StoreID]Status,
 	rebalanceToThreshold, shedAndBlockAllThreshold float64,
 ) {
+	// Store the rebalance threshold for use by highDiskSpaceUtilization checks.
+	cs.rebalanceToThreshold = rebalanceToThreshold
 	for storeID, storeStatus := range storeStatuses {
 		ss, ok := cs.stores[storeID]
 		if !ok {
@@ -2375,7 +2382,7 @@ func (cs *clusterState) canShedAndAddLoad(
 	// Check if the target would have high disk utilization after the transfer.
 	// We compute this using the post-transfer load (current + delta).
 	postTransferByteSize := targetSS.adjusted.load[ByteSize] + deltaToAdd[ByteSize]
-	if highDiskSpaceUtilization(postTransferByteSize, targetSS.capacity[ByteSize]) {
+	if highDiskSpaceUtilization(postTransferByteSize, targetSS.capacity[ByteSize], cs.rebalanceToThreshold) {
 		if populateFailureReason {
 			failureReason.WriteString("highDiskSpaceUtilization (post-transfer)")
 		}

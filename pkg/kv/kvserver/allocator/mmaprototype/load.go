@@ -661,13 +661,13 @@ func loadSummaryForDimension(
 	return min(summaryUpperBound, summ)
 }
 
-func highDiskSpaceUtilization(load LoadValue, capacity LoadValue) bool {
+func highDiskSpaceUtilization(load LoadValue, capacity LoadValue, threshold float64) bool {
 	if capacity == UnknownCapacity {
 		log.KvDistribution.Errorf(context.Background(), "disk capacity is unknown")
 		return false
 	}
 	fractionUsed := float64(load) / float64(capacity)
-	return fractionUsed > 0.9
+	return fractionUsed >= threshold
 }
 
 const loadMultiplierForAddition = 1.1
