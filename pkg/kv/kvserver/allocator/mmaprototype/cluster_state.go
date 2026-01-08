@@ -1669,7 +1669,7 @@ func (cs *clusterState) processStoreLeaseholderMsgInternal(
 		} else {
 			topk.dim = WriteBandwidth
 		}
-		if sls.highDiskSpaceUtilization {
+		if highDiskSpaceUtilization(ss.adjusted.load[ByteSize], ss.capacity[ByteSize]) {
 			// If disk space is running out, shedding bytes becomes the top priority.
 			topk.dim = ByteSize
 		} else if sls.sls > loadNoChange {
@@ -2342,9 +2342,12 @@ func (cs *clusterState) canShedAndAddLoad(
 			log.KvDistribution.VEventf(ctx, 2, "[target_sls:%v,src_sls:%v]", targetSLS, srcSLS)
 		}
 	}()
-	if targetSLS.highDiskSpaceUtilization {
+	// Check if the target would have high disk utilization after the transfer.
+	// We compute this using the post-transfer load (current + delta).
+	postTransferByteSize := targetSS.adjusted.load[ByteSize] + deltaToAdd[ByteSize]
+	if highDiskSpaceUtilization(postTransferByteSize, targetSS.capacity[ByteSize]) {
 		if populateFailureReason {
-			failureReason.WriteString("targetSLS.highDiskSpaceUtilization")
+			failureReason.WriteString("highDiskSpaceUtilization (post-transfer)")
 		}
 		return false
 	}
@@ -2542,7 +2545,6 @@ func computeLoadSummary(
 	ctx context.Context, ss *storeState, ns *nodeState, msl *meanStoreLoad, mnl *meanNodeLoad,
 ) storeLoadSummary {
 	sls := loadLow
-	var highDiskSpaceUtil bool
 	var dimSummary [NumLoadDimensions]loadSummary
 	var worstDim LoadDimension
 	for i := range msl.load {
@@ -2553,19 +2555,13 @@ func computeLoadSummary(
 			worstDim = LoadDimension(i)
 		}
 		dimSummary[i] = ls
-		switch LoadDimension(i) {
-		case ByteSize:
-			highDiskSpaceUtil = highDiskSpaceUtilization(ss.adjusted.load[i], ss.capacity[i])
-		}
 	}
 	nls := loadSummaryForDimension(ctx, storeIDForLogging, ns.NodeID, CPURate, ns.adjustedCPU, ns.CapacityCPU, mnl.loadCPU, mnl.utilCPU)
 	return storeLoadSummary{
-		worstDim:   worstDim,
-		sls:        sls,
-		nls:        nls,
-		dimSummary: dimSummary,
-		// TODO(tbg): remove highDiskSpaceUtilization.
-		highDiskSpaceUtilization:   highDiskSpaceUtil,
+		worstDim:                   worstDim,
+		sls:                        sls,
+		nls:                        nls,
+		dimSummary:                 dimSummary,
 		maxFractionPendingIncrease: ss.maxFractionPendingIncrease,
 		maxFractionPendingDecrease: ss.maxFractionPendingDecrease,
 		loadSeqNum:                 ss.loadSeqNum,

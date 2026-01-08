@@ -496,6 +496,11 @@ func sortTargetCandidateSetAndPick(
 	rng *rand.Rand,
 	maxFractionPendingThreshold float64,
 	failLogger func(shedResult),
+	// checkHighDiskUtil returns true if the store has high disk utilization.
+	// This is used to filter out candidates that are running out of disk space.
+	// TODO(tbg): remove this check once high disk utilization is handled via
+	// disposition filtering in retainReadyLeaseTargetStoresOnly.
+	checkHighDiskUtil func(roachpb.StoreID) bool,
 ) roachpb.StoreID {
 	var b strings.Builder
 	var formatCandidatesLog = func(b *strings.Builder, candidates []candidateInfo) redact.SafeString {
@@ -563,10 +568,10 @@ func sortTargetCandidateSetAndPick(
 			}
 		}
 		// Diversity is the same. Include if not reaching disk capacity.
-		// TODO(tbg): remove highDiskSpaceUtilization check here. These candidates
+		// TODO(tbg): remove checkHighDiskUtil check here. These candidates
 		// should instead be filtered out by retainReadyLeaseTargetStoresOnly (which
 		// filters down the initial candidate set before computing the mean).
-		if !cand.highDiskSpaceUtilization {
+		if !checkHighDiskUtil(cand.StoreID) {
 			cands.candidates[j] = cand
 			j++
 		} else {
