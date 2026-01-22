@@ -7,6 +7,7 @@ package log
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/cockroachdb/cockroach/pkg/util/log/channel"
@@ -118,6 +119,8 @@ func vEventf(
 	args ...interface{},
 ) {
 	if VDepth(level, 1+depth) {
+		// Add level prefix for debugging verbose logs
+		format = fmt.Sprintf("[V%d] %s", level, format)
 		// Log the message (which also logs an event).
 		sev := severity.INFO
 		if isErr {
@@ -125,6 +128,8 @@ func vEventf(
 		}
 		logfDepth(ctx, 1+depth, sev, ch, format, args...)
 	} else if sp := getSpan(ctx); sp != nil {
+		// Add level prefix for debugging verbose logs
+		format = fmt.Sprintf("[V%d] %s", level, format)
 		entry := makeUnstructuredEntry(ctx,
 			severity.INFO, /* unused for trace events */
 			channel.DEV,   /* unused for trace events */
