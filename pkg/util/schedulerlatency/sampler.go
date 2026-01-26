@@ -86,7 +86,10 @@ func StartSampler(
 				(100 * time.Millisecond).Seconds(), // max
 			)
 
-			schedulerLatencyHistogram := newRuntimeHistogram(schedulerLatency, cpuSchedulerLatencyBuckets)
+			// Use 6x the stats interval as the histogram window duration, matching
+			// DefaultHistogramWindowInterval() used by other CRDB histograms.
+			histogramWindowDuration := 6 * statsInterval
+			schedulerLatencyHistogram := newRuntimeHistogram(schedulerLatency, cpuSchedulerLatencyBuckets, histogramWindowDuration)
 			registry.AddMetric(schedulerLatencyHistogram)
 
 			ticker := time.NewTicker(statsInterval) // compute periodic stats
