@@ -69,7 +69,8 @@ buckets:
   upper-bound=40.00 cumulative-count=10
   upper-bound=50.00 cumulative-count=10
 
-# Since it's a batch histogram, updating it again resets all counts.
+# Updates are now cumulative (fixed #161605). The delta counts are added to the
+# existing cumulative counts.
 update
 bucket=[0,1) count=0
 bucket=[1,2) count=0
@@ -81,20 +82,23 @@ bucket=[10,15) count=2
 bucket=[15,20) count=1
 ----
 
-# Observe how the count reflects the cumulative value, while sum is an
-# underestimate, computing using start of bucket boundaries: 2*10 + 1*15.
+# Observe how the count reflects the cumulative value (10 + 3 = 13), while sum
+# is an underestimate, computing using start of bucket boundaries:
+# Previous: 9*3 + 1*10 = 37
+# Delta: 2*10 + 1*15 = 35
+# Total: 37 + 35 = 72
 print
 ----
-count=3 sum=35.00
+count=13 sum=72.00
 buckets:
   upper-bound=1.00 cumulative-count=0
   upper-bound=2.00 cumulative-count=0
   upper-bound=3.00 cumulative-count=0
-  upper-bound=4.00 cumulative-count=0
-  upper-bound=5.00 cumulative-count=0
-  upper-bound=10.00 cumulative-count=0
-  upper-bound=15.00 cumulative-count=2
-  upper-bound=20.00 cumulative-count=3
-  upper-bound=30.00 cumulative-count=3
-  upper-bound=40.00 cumulative-count=3
-  upper-bound=50.00 cumulative-count=3
+  upper-bound=4.00 cumulative-count=9
+  upper-bound=5.00 cumulative-count=9
+  upper-bound=10.00 cumulative-count=9
+  upper-bound=15.00 cumulative-count=12
+  upper-bound=20.00 cumulative-count=13
+  upper-bound=30.00 cumulative-count=13
+  upper-bound=40.00 cumulative-count=13
+  upper-bound=50.00 cumulative-count=13
