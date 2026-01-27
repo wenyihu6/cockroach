@@ -85,7 +85,13 @@ func StartSampler(
 				(100 * time.Millisecond).Seconds(), // max
 			)
 
-			schedulerLatencyHistogram := newRuntimeHistogram(schedulerLatency, cpuSchedulerLatencyBuckets)
+			// Use a standard CRDB histogram which properly handles both cumulative
+			// data (for Prometheus export) and windowed data (for TSDB percentiles).
+			// The window duration is set to 2x statsInterval to ensure we always have
+			// at least one full window of data available.
+			schedulerLatencyHistogram := newSchedulerLatencyHistogram(
+				schedulerLatency, cpuSchedulerLatencyBuckets, 2*statsInterval,
+			)
 			registry.AddMetric(schedulerLatencyHistogram)
 
 			ticker := time.NewTicker(statsInterval) // compute periodic stats
@@ -101,7 +107,13 @@ func StartSampler(
 					if schedulingLatenciesHistogram == nil {
 						continue
 					}
-					schedulerLatencyHistogram.update(schedulingLatenciesHistogram)
+					// Record the delta histogram into the CRDB histogram by calling
+					// RecordValue for each observation. This correctly populates both
+					// the cumulative histogram (for Prometheus) and the windowed
+					// histogram (for TSDB percentile calculations).
+					recordRuntimeHistogramDelta(
+						schedulerLatencyHistogram, schedulingLatenciesHistogram, cpuSchedulerLatencyBuckets,
+					)
 				}
 			}
 		})

@@ -55,61 +55,55 @@ func TestHistogramBuckets(t *testing.T) {
 	)
 }
 
-// TestRuntimeHistogram is a datadriven test for the runtimeHistogram type. It
-// comes with the following commands.
-//
-//   - "init"
-//     bucket=[<float>,<float>)
-//     bucket=[<float>,<float>)
-//
-//   - "update"
-//     bucket=[<float>,<float>) count=<int>
-//     bucket=[<float>,<float>) count=<int>
-//     ...
-//
-//   - "print"
-//
-// NB: <float> is also allowed to be "-inf" or "+inf".
-func TestRuntimeHistogram(t *testing.T) {
-	var rh *runtimeHistogram
-	datadriven.RunTest(t, datapathutils.TestDataPath(t, "runtime_histogram"),
-		func(t *testing.T, d *datadriven.TestData) string {
-			switch d.Cmd {
-			case "init":
-				buckets := parseBuckets(t, d.Input)
-				rh = newRuntimeHistogram(metric.Metadata{}, buckets)
-				rh.mult = 1.0
-				return ""
+// TestSchedulerLatencyHistogram tests the scheduler latency histogram
+// implementation using the standard metric.Histogram with RecordValue.
+func TestSchedulerLatencyHistogram(t *testing.T) {
+	// Create a histogram with simple buckets for testing.
+	// Note: buckets are in seconds, but the histogram internally converts to nanoseconds.
+	buckets := []float64{0, 1, 2, 3, 4, 5, 10, 15, 20, 30, 40, 50, math.Inf(1)}
 
-			case "update":
-				his := &metrics.Float64Histogram{
-					Counts:  parseCounts(t, d.Input),
-					Buckets: parseBuckets(t, d.Input),
-				}
-				require.True(t, len(his.Buckets) == len(his.Counts)+1)
-				rh.update(his)
-				return ""
+	h := newSchedulerLatencyHistogram(metric.Metadata{
+		Name: "test.scheduler_latency",
+	}, buckets, 20*time.Second)
 
-			case "print":
-				var buf strings.Builder
-				count, sum := rh.CumulativeSnapshot().Total()
-				buf.WriteString(fmt.Sprintf("count=%d sum=%0.2f\n", count, sum))
-				hist := rh.ToPrometheusMetric().GetHistogram()
-				require.NotNil(t, hist)
-				buf.WriteString("buckets:\n")
-				for _, bucket := range hist.Bucket {
-					buf.WriteString(fmt.Sprintf("  upper-bound=%0.2f cumulative-count=%d\n",
-						*bucket.UpperBound,
-						*bucket.CumulativeCount,
-					))
-				}
-				return buf.String()
+	// Verify the histogram starts empty.
+	cumSnapshot := h.CumulativeSnapshot()
+	count, sum := cumSnapshot.Total()
+	require.Equal(t, int64(0), count)
+	require.Equal(t, float64(0), sum)
 
-			default:
-				return fmt.Sprintf("unknown command: %s", d.Cmd)
-			}
-		},
-	)
+	// Simulate a delta histogram from the Go runtime.
+	// This represents observations in the [3, 4) bucket (9 observations)
+	// and [10, 15) bucket (1 observation).
+	delta := &metrics.Float64Histogram{
+		Counts:  []uint64{0, 0, 0, 9, 0, 0, 1, 0, 0, 0, 0, 0},
+		Buckets: buckets,
+	}
+
+	// Record the delta into the histogram.
+	recordRuntimeHistogramDelta(h, delta, buckets)
+
+	// Verify cumulative counts are correct.
+	cumSnapshot = h.CumulativeSnapshot()
+	count, _ = cumSnapshot.Total()
+	require.Equal(t, int64(10), count)
+
+	// Record another delta to verify cumulative behavior.
+	delta2 := &metrics.Float64Histogram{
+		Counts:  []uint64{0, 0, 0, 0, 0, 0, 2, 1, 0, 0, 0, 0},
+		Buckets: buckets,
+	}
+	recordRuntimeHistogramDelta(h, delta2, buckets)
+
+	// Cumulative count should now be 10 + 3 = 13.
+	cumSnapshot = h.CumulativeSnapshot()
+	count, _ = cumSnapshot.Total()
+	require.Equal(t, int64(13), count)
+
+	// Verify windowed snapshot also works.
+	winSnapshot := h.WindowedSnapshot()
+	winCount, _ := winSnapshot.Total()
+	require.True(t, winCount > 0, "windowed snapshot should have data")
 }
 
 // parseBuckets parses out the list of bucket boundaries when the given input is
