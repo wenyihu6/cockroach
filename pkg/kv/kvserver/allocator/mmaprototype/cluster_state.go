@@ -660,6 +660,10 @@ type storeState struct {
 	status Status
 	storeLoad
 	storeAttributesAndLocalityWithNodeTier
+
+	ioOverloadScore    float64
+	ioOverloadScoreMax float64
+
 	adjusted struct {
 		// NB: these load values can become negative due to applying pending
 		// changes. We need to let them be negative to retain the ability to undo
@@ -1315,6 +1319,9 @@ type clusterState struct {
 	// relative to the cluster mean. See highDiskSpaceUtilization usage in
 	// processStoreLoadMsg.
 	diskUtilShedThreshold float64
+	leaseIOOverloadRefuseThreshold   float64
+	leaseIOOverloadShedThreshold     float64
+	replicaIOOverloadRefuseThreshold float64
 }
 
 func newClusterState(ts timeutil.TimeSource, interner *stringInterner) *clusterState {
@@ -1363,6 +1370,9 @@ func (cs *clusterState) processStoreLoadMsg(ctx context.Context, storeMsg *Store
 	ss.storeLoad.reportedLoad = storeMsg.Load
 	ss.storeLoad.capacity = storeMsg.Capacity
 	ss.storeLoad.reportedSecondaryLoad = storeMsg.SecondaryLoad
+
+	ss.ioOverloadScore = storeMsg.IOOverloadScore
+	ss.ioOverloadScoreMax = storeMsg.IOOverloadScoreMax
 
 	// Reset the adjusted load to be the reported load. We will re-apply any
 	// remaining pending change deltas to the updated adjusted load.
@@ -2246,6 +2256,14 @@ func (cs *clusterState) setDiskUtilThresholds(refuseThreshold, shedThreshold flo
 	cs.diskUtilShedThreshold = shedThreshold
 }
 
+func (cs *clusterState) setIOOverloadThresholds(
+	leaseRefuse, leaseShed, replicaRefuse float64,
+) {
+	cs.leaseIOOverloadRefuseThreshold = leaseRefuse
+	cs.leaseIOOverloadShedThreshold = leaseShed
+	cs.replicaIOOverloadRefuseThreshold = replicaRefuse
+}
+
 // updateStoreStatuses updates each known store's health and disposition from storeStatuses.
 // Stores unknown in mma yet but are known to store pool are ignored with logging.
 // The replica disposition is augmented based on disk utilization using thresholds
@@ -2274,6 +2292,25 @@ func (cs *clusterState) updateStoreStatuses(
 			log.KvDistribution.VEventf(ctx, 2, "store %d: upgrading replica disposition to Refusing due to high disk utilization (>= %.1f%%)",
 				storeID, cs.diskUtilRefuseThreshold*100)
 		}
+
+		if cs.leaseIOOverloadShedThreshold > 0 && ss.ioOverloadScoreMax >= cs.leaseIOOverloadShedThreshold {
+			storeStatus.Disposition.Lease = max(storeStatus.Disposition.Lease, LeaseDispositionShedding)
+			log.KvDistribution.VEventf(ctx, 2,
+				"store %d: upgrading lease disposition to Shedding due to IO overload (score %.2f >= %.2f)",
+				storeID, ss.ioOverloadScoreMax, cs.leaseIOOverloadShedThreshold)
+		} else if cs.leaseIOOverloadRefuseThreshold > 0 && ss.ioOverloadScoreMax >= cs.leaseIOOverloadRefuseThreshold {
+			storeStatus.Disposition.Lease = max(storeStatus.Disposition.Lease, LeaseDispositionRefusing)
+			log.KvDistribution.VEventf(ctx, 2,
+				"store %d: upgrading lease disposition to Refusing due to IO overload (score %.2f >= %.2f)",
+				storeID, ss.ioOverloadScoreMax, cs.leaseIOOverloadRefuseThreshold)
+		}
+		if cs.replicaIOOverloadRefuseThreshold > 0 && ss.ioOverloadScoreMax >= cs.replicaIOOverloadRefuseThreshold {
+			storeStatus.Disposition.Replica = max(storeStatus.Disposition.Replica, ReplicaDispositionRefusing)
+			log.KvDistribution.VEventf(ctx, 2,
+				"store %d: upgrading replica disposition to Refusing due to IO overload (score %.2f >= %.2f)",
+				storeID, ss.ioOverloadScoreMax, cs.replicaIOOverloadRefuseThreshold)
+		}
+
 		cs.stores[storeID].status = storeStatus
 	}
 }

@@ -136,12 +136,22 @@ func MakeStoreLoadMsg(
 	// if capacity[mmaprototype.CPURate] == 0 {
 	// 	panic("ouch")
 	// }
+	var ioOverloadScore, ioOverloadScoreMax float64
+	if score, ok := desc.Capacity.IOThreshold.Score(); ok {
+		ioOverloadScore = score
+	}
+	if score, ok := desc.Capacity.IOThresholdMax.Score(); ok {
+		ioOverloadScoreMax = score
+	}
+
 	return mmaprototype.StoreLoadMsg{
-		NodeID:        desc.Node.NodeID,
-		StoreID:       desc.StoreID,
-		Load:          load,
-		Capacity:      capacity,
-		SecondaryLoad: secondaryLoad,
-		LoadTime:      timeutil.FromUnixNanos(origTimestampNanos),
+		NodeID:             desc.Node.NodeID,
+		StoreID:            desc.StoreID,
+		Load:               load,
+		Capacity:           capacity,
+		SecondaryLoad:      secondaryLoad,
+		IOOverloadScore:    ioOverloadScore,
+		IOOverloadScoreMax: ioOverloadScoreMax,
+		LoadTime:           timeutil.FromUnixNanos(origTimestampNanos),
 	}
 }

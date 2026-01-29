@@ -26,6 +26,9 @@ type StoreLoadMsg struct {
 	Capacity      LoadVector
 	SecondaryLoad SecondaryLoadVector
 
+	IOOverloadScore float64
+	IOOverloadScoreMax float64
+
 	LoadTime time.Time
 }
 

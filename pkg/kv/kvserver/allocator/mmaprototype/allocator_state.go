@@ -211,6 +211,14 @@ func (a *allocatorState) SetDiskUtilThresholds(refuseThreshold, shedThreshold fl
 	a.cs.setDiskUtilThresholds(refuseThreshold, shedThreshold)
 }
 
+func (a *allocatorState) SetIOOverloadThresholds(
+	leaseRefuseThreshold, leaseShedThreshold, replicaRefuseThreshold float64,
+) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.cs.setIOOverloadThresholds(leaseRefuseThreshold, leaseShedThreshold, replicaRefuseThreshold)
+}
+
 // UpdateStoresStatuses implements the Allocator interface.
 func (a *allocatorState) UpdateStoresStatuses(
 	ctx context.Context, storeStatuses map[roachpb.StoreID]Status,

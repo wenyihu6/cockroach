@@ -66,6 +66,7 @@ type Allocator interface {
 	// - shedThreshold: stores above this actively shed replicas
 	SetDiskUtilThresholds(refuseThreshold, shedThreshold float64)
 
+	SetIOOverloadThresholds(leaseRefuseThreshold, leaseShedThreshold, replicaRefuseThreshold float64)
 	// UpdateStoresStatuses updates the health and disposition for the stores in
 	// storeStatuses. Stores unknown to the allocator are ignored with logging.
 	//
