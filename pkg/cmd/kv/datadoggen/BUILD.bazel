@@ -4,6 +4,7 @@ go_library(
     name = "datadoggen_lib",
     srcs = [
         "datadog.go",
+        "enrich.go",
         "grafana.go",
         "main.go",
         "metrics.go",
@@ -27,6 +28,7 @@ go_test(
     name = "datadoggen_test",
     srcs = [
         "datadog_test.go",
+        "enrich_test.go",
         "grafana_test.go",
         "metrics_test.go",
     ],

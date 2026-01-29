@@ -56,12 +56,19 @@ func main() {
   datadoggen from-metrics --search "sql.service" --tsdump
 
   # Convert Grafana dashboard for tsdump
-  datadoggen convert-grafana grafana_dashboard.json --tsdump`,
+  datadoggen convert-grafana grafana_dashboard.json --tsdump
+
+  # Enrich existing Datadog dashboard with metric descriptions
+  datadoggen enrich-dashboard my_dashboard.json
+
+  # Add note widgets with descriptions instead of enriching titles
+  datadoggen enrich-dashboard my_dashboard.json --add-notes`,
 	}
 
 	rootCmd.AddCommand(
 		newConvertGrafanaCmd(),
 		newFromMetricsCmd(),
+		newEnrichDashboardCmd(),
 	)
 
 	rootCmd.CompletionOptions.DisableDefaultCmd = true

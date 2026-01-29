@@ -383,6 +383,7 @@ func convertTimeseriesPanel(panel *GrafanaPanel) *Widget {
 		}
 	}
 
+	showLegend := true
 	widget := Widget{
 		Definition: WidgetDefinition{
 			Type:      "timeseries",
@@ -396,17 +397,23 @@ func convertTimeseriesPanel(panel *GrafanaPanel) *Widget {
 					DisplayType:    displayType,
 				},
 			},
+			ShowLegend:    &showLegend,
+			LegendLayout:  "vertical",
+			LegendColumns: []string{"avg", "min", "max", "value", "sum"},
+		},
+		// Standard widget size for legend display
+		Layout: &WidgetLayout{
+			X:      0,
+			Y:      0,
+			Width:  6,
+			Height: 4,
 		},
 	}
 
-	// Add layout if grid position exists
+	// Update position from Grafana grid if available
 	if panel.GridPos != nil {
-		widget.Layout = &WidgetLayout{
-			X:      panel.GridPos.X / 2,
-			Y:      panel.GridPos.Y / 2,
-			Width:  max(panel.GridPos.W/2, 2),
-			Height: max(panel.GridPos.H/2, 2),
-		}
+		widget.Layout.X = panel.GridPos.X / 2
+		widget.Layout.Y = panel.GridPos.Y / 2
 	}
 
 	// Handle percentage unit

@@ -105,9 +105,12 @@ type WidgetDefinition struct {
 	LayoutType      string           `json:"layout_type,omitempty"` // For group widgets - must come before title
 	Title           string           `json:"title,omitempty"`
 	TitleSize       string           `json:"title_size,omitempty"`
-	ShowTitle       bool             `json:"show_title,omitempty"` // For group widgets
-	Widgets         []Widget         `json:"widgets,omitempty"`    // For group widgets
-	Requests        []WidgetRequest  `json:"requests,omitempty"`   // For timeseries widgets
+	ShowTitle       bool             `json:"show_title,omitempty"`     // For group widgets
+	Widgets         []Widget         `json:"widgets,omitempty"`        // For group widgets
+	Requests        []WidgetRequest  `json:"requests,omitempty"`       // For timeseries widgets
+	ShowLegend      *bool            `json:"show_legend,omitempty"`    // Enable legend display
+	LegendLayout    string           `json:"legend_layout,omitempty"`  // "auto", "vertical"
+	LegendColumns   []string         `json:"legend_columns,omitempty"` // ["avg", "min", "max", "value", "sum"]
 	Content         string           `json:"content,omitempty"`
 	BackgroundColor string           `json:"background_color,omitempty"`
 	FontSize        string           `json:"font_size,omitempty"`
@@ -132,13 +135,27 @@ type WidgetQuery struct {
 	DataSource string `json:"data_source"`
 	Name       string `json:"name"`
 	Query      string `json:"query"`
+	Aggregator string `json:"aggregator,omitempty"` // For table widgets: avg, min, max, sum, last
 }
 
 // Formula represents a formula in a widget request.
 type Formula struct {
-	Formula      string        `json:"formula"`
-	Alias        string        `json:"alias,omitempty"`
-	NumberFormat *NumberFormat `json:"number_format,omitempty"`
+	Formula      string           `json:"formula"`
+	Alias        string           `json:"alias,omitempty"`
+	NumberFormat *NumberFormat    `json:"number_format,omitempty"`
+	CellDisplay  *CellDisplayMode `json:"cell_display_mode,omitempty"`
+	Limit        *FormulaLimit    `json:"limit,omitempty"`
+}
+
+// CellDisplayMode specifies how a cell is displayed in table widgets.
+type CellDisplayMode struct {
+	Mode string `json:"mode"` // "number" or "bar"
+}
+
+// FormulaLimit specifies ordering and count limits for table widgets.
+type FormulaLimit struct {
+	Count int    `json:"count"`
+	Order string `json:"order"` // "desc" or "asc"
 }
 
 // NumberFormat specifies the unit formatting for a formula.
@@ -737,6 +754,15 @@ func CreateTimeseriesWidget(metric MetricDef, index int) Widget {
 	title = strings.ReplaceAll(title, "_", " ")
 	title = cases.Title(language.English).String(title)
 
+	// Add help text if available
+	if metric.Help != "" {
+		help := metric.Help
+		if len(help) > 100 {
+			help = help[:97] + "..."
+		}
+		title = title + " - " + help
+	}
+
 	// Build query and formula arrays
 	var widgetQueries []WidgetQuery
 	var formulas []Formula
@@ -764,6 +790,7 @@ func CreateTimeseriesWidget(metric MetricDef, index int) Widget {
 		formulas = append(formulas, formula)
 	}
 
+	showLegend := true
 	return Widget{
 		Definition: WidgetDefinition{
 			Type:      "timeseries",
@@ -775,6 +802,96 @@ func CreateTimeseriesWidget(metric MetricDef, index int) Widget {
 					Queries:        widgetQueries,
 					Formulas:       formulas,
 					DisplayType:    "line",
+				},
+			},
+			ShowLegend:    &showLegend,
+			LegendLayout:  "vertical",
+			LegendColumns: []string{"avg", "min", "max", "value", "sum"},
+		},
+		Layout: &WidgetLayout{
+			X:      0,
+			Y:      0,
+			Width:  6,
+			Height: 4,
+		},
+	}
+}
+
+// CreateTableWidget creates a table widget showing a metric with multiple aggregation columns.
+// This displays AVG, MIN, MAX, SUM, and VALUE (last) columns grouped by tags.
+func CreateTableWidget(metric MetricDef, groupBy string, index int) Widget {
+	ddName := ConvertMetricName(metric.Name)
+	tags := GetDefaultTags()
+
+	if groupBy == "" {
+		groupBy = "cluster,node_id"
+	}
+
+	// Build the base query - use sum aggregator for the query
+	query := fmt.Sprintf("sum:%s{%s} by {%s}", ddName, tags, groupBy)
+
+	// Create formulas for each aggregation column
+	formulas := []Formula{
+		{
+			Formula: fmt.Sprintf("q%d", index),
+			Alias:   "AVG",
+			Limit:   &FormulaLimit{Count: 50, Order: "desc"},
+		},
+		{
+			Formula: fmt.Sprintf("q%d", index),
+			Alias:   "MIN",
+		},
+		{
+			Formula: fmt.Sprintf("q%d", index),
+			Alias:   "MAX",
+		},
+		{
+			Formula: fmt.Sprintf("q%d", index),
+			Alias:   "SUM",
+		},
+		{
+			Formula: fmt.Sprintf("q%d", index),
+			Alias:   "VALUE",
+		},
+	}
+
+	// Add unit formatting if available
+	if metric.Unit != "" {
+		ddUnit := ConvertUnitToDatadog(metric.Unit)
+		if ddUnit != "" {
+			for i := range formulas {
+				formulas[i].NumberFormat = &NumberFormat{
+					Unit: &UnitFormat{
+						Type:     "canonical_unit",
+						UnitName: ddUnit,
+					},
+				}
+			}
+		}
+	}
+
+	// Create readable title from metric name
+	title := strings.ReplaceAll(metric.Name, ".", " ")
+	title = strings.ReplaceAll(title, "_", " ")
+	title = cases.Title(language.English).String(title)
+
+	return Widget{
+		Definition: WidgetDefinition{
+			Type:      "query_table",
+			Title:     title,
+			TitleSize: "16",
+			Requests: []WidgetRequest{
+				{
+					ResponseFormat: "scalar",
+					Queries: []WidgetQuery{
+						{
+							DataSource: "metrics",
+							Name:       fmt.Sprintf("q%d", index),
+							Query:      query,
+							Aggregator: "avg",
+						},
+					},
+					Formulas: formulas,
 				},
 			},
 		},
