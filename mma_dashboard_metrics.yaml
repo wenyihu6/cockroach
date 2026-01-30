@@ -1,0 +1,943 @@
+# Metrics used by the MMA Enriched Dashboard (mma_enriched.json)
+# Total: 88 unique metrics
+# Generated from docs/generated/metrics/metrics.yaml
+
+# =============================================================================
+# SQL Metrics
+# =============================================================================
+
+- name: sql.service.latency
+  exported_name: sql_service_latency
+  description: Latency of SQL request execution
+  y_axis_label: Latency
+  type: HISTOGRAM
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: These high-level metrics reflect workload performance. Monitor these metrics to understand latency over time. If abnormal patterns emerge, apply the metric's time range to the SQL Activity pages to investigate interesting outliers or patterns. The Statements page has P90 Latency and P99 latency columns to enable correlation with this metric.
+  visibility: ESSENTIAL
+
+- name: sql.query.count
+  exported_name: sql_query_count
+  description: Number of SQL operations started including queries, and transaction control statements
+  y_axis_label: SQL Statements
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+# =============================================================================
+# System CPU Metrics
+# =============================================================================
+
+- name: sys.cpu.combined.percent-normalized
+  exported_name: sys_cpu_combined_percent_normalized
+  description: Current user+system cpu percentage consumed by the CRDB process, normalized 0-1 by number of cores
+  y_axis_label: CPU Time
+  type: GAUGE
+  unit: PERCENT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: "This metric gives the CPU utilization percentage by the CockroachDB process. If it is equal to 1 (or 100%), then the CPU is overloaded. The CockroachDB process should not be running with over 80% utilization for extended periods of time (hours). This metric is used in the DB Console CPU Percent graph."
+  visibility: ESSENTIAL
+
+- name: sys.cpu.sys.percent
+  exported_name: sys_cpu_sys_percent
+  description: Current system cpu percentage consumed by the CRDB process
+  y_axis_label: CPU Time
+  type: GAUGE
+  unit: PERCENT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: "This metric gives the CPU usage percentage at the system (Linux kernel) level by the CockroachDB process only. This is similar to the Linux top command output. The metric value can be more than 1 (or 100%) on multi-core systems. It is best to combine user and system metrics."
+  visibility: ESSENTIAL
+
+- name: sys.cpu.user.percent
+  exported_name: sys_cpu_user_percent
+  description: Current user cpu percentage consumed by the CRDB process
+  y_axis_label: CPU Time
+  type: GAUGE
+  unit: PERCENT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: "This metric gives the CPU usage percentage at the user level by the CockroachDB process only. This is similar to the Linux top command output. The metric value can be more than 1 (or 100%) on multi-core systems. It is best to combine user and system metrics."
+  visibility: ESSENTIAL
+
+- name: sys.cpu.sys.ns
+  exported_name: sys_cpu_sys_ns
+  description: Total system cpu time consumed by the CRDB process
+  y_axis_label: CPU Time
+  type: COUNTER
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: sys.cpu.user.ns
+  exported_name: sys_cpu_user_ns
+  description: Total user cpu time consumed by the CRDB process
+  y_axis_label: CPU Time
+  type: COUNTER
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: sys.rss
+  exported_name: sys_rss
+  description: Current process RSS
+  y_axis_label: RSS
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: "This metric gives the amount of RAM used by the CockroachDB process. Persistently low values over an extended period of time suggest there is underutilized memory that can be put to work with adjusted settings for --cache or --max_sql_memory or both. Conversely, a high utilization, even if a temporary spike, indicates an increased risk of Out-of-memory (OOM) crash (particularly since the swap is generally disabled)."
+  visibility: ESSENTIAL
+
+# =============================================================================
+# System Disk I/O Metrics
+# =============================================================================
+
+- name: sys.host.disk.iopsinprogress
+  exported_name: sys_host_disk_iopsinprogress
+  description: IO operations currently in progress on this host (as reported by the OS)
+  y_axis_label: Operations
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric gives the average queue length of the storage device. It characterizes the storage device's performance capability. Values over 10 are bad. Values around 5 mean the device is working hard trying to keep up.
+  visibility: ESSENTIAL
+
+- name: sys.host.disk.read.bytes
+  exported_name: sys_host_disk_read_bytes
+  description: Bytes read from all disks since this process started (as reported by the OS)
+  y_axis_label: Bytes
+  type: COUNTER
+  unit: BYTES
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: This metric reports the effective storage device read throughput (MB/s) rate.
+  visibility: ESSENTIAL
+
+- name: sys.host.disk.read.count
+  exported_name: sys_host_disk_read_count
+  description: Disk read operations across all disks since this process started (as reported by the OS)
+  y_axis_label: Operations
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: This metric reports the effective storage device read IOPS rate.
+  visibility: ESSENTIAL
+
+- name: sys.host.disk.write.bytes
+  exported_name: sys_host_disk_write_bytes
+  description: Bytes written to all disks since this process started (as reported by the OS)
+  y_axis_label: Bytes
+  type: COUNTER
+  unit: BYTES
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: This metric reports the effective storage device write throughput (MB/s) rate.
+  visibility: ESSENTIAL
+
+- name: sys.host.disk.write.count
+  exported_name: sys_host_disk_write_count
+  description: Disk write operations across all disks since this process started (as reported by the OS)
+  y_axis_label: Operations
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: This metric reports the effective storage device write IOPS rate.
+  visibility: ESSENTIAL
+
+- name: sys.host.disk.write.time
+  exported_name: sys_host_disk_write_time
+  description: Time spent writing to all disks since this process started (as reported by the OS)
+  y_axis_label: Time
+  type: COUNTER
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# Lease Metrics
+# =============================================================================
+
+- name: leases.transfers.success
+  exported_name: leases_transfers_success
+  description: Number of successful lease transfers
+  y_axis_label: Lease Transfers
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: A high number of lease transfers is not a negative or positive signal, rather it is a reflection of the elastic cluster activities.
+  visibility: ESSENTIAL
+
+- name: leases.transfers.error
+  exported_name: leases_transfers_error
+  description: Number of failed lease transfers
+  y_axis_label: Lease Transfers
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: leases.preferences.less-preferred
+  exported_name: leases_preferences_less_preferred
+  description: Number of replica leaseholders which satisfy a lease preference which is not the most preferred
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: leases.preferences.violating
+  exported_name: leases_preferences_violating
+  description: Number of replica leaseholders which violate lease preferences
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+# =============================================================================
+# Liveness Metrics
+# =============================================================================
+
+- name: liveness.livenodes
+  exported_name: liveness_livenodes
+  description: Number of live nodes in the cluster (will be 0 if this node is not itself live)
+  y_axis_label: Nodes
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This is a critical metric that tracks the live nodes in the cluster.
+  visibility: ESSENTIAL
+
+# =============================================================================
+# Range Metrics
+# =============================================================================
+
+- name: range.merges
+  exported_name: range_merges
+  description: Number of range merges
+  y_axis_label: Range Ops
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: This metric indicates how fast a workload is scaling down.
+  visibility: ESSENTIAL
+
+- name: range.splits
+  exported_name: range_splits
+  description: Number of range splits
+  y_axis_label: Range Ops
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: This metric indicates how fast a workload is scaling up. Spikes can indicate resource hotspots.
+  visibility: ESSENTIAL
+
+- name: ranges
+  exported_name: ranges
+  description: Number of ranges
+  y_axis_label: Ranges
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric provides a measure of the scale of the data size.
+  visibility: ESSENTIAL
+
+- name: ranges.unavailable
+  exported_name: ranges_unavailable
+  description: Number of ranges with fewer live replicas than needed for quorum
+  y_axis_label: Ranges
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric is an indicator of replication issues. If an entire range is unavailable, then it will be unable to process queries.
+  visibility: ESSENTIAL
+
+- name: ranges.underreplicated
+  exported_name: ranges_underreplicated
+  description: Number of ranges with fewer live replicas than the replication target
+  y_axis_label: Ranges
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric is an indicator of replication issues.
+  visibility: ESSENTIAL
+
+- name: ranges.decommissioning
+  exported_name: ranges_decommissioning
+  description: Number of ranges with at lease one replica on a decommissioning node
+  y_axis_label: Ranges
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  visibility: SUPPORT
+
+- name: ranges.overreplicated
+  exported_name: ranges_overreplicated
+  description: Number of ranges with more live replicas than the replication target
+  y_axis_label: Ranges
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: range.snapshots.rebalancing.rcvd-bytes
+  exported_name: range_snapshots_rebalancing_rcvd_bytes
+  description: Number of rebalancing snapshot bytes received
+  y_axis_label: Bytes
+  type: COUNTER
+  unit: BYTES
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: range.snapshots.sent-bytes
+  exported_name: range_snapshots_sent_bytes
+  description: Number of snapshot bytes sent
+  y_axis_label: Bytes
+  type: COUNTER
+  unit: BYTES
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# Rebalancing Metrics
+# =============================================================================
+
+- name: rebalancing.cpunanospersecond
+  exported_name: rebalancing_cpunanospersecond
+  description: Average CPU nanoseconds spent on processing replica operations in the last 30 minutes.
+  y_axis_label: Nanoseconds/Sec
+  type: GAUGE
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: A high value of this metric could indicate that one of the store's replicas is part of a hot range.
+  visibility: ESSENTIAL
+
+- name: rebalancing.lease.transfers
+  exported_name: rebalancing_lease_transfers
+  description: Number of lease transfers motivated by store-level load imbalances
+  y_axis_label: Lease Transfers
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: Used to identify when there has been more rebalancing activity triggered by imbalance between stores.
+  visibility: ESSENTIAL
+
+- name: rebalancing.queriespersecond
+  exported_name: rebalancing_queriespersecond
+  description: Number of kv-level requests received per second by the store, considering the last 30 minutes, as used in rebalancing decisions.
+  y_axis_label: Queries/Sec
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric shows hotspots along the queries per second (QPS) dimension.
+  visibility: ESSENTIAL
+
+- name: rebalancing.range.rebalances
+  exported_name: rebalancing_range_rebalances
+  description: Number of range rebalance operations motivated by store-level load imbalances
+  y_axis_label: Range Rebalances
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  how_to_use: Used to identify when there has been more rebalancing activity triggered by imbalance between stores.
+  visibility: ESSENTIAL
+
+- name: rebalancing.replicas.cpunanospersecond
+  exported_name: rebalancing_replicas_cpunanospersecond
+  description: Histogram of average CPU nanoseconds spent on processing replica operations in the last 30 minutes.
+  y_axis_label: Nanoseconds/Sec
+  type: HISTOGRAM
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: 'A high value of this metric could indicate that one of the store''s replicas is part of a hot range. See also the non-histogram variant: rebalancing.cpunanospersecond.'
+  visibility: ESSENTIAL
+
+- name: rebalancing.replicas.queriespersecond
+  exported_name: rebalancing_replicas_queriespersecond
+  description: Histogram of average kv-level requests received per second by replicas on the store in the last 30 minutes.
+  y_axis_label: Queries/Sec
+  type: HISTOGRAM
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: 'A high value of this metric could indicate that one of the store''s replicas is part of a hot range.'
+  visibility: ESSENTIAL
+
+- name: rebalancing.readbytespersecond
+  exported_name: rebalancing_readbytespersecond
+  description: Number of bytes read recently per second, considering the last 30 minutes.
+  y_axis_label: Bytes/Sec
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+
+- name: rebalancing.writebytespersecond
+  exported_name: rebalancing_writebytespersecond
+  description: Number of bytes written recently per second, considering the last 30 minutes.
+  y_axis_label: Bytes/Sec
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+
+- name: rebalancing.writespersecond
+  exported_name: rebalancing_writespersecond
+  description: Number of keys written (i.e. applied by raft) per second to the store, considering the last 30 minutes.
+  y_axis_label: Keys/Sec
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: rebalancing.state.imbalanced_overfull_options_exhausted
+  exported_name: rebalancing_state_imbalanced_overfull_options_exhausted
+  description: Number of occurrences where this store was overfull but failed to shed load after exhausting available rebalance options
+  y_axis_label: Overfull Options Exhausted
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# Replica Metrics
+# =============================================================================
+
+- name: replicas
+  exported_name: replicas
+  description: Number of replicas
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric provides an essential characterization of the data distribution across cluster nodes.
+  visibility: ESSENTIAL
+
+- name: replicas.leaseholders
+  exported_name: replicas_leaseholders
+  description: Number of lease holders
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: This metric provides an essential characterization of the data processing points across cluster nodes.
+  visibility: ESSENTIAL
+
+- name: replicas.leaders
+  exported_name: replicas_leaders
+  description: Number of raft leaders
+  y_axis_label: Raft Leaders
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: replicas.leaders_invalid_lease
+  exported_name: replicas_leaders_invalid_lease
+  description: Number of replicas that are Raft leaders whose lease is invalid
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: replicas.leaders_not_leaseholders
+  exported_name: replicas_leaders_not_leaseholders
+  description: Number of replicas that are Raft leaders whose range lease is held by another store
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+# =============================================================================
+# Capacity Metrics
+# =============================================================================
+
+- name: capacity
+  exported_name: capacity
+  description: Total storage capacity
+  y_axis_label: Storage
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: 'This metric gives total storage capacity. CockroachDB storage volumes should not be utilized more than 60% (40% free space).'
+  visibility: ESSENTIAL
+
+- name: capacity.available
+  exported_name: capacity_available
+  description: Available storage capacity
+  y_axis_label: Storage
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: 'This metric gives available storage capacity. CockroachDB storage volumes should not be utilized more than 60% (40% free space).'
+  visibility: ESSENTIAL
+
+- name: capacity.used
+  exported_name: capacity_used
+  description: Used storage capacity
+  y_axis_label: Storage
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: 'This metric gives used storage capacity. CockroachDB storage volumes should not be utilized more than 60% (40% free space).'
+  visibility: ESSENTIAL
+
+- name: totalbytes
+  exported_name: totalbytes
+  description: Total number of bytes taken up by keys and values including non-live data
+  y_axis_label: Storage
+  type: GAUGE
+  unit: BYTES
+  aggregation: AVG
+  derivative: NONE
+
+# =============================================================================
+# Storage Metrics
+# =============================================================================
+
+- name: storage.wal.fsync.latency
+  exported_name: storage_wal_fsync_latency
+  description: The fsync latency to the Write-Ahead Log device.
+  y_axis_label: Fsync Latency
+  type: HISTOGRAM
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: If this value is greater than 100ms, it is an indication of a disk stall.
+  visibility: ESSENTIAL
+
+- name: storage.disk.write.bytes
+  exported_name: storage_disk_write_bytes
+  description: Bytes written to the store's disk since this process started (as reported by the OS)
+  y_axis_label: Bytes
+  type: COUNTER
+  unit: BYTES
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: storage.l0-sublevels
+  exported_name: storage_l0_sublevels
+  description: Number of Level 0 sublevels
+  y_axis_label: Sublevels
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: storage.write-stall-nanos
+  exported_name: storage_write_stall_nanos
+  description: Total write stall duration in nanos
+  y_axis_label: Nanoseconds
+  type: COUNTER
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: rocksdb.ingested-bytes
+  exported_name: rocksdb_ingested_bytes
+  description: Bytes ingested
+  y_axis_label: Bytes Ingested
+  type: COUNTER
+  unit: BYTES
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# Admission Control Metrics
+# =============================================================================
+
+- name: admission.io.overload
+  exported_name: admission_io_overload
+  description: 1-normalized float indicating whether IO admission control considers the store as overloaded with respect to compaction out of L0.
+  y_axis_label: Threshold
+  type: GAUGE
+  unit: PERCENT
+  aggregation: AVG
+  derivative: NONE
+  how_to_use: If the value of this metric exceeds 1, then it indicates overload.
+  visibility: ESSENTIAL
+
+- name: admission.raft.paused_replicas
+  exported_name: admission_raft_paused_replicas
+  description: Number of followers (i.e. Replicas) to which replication is currently paused to help them recover from I/O overload.
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+# =============================================================================
+# KV Execution Metrics
+# =============================================================================
+
+- name: exec.latency
+  exported_name: exec_latency
+  description: Latency of batch KV requests (including errors) executed on this node.
+  y_axis_label: Latency
+  type: HISTOGRAM
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NONE
+
+- name: kv.allocator.load_based_lease_transfers.follow_the_workload
+  exported_name: kv_allocator_load_based_lease_transfers_follow_the_workload
+  description: The number times the allocator determined that the lease should be transferred to another replica for locality.
+  y_axis_label: Attempts
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# Queue Metrics
+# =============================================================================
+
+- name: queue.replicate.addreplica
+  exported_name: queue_replicate_addreplica
+  description: Number of replica additions attempted by the replicate queue
+  y_axis_label: Replica Additions
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: queue.replicate.pending
+  exported_name: queue_replicate_pending
+  description: Number of pending replicas in the replicate queue
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+  visibility: SUPPORT
+
+- name: queue.replicate.process.failure
+  exported_name: queue_replicate_process_failure
+  description: Number of replicas which failed processing in the replicate queue
+  y_axis_label: Replicas
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: queue.replicate.process.success
+  exported_name: queue_replicate_process_success
+  description: Number of replicas successfully processed by the replicate queue
+  y_axis_label: Replicas
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+  visibility: SUPPORT
+
+- name: queue.replicate.processingnanos
+  exported_name: queue_replicate_processingnanos
+  description: Nanoseconds spent processing replicas in the replicate queue
+  y_axis_label: Processing Time
+  type: COUNTER
+  unit: NANOSECONDS
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: queue.replicate.purgatory
+  exported_name: queue_replicate_purgatory
+  description: Number of replicas in the replicate queue's purgatory, awaiting allocation options
+  y_axis_label: Replicas
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: queue.replicate.rebalancereplica
+  exported_name: queue_replicate_rebalancereplica
+  description: Number of replica rebalancer-initiated additions attempted by the replicate queue
+  y_axis_label: Replica Additions
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: queue.replicate.removereplica
+  exported_name: queue_replicate_removereplica
+  description: Number of replica removals attempted by the replicate queue (typically in response to a rebalancer-initiated addition)
+  y_axis_label: Replica Removals
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: queue.replicate.transferlease
+  exported_name: queue_replicate_transferlease
+  description: Number of range lease transfers attempted by the replicate queue
+  y_axis_label: Lease Transfers
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: queue.split.span_config_based
+  exported_name: queue_split_span_config_based
+  description: Number of range splits due to span configuration
+  y_axis_label: Range Splits
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# RPC Metrics
+# =============================================================================
+
+- name: rpc.method.transferlease.recv
+  exported_name: rpc_method_transferlease_recv
+  description: Number of TransferLease requests processed
+  y_axis_label: RPCs
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+# =============================================================================
+# MMA (Multi-store Multi-tenant Allocator) Metrics
+# =============================================================================
+
+- name: mma.change.external.lease.failure
+  exported_name: mma_change_external_lease_failure
+  labeled_name: 'mma.change{origin: external, type: lease, result: failure}'
+  description: Number of external lease transfers (moving the leaseholder to a different replica, not initiated by MMA) that failed. External changes come from other components like admin commands or the legacy allocator (SMA). Failures may indicate the target replica is unavailable or doesn't meet lease preferences.
+  y_axis_label: Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.external.lease.success
+  exported_name: mma_change_external_lease_success
+  labeled_name: 'mma.change{origin: external, type: lease, result: success}'
+  description: Number of external lease transfers (moving the leaseholder to a different replica, not initiated by MMA) that completed successfully. External changes come from other components like admin commands or the legacy allocator (SMA).
+  y_axis_label: Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.external.replica.failure
+  exported_name: mma_change_external_replica_failure
+  labeled_name: 'mma.change{origin: external, type: replica, result: failure}'
+  description: Number of external replica changes (adding, removing, or moving replicas not initiated by MMA) that failed. External changes come from other components like admin commands or the legacy allocator (SMA). Failures may indicate constraint violations, unavailable nodes, or other issues.
+  y_axis_label: Range Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.external.replica.success
+  exported_name: mma_change_external_replica_success
+  labeled_name: 'mma.change{origin: external, type: replica, result: success}'
+  description: Number of external replica changes (adding, removing, or moving replicas not initiated by MMA) that completed successfully. External changes come from other components like admin commands or the legacy allocator (SMA).
+  y_axis_label: Range Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.rebalance.lease.failure
+  exported_name: mma_change_rebalance_lease_failure
+  labeled_name: 'mma.change{origin: rebalance, type: lease, result: failure}'
+  description: Number of MMA-initiated lease transfers (moving the leaseholder to balance load) that failed. Failures may indicate the target replica is unavailable, doesn't meet lease preferences, or a concurrent change invalidated the operation.
+  y_axis_label: Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.rebalance.lease.success
+  exported_name: mma_change_rebalance_lease_success
+  labeled_name: 'mma.change{origin: rebalance, type: lease, result: success}'
+  description: Number of MMA-initiated lease transfers (moving the leaseholder to balance load) that completed successfully. MMA transfers leases away from overloaded stores to reduce their CPU load, since leaseholders handle all reads and coordinate writes.
+  y_axis_label: Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.rebalance.replica.failure
+  exported_name: mma_change_rebalance_replica_failure
+  labeled_name: 'mma.change{origin: rebalance, type: replica, result: failure}'
+  description: Number of MMA-initiated replica changes (adding, removing, or moving replicas to balance load) that failed. Failures may indicate constraint violations, unavailable target stores, or concurrent changes that invalidated the operation.
+  y_axis_label: Range Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.change.rebalance.replica.success
+  exported_name: mma_change_rebalance_replica_success
+  labeled_name: 'mma.change{origin: rebalance, type: replica, result: success}'
+  description: Number of MMA-initiated replica changes (adding, removing, or moving replicas to balance load) that completed successfully. MMA moves replicas away from overloaded stores to reduce their load.
+  y_axis_label: Range Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.dropped
+  exported_name: mma_dropped
+  description: Number of pending replica or lease changes that MMA dropped because its internal state became inconsistent with the actual cluster state. This can happen when an external change (e.g., from another component or admin command) modifies the cluster in a way that invalidates MMA's pending changes. A non-zero value is expected during normal operation when external changes occur.
+  y_axis_label: Replica/Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.external.registration.failure
+  exported_name: mma_external_registration_failure
+  description: Number of external operations (replica/lease changes not initiated by MMA) that failed to register with MMA due to pre-check failures (e.g., the change conflicts with MMA's current state). The external operation may still proceed, but MMA will not track it until the next state synchronization.
+  y_axis_label: Replica/Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.external.registration.success
+  exported_name: mma_external_registration_success
+  description: Number of external operations (replica/lease changes not initiated by MMA, e.g., from admin commands or other allocators) that were successfully registered with MMA. Registration allows MMA to track the change and keep its internal state synchronized with the cluster.
+  y_axis_label: Replica/Lease Change
+  type: COUNTER
+  unit: COUNT
+  aggregation: AVG
+  derivative: NON_NEGATIVE_DERIVATIVE
+
+- name: mma.overloaded_store.lease_grace.failure
+  exported_name: mma_overloaded_store_lease_grace_failure
+  labeled_name: 'mma.overloaded_store{type: lease_grace, result: failure}'
+  description: Number of overloaded stores in the lease shedding grace period (first 2 min of overload) where all shedding attempts failed during this store's MMA rebalancing pass. During this grace period, MMA waits for the overloaded store to shed its own leases before intervening. A non-zero value indicates stores were observed but intentionally skipped.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.lease_grace.success
+  exported_name: mma_overloaded_store_lease_grace_success
+  labeled_name: 'mma.overloaded_store{type: lease_grace, result: success}'
+  description: Number of overloaded stores in the lease shedding grace period (first 2 min of overload) where at least one lease or replica was successfully moved away during this store's MMA rebalancing pass. During this grace period, MMA waits for the overloaded store to shed its own leases before intervening. This metric should normally be 0 since MMA skips shedding during the grace period.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.long_dur.failure
+  exported_name: mma_overloaded_store_long_dur_failure
+  labeled_name: 'mma.overloaded_store{type: long_dur, result: failure}'
+  description: Number of stores overloaded for a long duration (8+ min) where all shedding attempts failed during this store's MMA rebalancing pass. Even with the most aggressive target selection, no suitable store was found. This may indicate cluster-wide capacity issues or overly restrictive constraints.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.long_dur.success
+  exported_name: mma_overloaded_store_long_dur_success
+  labeled_name: 'mma.overloaded_store{type: long_dur, result: success}'
+  description: Number of stores overloaded for a long duration (8+ min) where at least one lease or replica was successfully moved away during this store's MMA rebalancing pass. At this stage, MMA is most aggressive and considers any target store at or below the load threshold.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.medium_dur.failure
+  exported_name: mma_overloaded_store_medium_dur_failure
+  labeled_name: 'mma.overloaded_store{type: medium_dur, result: failure}'
+  description: Number of stores overloaded for a medium duration (5-8 min) where all shedding attempts failed during this store's MMA rebalancing pass. Despite considering moderately-loaded targets, no suitable store was found (e.g., constraints cannot be satisfied, all candidates still too loaded).
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.medium_dur.success
+  exported_name: mma_overloaded_store_medium_dur_success
+  labeled_name: 'mma.overloaded_store{type: medium_dur, result: success}'
+  description: Number of stores overloaded for a medium duration (5-8 min) where at least one lease or replica was successfully moved away during this store's MMA rebalancing pass. At this stage, MMA becomes more aggressive and considers moderately-loaded target stores that were previously excluded.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.short_dur.failure
+  exported_name: mma_overloaded_store_short_dur_failure
+  labeled_name: 'mma.overloaded_store{type: short_dur, result: failure}'
+  description: Number of stores overloaded for a short duration (2-5 min) where all shedding attempts failed during this store's MMA rebalancing pass. Failures occur when no suitable target store is found (e.g., all targets are too loaded, constraints cannot be satisfied). At this stage, MMA only considers lightly-loaded targets.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.overloaded_store.short_dur.success
+  exported_name: mma_overloaded_store_short_dur_success
+  labeled_name: 'mma.overloaded_store{type: short_dur, result: success}'
+  description: Number of stores overloaded for a short duration (2-5 min) where at least one lease or replica was successfully moved away during this store's MMA rebalancing pass. At this stage, MMA only considers lightly-loaded target stores to avoid overloading them.
+  y_axis_label: Stores
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.span_config.normalization.error
+  exported_name: mma_span_config_normalization_error
+  labeled_name: 'mma.span_config.normalization{result: error}'
+  description: Number of ranges where the local store is leaseholder and MMA encountered errors while normalizing the span config (zone configuration). This includes both hard errors (config is unusable, range excluded from rebalancing) and soft errors (best-effort config produced, range still rebalanced). Non-zero values indicate zone config issues that operators should review.
+  y_axis_label: Range
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
+
+- name: mma.span_config.normalization.soft_error
+  exported_name: mma_span_config_normalization_soft_error
+  labeled_name: 'mma.span_config.normalization{result: soft_error}'
+  description: 'Number of ranges where the local store is leaseholder and MMA''s structural normalization of the span config failed, but MMA produced a best-effort usable config. These ranges remain valid rebalancing candidates. Example: voter constraints cannot be fully satisfied by the replica constraints. Non-zero values indicate zone config issues that operators should fix.'
+  y_axis_label: Range
+  type: GAUGE
+  unit: COUNT
+  aggregation: AVG
+  derivative: NONE
