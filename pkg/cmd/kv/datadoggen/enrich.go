@@ -183,6 +183,57 @@ func LookupMetricDescription(metricName string) string {
 	return ""
 }
 
+// extractFirstSentence extracts the first sentence from a description for use as
+// a short, human-readable title. It looks for the first period followed by a space
+// or end of string. If no sentence boundary is found, it truncates at 100 chars.
+func extractFirstSentence(description string) string {
+	// Look for first period followed by space (end of sentence)
+	for i := 0; i < len(description)-1; i++ {
+		if description[i] == '.' && (description[i+1] == ' ' || description[i+1] == '\n') {
+			return description[:i+1]
+		}
+	}
+	// If description ends with period, return as-is
+	if len(description) > 0 && description[len(description)-1] == '.' {
+		return description
+	}
+	// No sentence found, truncate if too long
+	if len(description) > 100 {
+		return description[:97] + "..."
+	}
+	return description
+}
+
+// metricNameToTitle converts a metric name like "mma.overloaded_store.lease_grace.success"
+// into a human-readable title like "MMA Overloaded Store Lease Grace Success".
+func metricNameToTitle(metricName string) string {
+	// Strip common prefixes
+	name := metricName
+	for _, prefix := range []string{"cockroachdb.", "crdb.tsdump.", "crdb."} {
+		name = strings.TrimPrefix(name, prefix)
+	}
+
+	// Replace dots and underscores with spaces
+	name = strings.ReplaceAll(name, ".", " ")
+	name = strings.ReplaceAll(name, "_", " ")
+
+	// Title case each word, with special handling for acronyms
+	words := strings.Fields(name)
+	for i, word := range words {
+		upper := strings.ToUpper(word)
+		// Keep common acronyms uppercase
+		if upper == "MMA" || upper == "SMA" || upper == "CPU" || upper == "IO" ||
+			upper == "SQL" || upper == "KV" || upper == "ID" || upper == "P99" ||
+			upper == "P50" || upper == "P90" || upper == "P999" {
+			words[i] = upper
+		} else {
+			words[i] = strings.Title(word)
+		}
+	}
+
+	return strings.Join(words, " ")
+}
+
 // extractMetricNamesFromQuery extracts metric names from a Datadog query string.
 // Query format examples:
 //   - sum:cockroachdb.sql.select.count{...}
@@ -414,23 +465,29 @@ func enrichWidgetTitles(widget *Widget, seenNotFound map[string]bool) (enrichedC
 
 	// Find description for the first metric (main metric)
 	var description string
+	var mainMetric string
 	for _, metric := range allMetrics {
 		desc := LookupMetricDescription(metric)
 		if desc != "" {
 			description = desc
+			mainMetric = metric
 			break
 		}
 	}
 
 	if description != "" {
-		// Truncate long descriptions for title display
-		if len(description) > 100 {
-			description = description[:97] + "..."
-		}
+		// Create human-readable title from metric name
+		metricTitle := metricNameToTitle(mainMetric)
 
-		// Don't add description if it's already in the title
-		if !strings.Contains(widget.Definition.Title, description) {
-			widget.Definition.Title = widget.Definition.Title + enrichTitleSeparator + description
+		// Extract short summary (first sentence) for additional context
+		shortSummary := extractFirstSentence(description)
+
+		// Build new title: "Metric Title - Short description summary."
+		newTitle := metricTitle + enrichTitleSeparator + shortSummary
+
+		// Don't add if it's already in the title
+		if !strings.Contains(widget.Definition.Title, metricTitle) {
+			widget.Definition.Title = newTitle
 			enrichedCount = 1
 		}
 	} else {
