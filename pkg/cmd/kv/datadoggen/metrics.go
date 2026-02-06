@@ -77,7 +77,10 @@ Examples:
   datadoggen from-metrics --search "sql.service" --tsdump
 
   # Combine tsdump with Go file input
-  datadoggen from-metrics -g pkg/kv/kvserver/metrics.go --tsdump -o my_tsdump_dashboard.json`,
+  datadoggen from-metrics -g pkg/kv/kvserver/metrics.go --tsdump -o my_tsdump_dashboard.json
+
+  # Override metric prefix (e.g., use cockroachdb instead of crdb.tsdump)
+  datadoggen from-metrics --search "sql.service" --tsdump --dd-prefix cockroachdb`,
 		RunE: runFromMetrics,
 	}
 
@@ -90,6 +93,7 @@ Examples:
 	cmd.Flags().BoolVar(&metricsQuiet, "quiet", false, "Suppress info messages, output only results")
 	cmd.Flags().BoolVar(&metricsNoGrouping, "no-group", false, "Disable grouping by prefix (flat list)")
 	cmd.Flags().BoolVar(&TsdumpMode, "tsdump", false, "Generate queries for self-hosted tsdump format (crdb.tsdump.* prefix, $upload_id tag)")
+	cmd.Flags().StringVar(&CustomMetricPrefix, "dd-prefix", "", "Override Datadog metric prefix (e.g., cockroachdb, crdb.tsdump)")
 
 	return cmd
 }

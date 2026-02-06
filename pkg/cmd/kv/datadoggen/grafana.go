@@ -53,6 +53,7 @@ Query formats follow Datadog best practices:
 
 	cmd.Flags().StringVarP(&grafanaOutputFile, "output", "o", "", "Output file (default: <input>_datadog.json)")
 	cmd.Flags().BoolVar(&TsdumpMode, "tsdump", false, "Generate queries for self-hosted tsdump format (crdb.tsdump.* prefix, $upload_id tag)")
+	cmd.Flags().StringVar(&CustomMetricPrefix, "dd-prefix", "", "Override Datadog metric prefix (e.g., cockroachdb, crdb.tsdump)")
 
 	return cmd
 }

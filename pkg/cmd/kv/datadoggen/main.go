@@ -55,6 +55,9 @@ func main() {
   # Generate for self-hosted tsdump format (crdb.tsdump.* prefix, $upload_id tag)
   datadoggen from-metrics --search "sql.service" --tsdump
 
+  # Override metric prefix (e.g., use cockroachdb instead of crdb.tsdump)
+  datadoggen from-metrics --search "sql.service" --tsdump --dd-prefix cockroachdb
+
   # Convert Grafana dashboard for tsdump
   datadoggen convert-grafana grafana_dashboard.json --tsdump
 

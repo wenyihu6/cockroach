@@ -934,6 +934,68 @@ func TestConvertExportedMetricName(t *testing.T) {
 	}
 }
 
+// TestCustomMetricPrefix tests query generation with a custom metric prefix.
+func TestCustomMetricPrefix(t *testing.T) {
+	// Save original state and restore after test
+	originalMode := TsdumpMode
+	originalPrefix := CustomMetricPrefix
+	defer func() {
+		TsdumpMode = originalMode
+		CustomMetricPrefix = originalPrefix
+	}()
+
+	t.Run("GetMetricPrefix_custom", func(t *testing.T) {
+		CustomMetricPrefix = "myprefix"
+		TsdumpMode = false
+		if got := GetMetricPrefix(); got != "myprefix" {
+			t.Errorf("GetMetricPrefix() with custom prefix = %q, want %q", got, "myprefix")
+		}
+
+		// Custom prefix takes precedence even in tsdump mode
+		TsdumpMode = true
+		if got := GetMetricPrefix(); got != "myprefix" {
+			t.Errorf("GetMetricPrefix() with custom prefix in tsdump mode = %q, want %q", got, "myprefix")
+		}
+	})
+
+	t.Run("ConvertMetricName_custom_prefix", func(t *testing.T) {
+		CustomMetricPrefix = "cockroachdb"
+		TsdumpMode = true
+		result := ConvertMetricName("sql.service.latency")
+		if result != "cockroachdb.sql.service.latency" {
+			t.Errorf("ConvertMetricName() with custom prefix = %q, want %q", result, "cockroachdb.sql.service.latency")
+		}
+	})
+
+	t.Run("BuildQuery_custom_prefix_tsdump_tags", func(t *testing.T) {
+		CustomMetricPrefix = "cockroachdb"
+		TsdumpMode = true
+		metric := MetricDef{
+			Name: "sys.cpu.percent",
+			Type: MetricTypeGauge,
+		}
+		result := BuildQuery(metric)
+		// Custom prefix overrides crdb.tsdump, but tsdump tags ($upload_id,$node_id) are still used
+		expected := "avg:cockroachdb.sys.cpu.percent{$upload_id,$node_id} by {node_id}.rollup(avg, 10)"
+		if result != expected {
+			t.Errorf("BuildQuery() with custom prefix in tsdump mode = %q, want %q", result, expected)
+		}
+	})
+
+	t.Run("empty_custom_prefix_falls_back", func(t *testing.T) {
+		CustomMetricPrefix = ""
+		TsdumpMode = false
+		if got := GetMetricPrefix(); got != "cockroachdb" {
+			t.Errorf("GetMetricPrefix() with empty custom prefix = %q, want %q", got, "cockroachdb")
+		}
+
+		TsdumpMode = true
+		if got := GetMetricPrefix(); got != "crdb.tsdump" {
+			t.Errorf("GetMetricPrefix() with empty custom prefix in tsdump = %q, want %q", got, "crdb.tsdump")
+		}
+	})
+}
+
 // TestTsdumpMode tests query generation in tsdump (self-hosted) mode.
 func TestTsdumpMode(t *testing.T) {
 	// Save original state and restore after test

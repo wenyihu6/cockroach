@@ -38,8 +38,16 @@ const (
 // TsdumpMode indicates whether to generate queries for tsdump/self-hosted format.
 var TsdumpMode bool
 
+// CustomMetricPrefix is an optional override for the Datadog metric prefix.
+// When set (non-empty), it takes precedence over both MetricPrefix and TsdumpMetricPrefix.
+var CustomMetricPrefix string
+
 // GetMetricPrefix returns the appropriate metric prefix based on the mode.
+// If CustomMetricPrefix is set, it is used regardless of mode.
 func GetMetricPrefix() string {
+	if CustomMetricPrefix != "" {
+		return CustomMetricPrefix
+	}
 	if TsdumpMode {
 		return TsdumpMetricPrefix
 	}
