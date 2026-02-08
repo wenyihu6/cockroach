@@ -6,6 +6,8 @@
 package mmaintegration
 
 import (
+	"math"
+
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
@@ -20,87 +22,7 @@ func MakeStoreLoadMsg(
 	var load, capacity mmaprototype.LoadVector
 	load[mmaprototype.CPURate] = mmaprototype.LoadValue(desc.Capacity.CPUPerSecond)
 	if desc.NodeCapacity.NodeCPURateCapacity > 0 {
-		// CPU is a shared resource across all stores on a node, and we choose to
-		// divide the CPU capacity evenly across stores on the node (any other
-		// choice would be arbitrary).
-		//
-		// Furthermore, there are CPU consumers that we don't track on a
-		// per-replica (and thus per-store) level. Examples include RPC work, Go
-		// GC, SQL work etc. Some of the distributed SQL work could be happening
-		// because of a local replica, so ideally we should improve our
-		// instrumentation to track it per replica. Due to these gaps, we expect
-		// the NodeCPURateCapacity to be higher than StoresCPURate. So simply
-		// using NodeCPURateCapacity/NumStores as the per-store capacity would
-		// lead to over-utilization.
-		//
-		// Our approach is to apply the CPU utilization to StoresCPURate to
-		// compute a capacity and divide that evenly across stores. Specifically,
-		//
-		//   cpuUtil = NodeCPURateUsage/NodeCPURateCapacity
-		//
-		// we want to define StoresCPURateCapacity such that
-		//
-		//    StoresCPURate/StoresCPURateCapacity = cpuUtil,
-		//
-		// i.e. we want to give the (collective) stores a capacity that results
-		// in the same utilization as reported at the process (node) level, i.e.
-		//
-		//    StoresCPURateCapacity = StoresCPURate/cpuUtil.
-		//
-		// Finally, we split StoresCPURateCapacity evenly across the stores.
-		//
-		// This construction ensures that there is overload as measured by node
-		// CPU usage exactly when there is overload as measured by mean store
-		// CPU usage:
-		//
-		// meanCPUUtil = sum_i StoreCPURate_i / sum_i StoreCPURateCapacity_i
-		//             = 1/StoresCPURateCapacity * sum_i StoreCPURate_i
-		//             = StoresCPURate / StoresCPURateCapacity
-		//             = cpuUtil
-		//
-		// The above mathematical property is used to avoid having any explicit
-		// communication of node load to MMA. The
-		// NodeLoad.{ReportedCPU,CapacityCPU} is incrementally maintained as a sum
-		// of the load and capacity reported by each store (at different times).
-		//
-		// Additionally, when the meanCPUUtil indicates overload, at least one
-		// store will be above that mean, so it is overloaded as well and will
-		// induce load shedding.
-		//
-		// It's worth noting that this construction assumes that all load on the
-		// node is due to the stores. Take an extreme example in which there is
-		// a single store using up 1vcpu, but the node is fully utilized (at,
-		// say, 16 vcpus). In this case, the node will be at 100%, and we will
-		// assign a capacity of 1 to the store, i.e. the store will also be at
-		// 100% utilization despite contributing only 1/16th of the node CPU
-		// utilization. The effect of the construction is that the store will
-		// take on responsibility for shedding load to compensate for auxiliary
-		// consumption of CPU, which is generally sensible.
-		cpuUtil :=
-			float64(desc.NodeCapacity.NodeCPURateUsage) / float64(desc.NodeCapacity.NodeCPURateCapacity)
-		// cpuUtil can be zero or close to zero.
-		almostZeroUtil := cpuUtil < 0.01
-		if desc.NodeCapacity.StoresCPURate != 0 && !almostZeroUtil {
-			// cpuUtil is distributed across the stores, by constructing a
-			// nodeCapacity, and then splitting nodeCapacity evenly across all the
-			// stores. If the cpuUtil of a node is higher than the mean across nodes
-			// of the cluster, then cpu util of at least one store on that node will
-			// be higher than the mean across all stores in the cluster (since the
-			// cpu util of a node is simply the mean across all its stores), which
-			// will result in load shedding. Note that this can cause cpu util of a
-			// store to be > 100% e.g. if a node is at 80% cpu util and has 10
-			// stores, and all the cpu usage is due to store s1, then s1 will have
-			// 800% util.
-			nodeCapacity := float64(desc.NodeCapacity.StoresCPURate) / cpuUtil
-			storeCapacity := nodeCapacity / float64(desc.NodeCapacity.NumStores)
-			capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(storeCapacity)
-		} else {
-			// almostZeroUtil or StoresCPURate is zero. We assume that only 50% of
-			// the usage can be accounted for in StoresCPURate, so we divide 50% of
-			// the NodeCPURateCapacity among all the stores.
-			capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(
-				float64(desc.NodeCapacity.NodeCPURateCapacity/2) / float64(desc.NodeCapacity.NumStores))
-		}
+		capacity[mmaprototype.CPURate] = computeStoreCPUCapacity(desc.NodeCapacity)
 	} else {
 		// TODO(sumeer): remove this hack of defaulting to 50% utilization, since
 		// NodeCPURateCapacity should never be 0.
@@ -144,4 +66,106 @@ func MakeStoreLoadMsg(
 		SecondaryLoad: secondaryLoad,
 		LoadTime:      timeutil.FromUnixNanos(origTimestampNanos),
 	}
+}
+
+// computeStoreCPUCapacity computes the per-store CPU capacity from the
+// NodeCapacity. It uses a model that accounts for SQL CPU (both gateway
+// and DistSQL) when available, falling back to the original scheme when
+// SQL CPU measurements are not available.
+//
+// # Model
+//
+// We fit two equations to the observed CPU:
+//
+//	(SSCR + SQL_DIST + SQL_G) * K1 = NCR
+//	SSCR * K2 = SQL_DIST
+//
+// Where:
+//   - SSCR = StoresCPURate (aggregate per-replica CPU tracked at KV layer)
+//   - SQL_G = SQLGatewayCPURate (gateway SQL work, NOT proportional to replicas)
+//   - SQL_DIST = SQLDistCPURate (DistSQL work, proportional to replica load)
+//   - NCR = NodeCPURateUsage (actual process CPU)
+//   - NCRC = NodeCPURateCapacity (CPU capacity)
+//   - K1 = scale factor from measured CPU to actual process CPU
+//   - K2 = ratio of DistSQL CPU to KV replica CPU
+//
+// Solving:
+//
+//	K2 = SQL_DIST / SSCR
+//	K1 = NCR / (SSCR + SQL_DIST + SQL_G)
+//
+// The effective node capacity (in SSCR units) is:
+//
+//	NodeCapacity = (NCRC - SQL_G*K1) / ((K2+1)*K1)
+//
+// This subtracts gateway CPU from the capacity budget (since gateway CPU is
+// NOT proportional to replica load and cannot be shed by moving replicas),
+// then converts the remaining capacity to SSCR units. The per-store capacity
+// is NodeCapacity / NumStores.
+//
+// When SQL_G=0 and SQL_DIST=0, this reduces to the original scheme:
+//
+//	NodeCapacity = NCRC / (NCR/SSCR) = SSCR * NCRC/NCR = SSCR/cpuUtil
+func computeStoreCPUCapacity(nc roachpb.NodeCapacity) mmaprototype.LoadValue {
+	SSCR := float64(nc.StoresCPURate)
+	NCR := float64(nc.NodeCPURateUsage)
+	NCRC := float64(nc.NodeCPURateCapacity)
+	SQL_G := float64(nc.SQLGatewayCPURate)
+	SQL_DIST := float64(nc.SQLDistCPURate)
+	N := float64(nc.NumStores)
+
+	cpuUtil := NCR / NCRC
+	almostZeroUtil := cpuUtil < 0.01
+
+	if SSCR == 0 || almostZeroUtil || N == 0 {
+		// Fallback: StoresCPURate is zero, utilization is near-zero, or no
+		// stores. We assume that only 50% of the usage can be accounted for
+		// in StoresCPURate, so we divide 50% of the capacity among all stores.
+		if N == 0 {
+			N = 1
+		}
+		return mmaprototype.LoadValue(NCRC / 2 / N)
+	}
+
+	// Check if we have SQL CPU measurements. If both are zero, fall back to the
+	// original scheme for backwards compatibility and because the formula
+	// produces the same result.
+	hasSQLCPU := SQL_G > 0 || SQL_DIST > 0
+
+	if !hasSQLCPU {
+		// Original scheme: NodeCapacity = SSCR / cpuUtil.
+		// This implicitly fits the model SSCR * K1 = NCR (all CPU is
+		// proportional to store load).
+		nodeCapacity := SSCR / cpuUtil
+		storeCapacity := nodeCapacity / N
+		return mmaprototype.LoadValue(storeCapacity)
+	}
+
+	// Alternative scheme with SQL CPU accounting.
+	totalMeasured := SSCR + SQL_DIST + SQL_G
+
+	// K1 = NCR / totalMeasured
+	// K2 = SQL_DIST / SSCR
+	K1 := NCR / totalMeasured
+	K2 := SQL_DIST / SSCR
+
+	// NodeCapacity = (NCRC - SQL_G * K1) / ((K2 + 1) * K1)
+	numerator := NCRC - SQL_G*K1
+	denominator := (K2 + 1) * K1
+
+	if denominator <= 0 || !math.IsFinite(numerator/denominator) {
+		// Safety: if the formula produces non-finite results, fall back.
+		nodeCapacity := SSCR / cpuUtil
+		return mmaprototype.LoadValue(nodeCapacity / N)
+	}
+
+	nodeCapacity := numerator / denominator
+	// Clamp to avoid negative capacity (can happen if gateway CPU is very
+	// large relative to total capacity).
+	if nodeCapacity < 0 {
+		nodeCapacity = SSCR / cpuUtil
+	}
+
+	storeCapacity := nodeCapacity / N
+	return mmaprototype.LoadValue(storeCapacity)
 }

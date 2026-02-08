@@ -312,6 +312,20 @@ message NodeCapacity {
   // sec, calculated by the runtime load monitor based on number of logical CPU
   // processors available for use by the processor.
   optional int64 node_cpu_rate_capacity = 4 [(gogoproto.nullable) = false, (gogoproto.customname) = "NodeCPURateCapacity"];
+
+  // SQLGatewayCPURate is the CPU usage rate (nanoseconds per second) for SQL
+  // gateway work on this node. Gateway work includes parsing, planning, result
+  // serialization, and other work that happens on the node where the SQL client
+  // is connected. This CPU is NOT proportional to local replica load.
+  optional int64 sql_gateway_cpu_rate = 5 [(gogoproto.nullable) = false, (gogoproto.customname) = "SQLGatewayCPURate"];
+
+  // SQLDistCPURate is the CPU usage rate (nanoseconds per second) for
+  // distributed SQL (DistSQL) work on this node. DistSQL work includes
+  // TableReader execution, joins, aggregations, sorts, and flow
+  // setup/teardown. This CPU is assumed to be proportional to local replica
+  // (KV) load because DistSQL processors are placed on nodes that hold the
+  // relevant range replicas.
+  optional int64 sql_dist_cpu_rate = 6 [(gogoproto.nullable) = false, (gogoproto.customname) = "SQLDistCPURate"];
 }
 
 // StoreCapacity contains capacity information for a storage device.

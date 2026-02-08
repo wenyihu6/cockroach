@@ -123,6 +123,17 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 	return gh
 }
 
+// reportCPU reports CPU time consumed by this handle to the provider's
+// aggregate counters.
+func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
+	nanos := int64(diff)
+	if h.workInfo.AtGateway {
+		h.p.gatewayCPUNanos.Add(nanos)
+	} else {
+		h.p.distCPUNanos.Add(nanos)
+	}
+}
+
 // Close is called when no more reporting is needed. It pools
 // GoroutineCPUHandles that have been closed. GoroutineCPUHandles that are not
 // yet closed are left for GC.
@@ -215,11 +226,11 @@ func (h *GoroutineCPUHandle) measureAndAdmit(ctx context.Context, noWait bool) e
 	if diff <= 0 {
 		return nil
 	}
-	// TODO(sumeer): adding this diff to an atomic in SQLCPUHandle may be too
-	// much overhead. An alternative would be implement an atomic here, and
-	// only update the SQLCPUHandle when enough has accumulated. The reason
-	// we would need an atomic here is that when SQLCPUHandle is closed, it
-	// needs to reach in and grab whatever CPU has not yet been reported.
+	// Report the CPU diff to the provider for aggregate tracking. We report
+	// directly to the provider's atomics, categorized by whether this is
+	// gateway or DistSQL work. This is used by the capacity model to separate
+	// SQL_G (gateway) from SQL_DIST (distributed) CPU.
+	h.h.reportCPU(diff)
 	h.cpuAccounted += diff
 	return nil
 }
@@ -243,18 +254,38 @@ func (h *GoroutineCPUHandle) UnpauseMeasuring() {
 	}
 }
 
+// SQLCPUStatsProvider provides cumulative SQL CPU usage statistics, split into
+// gateway and distributed (DistSQL) components. Used by NodeCapacityProvider
+// to compute SQL CPU rates for the capacity model.
+type SQLCPUStatsProvider interface {
+	// GetCumulativeSQLCPUNanos returns cumulative CPU time in nanoseconds for
+	// gateway SQL work and distributed SQL work respectively.
+	GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCPUNanos int64)
+}
+
 type sqlCPUProviderImpl struct {
-	// TODO(sumeer): implement.
+	// gatewayCPUNanos accumulates cumulative CPU nanoseconds for SQL work
+	// executed at the gateway node (parsing, planning, result serialization).
+	gatewayCPUNanos atomic.Int64
+	// distCPUNanos accumulates cumulative CPU nanoseconds for distributed SQL
+	// work (TableReaders, joins, aggregations, sorts placed at replica nodes).
+	distCPUNanos atomic.Int64
 }
 
 func (p *sqlCPUProviderImpl) GetHandle(workInfo SQLWorkInfo) *SQLCPUHandle {
-	// TODO(sumeer): implement.
 	return newSQLCPUAdmissionHandle(workInfo, p)
 }
 
-// NewSQLCPUProvider creates a new SQLCPUProvider.
-//
-// TODO(sumeer): real implementation.
-func NewSQLCPUProvider() SQLCPUProvider {
-	return &sqlCPUProviderImpl{}
+// GetCumulativeSQLCPUNanos implements SQLCPUStatsProvider.
+func (p *sqlCPUProviderImpl) GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCPUNanos int64) {
+	return p.gatewayCPUNanos.Load(), p.distCPUNanos.Load()
+}
+
+// NewSQLCPUProvider creates a new SQLCPUProvider and SQLCPUStatsProvider.
+// The returned SQLCPUProvider is used for creating per-query CPU handles,
+// while the SQLCPUStatsProvider is used for reading aggregate SQL CPU stats
+// for the capacity model.
+func NewSQLCPUProvider() (SQLCPUProvider, SQLCPUStatsProvider) {
+	p := &sqlCPUProviderImpl{}
+	return p, p
 }

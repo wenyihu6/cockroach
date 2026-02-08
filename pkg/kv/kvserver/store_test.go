@@ -266,7 +266,7 @@ func createTestStoreWithoutStart(
 			CPUUsageRefreshInterval:    10 * time.Millisecond,
 			CPUCapacityRefreshInterval: 10 * time.Millisecond,
 			CPUUsageMovingAverageAge:   20,
-		})
+		}, nil /* sqlCPUStats */)
 	}
 
 	rangeProv := &dummyFirstRangeProvider{}

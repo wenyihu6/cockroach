@@ -586,7 +586,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 	)
 	db.SQLKVResponseAdmissionQ = gcoords.RegularCPU.GetSQLWorkQueue(admission.SQLKVResponseWork)
 	db.AdmissionPacerFactory = gcoords.ElasticCPU
-	sqlCPUProvider := admission.NewSQLCPUProvider()
+	sqlCPUProvider, sqlCPUStatsProvider := admission.NewSQLCPUProvider()
 	db.SQLCPUProvider = sqlCPUProvider
 	goschedstats.RegisterSettings(st)
 	if goschedstats.Supported {
@@ -717,7 +717,8 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		CPUCapacityRefreshInterval: cpuCapacityRefreshInterval,
 		CPUUsageMovingAverageAge:   base.DefaultCPUUsageMovingAverageAge,
 	}
-	nodeCapacityProvider := load.NewNodeCapacityProvider(stopper, stores, nodeCapacityProviderConfig)
+	nodeCapacityProvider := load.NewNodeCapacityProvider(
+		stopper, stores, nodeCapacityProviderConfig, sqlCPUStatsProvider)
 
 	// The Executor will be further initialized later, as we create more
 	// of the server's components. There's a circular dependency - many things

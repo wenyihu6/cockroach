@@ -175,7 +175,7 @@ func (ltc *LocalTestCluster) Start(t testing.TB, initFactory InitFactoryFn) {
 		CPUUsageRefreshInterval:    10 * time.Millisecond,
 		CPUCapacityRefreshInterval: 10 * time.Millisecond,
 		CPUUsageMovingAverageAge:   20,
-	})
+	}, nil /* sqlCPUStats */)
 
 	factory := initFactory(ctx, cfg.Settings, nodeDesc, ltc.stopper.Tracer(), ltc.Clock, ltc.Latency,
 		kvserver.ToSenderForTesting(ltc.Stores), ltc.stopper, ltc.Gossip)

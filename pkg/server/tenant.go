@@ -219,9 +219,10 @@ func NewSeparateProcessTenantServer(
 	}
 	// TODO(irfansharif): hook up NewGrantCoordinatorSQL.
 	var noopElasticCPUGrantCoord *admission.ElasticCPUGrantCoordinator = nil
+	sqlCPUProvider, _ := admission.NewSQLCPUProvider()
 	return newTenantServer(
 		ctx, stopper, baseCfg, sqlCfg, tenantNameContainer, deps, mtinfopb.ServiceModeExternal,
-		noopElasticCPUGrantCoord, admission.NewSQLCPUProvider())
+		noopElasticCPUGrantCoord, sqlCPUProvider)
 }
 
 // newSharedProcessTenantServer creates a tenant-specific, SQL-only

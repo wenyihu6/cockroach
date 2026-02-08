@@ -19,6 +19,15 @@ import (
 	"github.com/cockroachdb/errors"
 )
 
+// SQLCPUStatsProvider provides cumulative SQL CPU usage statistics, split into
+// gateway and distributed (DistSQL) components. This interface matches the one
+// defined in the admission package to avoid a direct import cycle.
+type SQLCPUStatsProvider interface {
+	// GetCumulativeSQLCPUNanos returns cumulative CPU time in nanoseconds for
+	// gateway SQL work and distributed SQL work respectively.
+	GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCPUNanos int64)
+}
+
 // StoresStatsAggregator provides aggregated cpu usage stats across all stores.
 type StoresStatsAggregator interface {
 	// GetAggregatedStoreStats returns the total cpu usage across all stores and
@@ -33,6 +42,7 @@ type StoresStatsAggregator interface {
 type NodeCapacityProvider struct {
 	stores             StoresStatsAggregator
 	runtimeLoadMonitor *runtimeLoadMonitor
+	sqlCPUStats        SQLCPUStatsProvider
 }
 
 // NodeCapacityProviderConfig holds the configuration for creating a
@@ -50,9 +60,14 @@ type NodeCapacityProviderConfig struct {
 }
 
 // NewNodeCapacityProvider creates a new NodeCapacityProvider that monitors CPU
-// metrics using the provided stores aggregator and configuration.
+// metrics using the provided stores aggregator and configuration. The
+// sqlCPUStats parameter may be nil if SQL CPU tracking is not available (e.g.,
+// in tests or SQL-only tenants).
 func NewNodeCapacityProvider(
-	stopper *stop.Stopper, stores StoresStatsAggregator, config NodeCapacityProviderConfig,
+	stopper *stop.Stopper,
+	stores StoresStatsAggregator,
+	config NodeCapacityProviderConfig,
+	sqlCPUStats SQLCPUStatsProvider,
 ) *NodeCapacityProvider {
 	if stopper == nil || stores == nil {
 		panic("programming error: stopper or stores aggregator cannot be nil")
@@ -62,12 +77,16 @@ func NewNodeCapacityProvider(
 		stopper:                 stopper,
 		usageRefreshInterval:    config.CPUUsageRefreshInterval,
 		capacityRefreshInterval: config.CPUCapacityRefreshInterval,
+		sqlCPUStats:             sqlCPUStats,
 	}
 	monitor.mu.usageEWMA = ewma.NewMovingAverage(config.CPUUsageMovingAverageAge)
+	monitor.mu.sqlGatewayEWMA = ewma.NewMovingAverage(config.CPUUsageMovingAverageAge)
+	monitor.mu.sqlDistEWMA = ewma.NewMovingAverage(config.CPUUsageMovingAverageAge)
 	monitor.recordCPUCapacity(context.Background())
 	return &NodeCapacityProvider{
 		stores:             stores,
 		runtimeLoadMonitor: monitor,
+		sqlCPUStats:        sqlCPUStats,
 	}
 }
 
@@ -100,12 +119,15 @@ func (n *NodeCapacityProvider) GetNodeCapacity(useCached bool) (roachpb.NodeCapa
 	// runtimeLoadMonitor to also fetch updated stats.
 	// TODO(wenyihu6): NodeCPURateCapacity <= NodeCPURateUsage fails on CI and
 	// requires more investigation.
-	cpuUsageNanoPerSec, cpuCapacityNanoPerSec := n.runtimeLoadMonitor.GetCPUStats()
+	cpuUsageNanoPerSec, cpuCapacityNanoPerSec, sqlGatewayCPURate, sqlDistCPURate :=
+		n.runtimeLoadMonitor.GetCPUStats()
 	return roachpb.NodeCapacity{
 		StoresCPURate:       storesCPURate,
 		NumStores:           numStores,
 		NodeCPURateCapacity: cpuCapacityNanoPerSec,
 		NodeCPURateUsage:    cpuUsageNanoPerSec,
+		SQLGatewayCPURate:   sqlGatewayCPURate,
+		SQLDistCPURate:      sqlDistCPURate,
 	}, nil
 }
 
@@ -115,6 +137,8 @@ type runtimeLoadMonitor struct {
 	usageRefreshInterval    time.Duration
 	capacityRefreshInterval time.Duration
 	stopper                 *stop.Stopper
+	// sqlCPUStats provides cumulative SQL CPU measurements. May be nil.
+	sqlCPUStats SQLCPUStatsProvider
 
 	mu struct {
 		syncutil.Mutex
@@ -128,11 +152,20 @@ type runtimeLoadMonitor struct {
 		// logicalCPUsPerSec represents the node's cpu capacity in logical
 		// CPU-seconds per second, obtained from status.GetCPUCapacity.
 		logicalCPUsPerSec int64
+
+		// SQL CPU tracking: cumulative snapshots and EWMA rates.
+		lastGatewayCPUNanos float64
+		lastDistCPUNanos    float64
+		sqlGatewayEWMA      ewma.MovingAverage
+		sqlDistEWMA         ewma.MovingAverage
 	}
 }
 
-// GetCPUStats returns the current cpu usage and capacity stats for the node.
-func (m *runtimeLoadMonitor) GetCPUStats() (cpuUsageNanoPerSec int64, cpuCapacityNanoPerSec int64) {
+// GetCPUStats returns the current cpu usage, capacity, and SQL CPU rate stats
+// for the node.
+func (m *runtimeLoadMonitor) GetCPUStats() (
+	cpuUsageNanoPerSec, cpuCapacityNanoPerSec, sqlGatewayCPURate, sqlDistCPURate int64,
+) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	// usageEWMA is usage in nanoseconds. Divide by refresh interval to get the
@@ -141,10 +174,18 @@ func (m *runtimeLoadMonitor) GetCPUStats() (cpuUsageNanoPerSec int64, cpuCapacit
 	// logicalCPUsPerSec is in logical cpu-seconds per second. Convert the unit
 	// from cpu-seconds to cpu-nanoseconds.
 	cpuCapacityNanoPerSec = m.mu.logicalCPUsPerSec * time.Second.Nanoseconds()
+	// SQL CPU rates are also computed as nanos-per-interval / interval_seconds.
+	if m.mu.sqlGatewayEWMA != nil {
+		sqlGatewayCPURate = int64(m.mu.sqlGatewayEWMA.Value() / m.usageRefreshInterval.Seconds())
+	}
+	if m.mu.sqlDistEWMA != nil {
+		sqlDistCPURate = int64(m.mu.sqlDistEWMA.Value() / m.usageRefreshInterval.Seconds())
+	}
 	return
 }
 
-// recordCPUUsage samples and records the current cpu usage of the node.
+// recordCPUUsage samples and records the current cpu usage of the node,
+// including SQL CPU (gateway and DistSQL) if available.
 func (m *runtimeLoadMonitor) recordCPUUsage(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -161,6 +202,23 @@ func (m *runtimeLoadMonitor) recordCPUUsage(ctx context.Context) error {
 	}
 	m.mu.usageEWMA.Add(totalUsageNanos - m.mu.lastTotalUsageNanos)
 	m.mu.lastTotalUsageNanos = totalUsageNanos
+
+	// Sample SQL CPU cumulative counters and compute deltas for EWMA.
+	if m.sqlCPUStats != nil {
+		gatewayCPUNanos, distCPUNanos := m.sqlCPUStats.GetCumulativeSQLCPUNanos()
+		gatewayDelta := float64(gatewayCPUNanos) - m.mu.lastGatewayCPUNanos
+		distDelta := float64(distCPUNanos) - m.mu.lastDistCPUNanos
+		if gatewayDelta < 0 {
+			gatewayDelta = 0
+		}
+		if distDelta < 0 {
+			distDelta = 0
+		}
+		m.mu.sqlGatewayEWMA.Add(gatewayDelta)
+		m.mu.sqlDistEWMA.Add(distDelta)
+		m.mu.lastGatewayCPUNanos = float64(gatewayCPUNanos)
+		m.mu.lastDistCPUNanos = float64(distCPUNanos)
+	}
 	return nil
 }
 
