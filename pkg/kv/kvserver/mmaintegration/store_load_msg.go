@@ -6,8 +6,6 @@
 package mmaintegration
 
 import (
-	"math"
-
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
@@ -15,14 +13,36 @@ import (
 
 // MakeStoreLoadMsg makes a store load message.
 //
+// The CPU capacity is pre-computed at the sender node (in
+// NodeCapacityProvider.GetNodeCapacity) and sent in the gossip message.
+// Receivers use the pre-computed value directly rather than recomputing
+// from raw inputs. K1 and K2 are dynamically fitted at each gossip interval.
+//
 // TODO(wenyihu6): Add more tests for this function.
 func MakeStoreLoadMsg(
 	desc roachpb.StoreDescriptor, origTimestampNanos int64,
 ) mmaprototype.StoreLoadMsg {
 	var load, capacity mmaprototype.LoadVector
 	load[mmaprototype.CPURate] = mmaprototype.LoadValue(desc.Capacity.CPUPerSecond)
-	if desc.NodeCapacity.NodeCPURateCapacity > 0 {
-		capacity[mmaprototype.CPURate] = computeStoreCPUCapacity(desc.NodeCapacity)
+	if desc.NodeCapacity.ComputedStoreCPUCapacity > 0 {
+		// Use the pre-computed per-store CPU capacity from the sender.
+		capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(desc.NodeCapacity.ComputedStoreCPUCapacity)
+	} else if desc.NodeCapacity.NodeCPURateCapacity > 0 {
+		// Fallback for older gossip messages that don't have pre-computed
+		// capacity: use the original scheme (SSCR / cpuUtil / N).
+		SSCR := float64(desc.NodeCapacity.StoresCPURate)
+		NCR := float64(desc.NodeCapacity.NodeCPURateUsage)
+		NCRC := float64(desc.NodeCapacity.NodeCPURateCapacity)
+		N := float64(desc.NodeCapacity.NumStores)
+		cpuUtil := NCR / NCRC
+		if SSCR == 0 || cpuUtil < 0.01 || N == 0 {
+			if N == 0 {
+				N = 1
+			}
+			capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(NCRC / 2 / N)
+		} else {
+			capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(SSCR / cpuUtil / N)
+		}
 	} else {
 		// TODO(sumeer): remove this hack of defaulting to 50% utilization, since
 		// NodeCPURateCapacity should never be 0.
@@ -66,106 +86,4 @@ func MakeStoreLoadMsg(
 		SecondaryLoad: secondaryLoad,
 		LoadTime:      timeutil.FromUnixNanos(origTimestampNanos),
 	}
-}
-
-// computeStoreCPUCapacity computes the per-store CPU capacity from the
-// NodeCapacity. It uses a model that accounts for SQL CPU (both gateway
-// and DistSQL) when available, falling back to the original scheme when
-// SQL CPU measurements are not available.
-//
-// # Model
-//
-// We fit two equations to the observed CPU:
-//
-//	(SSCR + SQL_DIST + SQL_G) * K1 = NCR
-//	SSCR * K2 = SQL_DIST
-//
-// Where:
-//   - SSCR = StoresCPURate (aggregate per-replica CPU tracked at KV layer)
-//   - SQL_G = SQLGatewayCPURate (gateway SQL work, NOT proportional to replicas)
-//   - SQL_DIST = SQLDistCPURate (DistSQL work, proportional to replica load)
-//   - NCR = NodeCPURateUsage (actual process CPU)
-//   - NCRC = NodeCPURateCapacity (CPU capacity)
-//   - K1 = scale factor from measured CPU to actual process CPU
-//   - K2 = ratio of DistSQL CPU to KV replica CPU
-//
-// Solving:
-//
-//	K2 = SQL_DIST / SSCR
-//	K1 = NCR / (SSCR + SQL_DIST + SQL_G)
-//
-// The effective node capacity (in SSCR units) is:
-//
-//	NodeCapacity = (NCRC - SQL_G*K1) / ((K2+1)*K1)
-//
-// This subtracts gateway CPU from the capacity budget (since gateway CPU is
-// NOT proportional to replica load and cannot be shed by moving replicas),
-// then converts the remaining capacity to SSCR units. The per-store capacity
-// is NodeCapacity / NumStores.
-//
-// When SQL_G=0 and SQL_DIST=0, this reduces to the original scheme:
-//
-//	NodeCapacity = NCRC / (NCR/SSCR) = SSCR * NCRC/NCR = SSCR/cpuUtil
-func computeStoreCPUCapacity(nc roachpb.NodeCapacity) mmaprototype.LoadValue {
-	SSCR := float64(nc.StoresCPURate)
-	NCR := float64(nc.NodeCPURateUsage)
-	NCRC := float64(nc.NodeCPURateCapacity)
-	SQL_G := float64(nc.SQLGatewayCPURate)
-	SQL_DIST := float64(nc.SQLDistCPURate)
-	N := float64(nc.NumStores)
-
-	cpuUtil := NCR / NCRC
-	almostZeroUtil := cpuUtil < 0.01
-
-	if SSCR == 0 || almostZeroUtil || N == 0 {
-		// Fallback: StoresCPURate is zero, utilization is near-zero, or no
-		// stores. We assume that only 50% of the usage can be accounted for
-		// in StoresCPURate, so we divide 50% of the capacity among all stores.
-		if N == 0 {
-			N = 1
-		}
-		return mmaprototype.LoadValue(NCRC / 2 / N)
-	}
-
-	// Check if we have SQL CPU measurements. If both are zero, fall back to the
-	// original scheme for backwards compatibility and because the formula
-	// produces the same result.
-	hasSQLCPU := SQL_G > 0 || SQL_DIST > 0
-
-	if !hasSQLCPU {
-		// Original scheme: NodeCapacity = SSCR / cpuUtil.
-		// This implicitly fits the model SSCR * K1 = NCR (all CPU is
-		// proportional to store load).
-		nodeCapacity := SSCR / cpuUtil
-		storeCapacity := nodeCapacity / N
-		return mmaprototype.LoadValue(storeCapacity)
-	}
-
-	// Alternative scheme with SQL CPU accounting.
-	totalMeasured := SSCR + SQL_DIST + SQL_G
-
-	// K1 = NCR / totalMeasured
-	// K2 = SQL_DIST / SSCR
-	K1 := NCR / totalMeasured
-	K2 := SQL_DIST / SSCR
-
-	// NodeCapacity = (NCRC - SQL_G * K1) / ((K2 + 1) * K1)
-	numerator := NCRC - SQL_G*K1
-	denominator := (K2 + 1) * K1
-
-	if denominator <= 0 || !math.IsFinite(numerator/denominator) {
-		// Safety: if the formula produces non-finite results, fall back.
-		nodeCapacity := SSCR / cpuUtil
-		return mmaprototype.LoadValue(nodeCapacity / N)
-	}
-
-	nodeCapacity := numerator / denominator
-	// Clamp to avoid negative capacity (can happen if gateway CPU is very
-	// large relative to total capacity).
-	if nodeCapacity < 0 {
-		nodeCapacity = SSCR / cpuUtil
-	}
-
-	storeCapacity := nodeCapacity / N
-	return mmaprototype.LoadValue(storeCapacity)
 }

@@ -289,8 +289,14 @@ message Percentiles {
 // the network. MMA uses these metrics from gossiped store descriptors to
 // construct store load messages and calculate utilization ratios across
 // different dimensions.
-// TODO(wenyihu6): This field is currently unused and not populated. Populate
-// this field correctly and use it in MMA.
+//
+// The CPU capacity model accounts for SQL CPU (gateway and DistSQL) to avoid
+// over-estimating store capacity when a node does significant gateway work.
+// The model is fitted dynamically at each gossip interval at the sending node,
+// and the computed per-store capacity is sent in the gossip message. Receivers
+// do NOT need to recompute — they use the pre-computed value directly. The
+// raw SQL CPU inputs are only used locally at the sender for computation and
+// logging.
 message NodeCapacity {
   // StoresCPURate is the total CPU usage across all stores on this node,
   // measured in nanoseconds per second. It is calculated by summing the CPU
@@ -313,19 +319,27 @@ message NodeCapacity {
   // processors available for use by the processor.
   optional int64 node_cpu_rate_capacity = 4 [(gogoproto.nullable) = false, (gogoproto.customname) = "NodeCPURateCapacity"];
 
-  // SQLGatewayCPURate is the CPU usage rate (nanoseconds per second) for SQL
-  // gateway work on this node. Gateway work includes parsing, planning, result
-  // serialization, and other work that happens on the node where the SQL client
-  // is connected. This CPU is NOT proportional to local replica load.
-  optional int64 sql_gateway_cpu_rate = 5 [(gogoproto.nullable) = false, (gogoproto.customname) = "SQLGatewayCPURate"];
+  // ComputedStoreCPUCapacity is the pre-computed per-store CPU capacity in
+  // nanoseconds per second, computed at the sender node from a model that
+  // accounts for SQL gateway and DistSQL CPU overhead. K1 and K2 are
+  // dynamically fitted at each gossip interval from the current measurements:
+  //
+  //   K1 = NCR / (SSCR + SQL_DIST + SQL_G)
+  //   K2 = SQL_DIST / SSCR
+  //   NodeCapacity = (NCRC - SQL_G*K1) / ((K2+1)*K1)
+  //   StoreCPUCapacity = NodeCapacity / NumStores
+  //
+  // When SQL CPU measurements are not available, falls back to:
+  //   StoreCPUCapacity = (SSCR / (NCR/NCRC)) / NumStores
+  //
+  // This value is ready to use by MMA directly. Receivers should NOT
+  // recompute from raw inputs.
+  optional int64 computed_store_cpu_capacity = 5 [(gogoproto.nullable) = false, (gogoproto.customname) = "ComputedStoreCPUCapacity"];
 
-  // SQLDistCPURate is the CPU usage rate (nanoseconds per second) for
-  // distributed SQL (DistSQL) work on this node. DistSQL work includes
-  // TableReader execution, joins, aggregations, sorts, and flow
-  // setup/teardown. This CPU is assumed to be proportional to local replica
-  // (KV) load because DistSQL processors are placed on nodes that hold the
-  // relevant range replicas.
-  optional int64 sql_dist_cpu_rate = 6 [(gogoproto.nullable) = false, (gogoproto.customname) = "SQLDistCPURate"];
+  // Deprecated: sql_gateway_cpu_rate and sql_dist_cpu_rate (fields 6, 7) are
+  // no longer sent in gossip. The capacity is pre-computed at the sender.
+  // These field numbers are reserved for backwards compatibility.
+  reserved 6, 7;
 }
 
 // StoreCapacity contains capacity information for a storage device.

@@ -7,6 +7,7 @@ package load
 
 import (
 	"context"
+	"math"
 	"time"
 
 	"github.com/VividCortex/ewma"
@@ -105,10 +106,15 @@ func (n *NodeCapacityProvider) Run(ctx context.Context) {
 	})
 }
 
-// GetNodeCapacity returns the NodeCapacity which node-level cpu usage and
-// capacity and aggregated store-level cpu usage. If useCached is true, it will
-// use cached store descriptors to aggregate the sum of store-level cpu
-// capacity.
+// GetNodeCapacity returns the NodeCapacity with node-level CPU usage,
+// capacity, and a pre-computed per-store CPU capacity. The store CPU capacity
+// is computed here at the sender node using a model that accounts for SQL
+// gateway and DistSQL CPU overhead, with K1 and K2 dynamically fitted from
+// the current measurements at each gossip interval. This pre-computed value
+// is sent in gossip so receivers can use it directly without recomputing.
+//
+// If useCached is true, it will use cached store descriptors to aggregate the
+// sum of store-level CPU capacity.
 func (n *NodeCapacityProvider) GetNodeCapacity(useCached bool) (roachpb.NodeCapacity, error) {
 	storesCPURate, numStores, err := n.stores.GetAggregatedStoreStats(useCached)
 	if err != nil {
@@ -121,14 +127,140 @@ func (n *NodeCapacityProvider) GetNodeCapacity(useCached bool) (roachpb.NodeCapa
 	// requires more investigation.
 	cpuUsageNanoPerSec, cpuCapacityNanoPerSec, sqlGatewayCPURate, sqlDistCPURate :=
 		n.runtimeLoadMonitor.GetCPUStats()
+
+	// Compute the per-store CPU capacity at the sender. K1 and K2 are
+	// dynamically fitted from the current measurements at each gossip interval.
+	// The raw SQL CPU inputs (sqlGatewayCPURate, sqlDistCPURate) are only used
+	// locally for this computation and logging — they are NOT sent in gossip.
+	SSCR := float64(storesCPURate)
+	NCR := float64(cpuUsageNanoPerSec)
+	NCRC := float64(cpuCapacityNanoPerSec)
+	SQL_G := float64(sqlGatewayCPURate)
+	SQL_DIST := float64(sqlDistCPURate)
+	N := float64(numStores)
+	computedCapacity := computeStoreCPUCapacity(SSCR, NCR, NCRC, SQL_G, SQL_DIST, N)
+
+	// Log the raw inputs and computed capacity at the sender for debuggability.
+	// Receivers don't see these raw values — they only get the pre-computed
+	// capacity in the gossip message.
+	if SQL_G > 0 || SQL_DIST > 0 {
+		var K1, K2 float64
+		totalMeasured := SSCR + SQL_DIST + SQL_G
+		if totalMeasured > 0 && SSCR > 0 {
+			K1 = NCR / totalMeasured
+			K2 = SQL_DIST / SSCR
+		}
+		log.KvDistribution.VInfof(context.Background(), 2,
+			"store CPU capacity model: SSCR=%.0f NCR=%.0f NCRC=%.0f SQL_G=%.0f SQL_DIST=%.0f "+
+				"N=%.0f K1=%.4f K2=%.4f => capacity=%d",
+			SSCR, NCR, NCRC, SQL_G, SQL_DIST, N, K1, K2, computedCapacity)
+	}
+
 	return roachpb.NodeCapacity{
-		StoresCPURate:       storesCPURate,
-		NumStores:           numStores,
-		NodeCPURateCapacity: cpuCapacityNanoPerSec,
-		NodeCPURateUsage:    cpuUsageNanoPerSec,
-		SQLGatewayCPURate:   sqlGatewayCPURate,
-		SQLDistCPURate:      sqlDistCPURate,
+		StoresCPURate:            storesCPURate,
+		NumStores:                numStores,
+		NodeCPURateCapacity:      cpuCapacityNanoPerSec,
+		NodeCPURateUsage:         cpuUsageNanoPerSec,
+		ComputedStoreCPUCapacity: computedCapacity,
 	}, nil
+}
+
+// computeStoreCPUCapacity computes the per-store CPU capacity using a model
+// that accounts for SQL CPU (both gateway and DistSQL) when available.
+//
+// # Model
+//
+// We fit two equations to the observed CPU:
+//
+//	(SSCR + SQL_DIST + SQL_G) * K1 = NCR
+//	SSCR * K2 = SQL_DIST
+//
+// Where:
+//   - SSCR = StoresCPURate (aggregate per-replica CPU tracked at KV layer)
+//   - SQL_G = gateway SQL work (NOT proportional to replicas)
+//   - SQL_DIST = DistSQL work (proportional to replica load, simplifying assumption)
+//   - NCR = NodeCPURateUsage (actual process CPU)
+//   - NCRC = NodeCPURateCapacity (CPU capacity)
+//   - K1 = scale factor from measured CPU to actual process CPU
+//   - K2 = ratio of DistSQL CPU to KV replica CPU
+//
+// K1 and K2 are dynamically adjusted at each gossip interval from the current
+// measurements — they are NOT pre-determined constants.
+//
+// Solving:
+//
+//	K2 = SQL_DIST / SSCR
+//	K1 = NCR / (SSCR + SQL_DIST + SQL_G)
+//
+// The effective node capacity (in SSCR units) is:
+//
+//	NodeCapacity = (NCRC - SQL_G*K1) / ((K2+1)*K1)
+//
+// This subtracts gateway CPU from the capacity budget (since gateway CPU is
+// NOT proportional to replica load and cannot be shed by moving replicas),
+// then converts the remaining capacity to SSCR units. The per-store capacity
+// is NodeCapacity / NumStores.
+//
+// When SQL_G=0 and SQL_DIST=0, this reduces to the original scheme:
+//
+//	NodeCapacity = NCRC / (NCR/SSCR) = SSCR * NCRC/NCR = SSCR/cpuUtil
+func computeStoreCPUCapacity(
+	SSCR, NCR, NCRC, SQL_G, SQL_DIST, N float64,
+) int64 {
+	cpuUtil := NCR / NCRC
+	almostZeroUtil := cpuUtil < 0.01
+
+	if SSCR == 0 || almostZeroUtil || N == 0 {
+		// Fallback: StoresCPURate is zero, utilization is near-zero, or no
+		// stores. We assume that only 50% of the usage can be accounted for
+		// in StoresCPURate, so we divide 50% of the capacity among all stores.
+		if N == 0 {
+			N = 1
+		}
+		return int64(NCRC / 2 / N)
+	}
+
+	// Check if we have SQL CPU measurements. If both are zero, fall back to the
+	// original scheme for backwards compatibility and because the formula
+	// produces the same result.
+	hasSQLCPU := SQL_G > 0 || SQL_DIST > 0
+
+	if !hasSQLCPU {
+		// Original scheme: NodeCapacity = SSCR / cpuUtil.
+		// This implicitly fits the model SSCR * K1 = NCR (all CPU is
+		// proportional to store load).
+		nodeCapacity := SSCR / cpuUtil
+		storeCapacity := nodeCapacity / N
+		return int64(storeCapacity)
+	}
+
+	// Alternative scheme with SQL CPU accounting.
+	totalMeasured := SSCR + SQL_DIST + SQL_G
+
+	// K1 = NCR / totalMeasured (dynamically adjusted each interval)
+	// K2 = SQL_DIST / SSCR     (dynamically adjusted each interval)
+	K1 := NCR / totalMeasured
+	K2 := SQL_DIST / SSCR
+
+	// NodeCapacity = (NCRC - SQL_G * K1) / ((K2 + 1) * K1)
+	numerator := NCRC - SQL_G*K1
+	denominator := (K2 + 1) * K1
+
+	if denominator <= 0 || math.IsInf(numerator/denominator, 0) || math.IsNaN(numerator/denominator) {
+		// Safety: if the formula produces non-finite results, fall back.
+		nodeCapacity := SSCR / cpuUtil
+		return int64(nodeCapacity / N)
+	}
+
+	nodeCapacity := numerator / denominator
+	// Clamp to avoid negative capacity (can happen if gateway CPU is very
+	// large relative to total capacity).
+	if nodeCapacity < 0 {
+		nodeCapacity = SSCR / cpuUtil
+	}
+
+	storeCapacity := nodeCapacity / N
+	return int64(storeCapacity)
 }
 
 // runtimeLoadMonitor polls cpu usage and capacity stats of the node
