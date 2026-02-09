@@ -44,7 +44,7 @@ func TestNodeCapacityProvider(t *testing.T) {
 		CPUUsageRefreshInterval:    1 * time.Millisecond,
 		CPUCapacityRefreshInterval: 1 * time.Millisecond,
 		CPUUsageMovingAverageAge:   20,
-	})
+	}, nil /* sqlCPUProvider */)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	provider.Run(ctx)

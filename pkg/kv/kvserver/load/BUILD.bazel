@@ -14,6 +14,7 @@ go_library(
         "//pkg/kv/kvserver/replicastats",
         "//pkg/roachpb",
         "//pkg/server/status",
+        "//pkg/util/admission",
         "//pkg/util/buildutil",
         "//pkg/util/hlc",
         "//pkg/util/log",
@@ -27,9 +28,12 @@ go_library(
 
 go_test(
     name = "load_test",
-    srcs = ["node_capacity_provider_test.go"],
+    srcs = [
+        "node_capacity_provider_test.go",
+        "runtime_load_monitor_test.go",
+    ],
+    embed = [":load"],
     deps = [
-        ":load",
         "//pkg/testutils",
         "//pkg/util/stop",
         "@com_github_cockroachdb_errors//:errors",
