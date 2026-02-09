@@ -33,6 +33,7 @@ type StoresStatsAggregator interface {
 type NodeCapacityProvider struct {
 	stores             StoresStatsAggregator
 	runtimeLoadMonitor *runtimeLoadMonitor
+	sqlCPUStats        *sqlCPUStats
 }
 
 // NodeCapacityProviderConfig holds the configuration for creating a
@@ -52,7 +53,10 @@ type NodeCapacityProviderConfig struct {
 // NewNodeCapacityProvider creates a new NodeCapacityProvider that monitors CPU
 // metrics using the provided stores aggregator and configuration.
 func NewNodeCapacityProvider(
-	stopper *stop.Stopper, stores StoresStatsAggregator, config NodeCapacityProviderConfig,
+	stopper *stop.Stopper,
+	stores StoresStatsAggregator,
+	config NodeCapacityProviderConfig,
+	sqlCPUProvider SQLCPUProvider,
 ) *NodeCapacityProvider {
 	if stopper == nil || stores == nil {
 		panic("programming error: stopper or stores aggregator cannot be nil")
