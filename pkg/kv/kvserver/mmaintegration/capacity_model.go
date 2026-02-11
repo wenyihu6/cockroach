@@ -242,8 +242,11 @@ func computeCPUCapacityWithCap(
 	mmaAttributedLoad := storesCPURate * mult
 	backgroundLoad := max(0.0, nodeCPURateUsage-mmaAttributedLoad)
 
-	// MMA's share of capacity is what remains after background load.
-	mmaShareOfCapacity := nodeCPURateCapacity - backgroundLoad
+	// MMA's share of capacity is what remains after background load. Clamped
+	// to non-negative: background load can exceed rated capacity when
+	// nodeCPURateCapacity << nodeCPURateUsage. Without the clamp, negative
+	// capacity would cause stores to be mislabeled as underutilized.
+	mmaShareOfCapacity := max(0.0, nodeCPURateCapacity-backgroundLoad)
 
 	// MMA's direct capacity is scaled down by the multiplier to account
 	// for indirect overhead.

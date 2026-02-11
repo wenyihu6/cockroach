@@ -526,7 +526,8 @@ func (ls loadSummary) SafeFormat(w redact.SafePrinter, _ rune) {
 
 // Computes the loadSummary for a particular load dimension.
 //
-// NB: load can be negative since it may be adjusted load.
+// NB: load can be negative since it may be adjusted load. capacity can be 0
+// when kv work is overloaded.
 func loadSummaryForDimension(
 	ctx context.Context,
 	storeID roachpb.StoreID,
