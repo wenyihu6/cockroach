@@ -11,8 +11,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
-// MakeStoreLoadMsg makes a store load message. The capacity model logic is in
-// computeStoreCPURateCapacity and computeStoreByteSizeCapacity.
+// MakeStoreLoadMsg makes a store load message.
 func MakeStoreLoadMsg(
 	desc roachpb.StoreDescriptor, origTimestampNanos int64,
 ) mmaprototype.StoreLoadMsg {
@@ -21,13 +20,11 @@ func MakeStoreLoadMsg(
 	load[mmaprototype.CPURate] = mmaprototype.LoadValue(desc.Capacity.CPUPerSecond)
 	cpuCap := computeCPUCapacityWithCap(
 		storeCPURateCapacityInput{
-			currentStoreCPUUsage: load[mmaprototype.CPURate],
-			storesCPURate:        float64(desc.NodeCapacity.StoresCPURate),
-			nodeCPURateUsage:     float64(desc.NodeCapacity.NodeCPURateUsage),
-			nodeCPURateCapacity:  float64(desc.NodeCapacity.NodeCPURateCapacity),
-			numStores:            desc.NodeCapacity.NumStores,
+			storesCPURate:       float64(desc.NodeCapacity.StoresCPURate),
+			nodeCPURateUsage:    float64(desc.NodeCapacity.NodeCPURateUsage),
+			nodeCPURateCapacity: float64(desc.NodeCapacity.NodeCPURateCapacity),
+			numStores:           desc.NodeCapacity.NumStores,
 		},
-		func(_ float64, _ float64, _ float64, _ float64) {},
 	)
 	// cpuCap can be 0 when the node is overloaded (nodeCPURateUsage >
 	// nodeCPURateCapacity). This is correct behavior - it signals that the
