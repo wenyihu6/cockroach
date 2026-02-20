@@ -9,6 +9,7 @@ package kvadmission
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -580,8 +581,7 @@ var _ replica_rac2.ACWorkQueue = &controllerImpl{}
 func (n *controllerImpl) Admit(ctx context.Context, entry replica_rac2.EntryForAdmission) bool {
 	storeAdmissionQ := n.storeGrantCoords.TryGetQueueForStore(entry.StoreID)
 	if storeAdmissionQ == nil {
-		log.KvDistribution.Errorf(ctx, "unable to find queue for store: %s", entry.StoreID)
-		return false // nothing to do
+		panic(fmt.Sprintf("unable to find queue for store: %s", entry.StoreID))
 	}
 
 	if entry.RequestedCount == 0 {

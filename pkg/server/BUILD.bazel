@@ -486,6 +486,7 @@ go_test(
         "load_endpoint_test.go",
         "main_test.go",
         "migration_test.go",
+        "multi_store_admission_test.go",
         "multi_store_test.go",
         "node_http_router_test.go",
         "node_tenant_test.go",
