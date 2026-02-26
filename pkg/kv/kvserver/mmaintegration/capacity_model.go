@@ -99,6 +99,107 @@ func computeStoreByteSizeCapacity(
 	return mmaprototype.LoadValue(float64(logicalBytes) / diskFractionUsed)
 }
 
+// cpuIndirectOverheadMultiplier is the maximum ratio of total CPU caused by
+// store work to the directly-tracked store CPU. For example, a value of 3
+// means we assume each unit of direct MMA load (replica CPU) can cause up to 2
+// additional units of indirect CPU (RPC handling, compactions, etc.), for a
+// total of 3 units. Any node CPU usage beyond storesCPURate * multiplier is
+// treated as background load unrelated to MMA.
+const cpuIndirectOverheadMultiplier = 3.0
+
+// maxDiskSpaceAmplification caps the ratio of physical disk bytes used to
+// logical (MVCC) bytes. Values above this are treated as if the extra physical
+// usage is independent of range data (e.g. WAL, auxiliary files).
+const maxDiskSpaceAmplification = 5.0
+
+// physicalCPUResult holds the outputs of the physical CPU model.
+type physicalCPUResult struct {
+	// load is the per-store direct replica CPU in ns/s (unchanged from input).
+	load float64
+	// capacity is the physical CPU capacity available to this store, in ns/s.
+	capacity float64
+	// amplificationFactor converts direct replica CPU to total physical CPU
+	// footprint (>= 1). MMA multiplies per-range CPU deltas by this factor
+	// when adjusting store loads.
+	amplificationFactor float64
+}
+
+// computePhysicalCPU computes per-store physical CPU load, capacity, and
+// amplification factor using a capped-multiplier model.
+//
+// The key idea: load and capacity are both in physical CPU units.
+//   - load = per-store direct replica CPU (storesCPURate / numStores)
+//   - capacity = physical CPU capacity for MMA work on this store
+//     (node capacity minus background, divided by numStores)
+//   - amplificationFactor = clamped multiplier, so that
+//     load * amplificationFactor = physical CPU consumed by this store's
+//     range work (direct + indirect overhead)
+//
+// utilization = (load * amplificationFactor + fixedUsageShare) / capacity
+// matches the node-level CPU utilization observable via OS metrics.
+func computePhysicalCPU(in storeCPURateCapacityInput) physicalCPUResult {
+	in.assertValid()
+
+	var mult float64
+	if in.storesCPURate <= 0 {
+		mult = cpuIndirectOverheadMultiplier
+	} else {
+		implicitMult := in.nodeCPURateUsage / in.storesCPURate
+		mult = max(1, min(implicitMult, cpuIndirectOverheadMultiplier))
+	}
+
+	mmaAttributedLoad := in.storesCPURate * mult
+	backgroundLoad := max(0.0, in.nodeCPURateUsage-mmaAttributedLoad)
+	mmaShareOfCapacity := max(0.0, in.nodeCPURateCapacity-backgroundLoad)
+
+	perStoreLoad := in.storesCPURate / float64(in.numStores)
+	perStoreCapacity := mmaShareOfCapacity / float64(in.numStores)
+
+	return physicalCPUResult{
+		load:                perStoreLoad,
+		capacity:            perStoreCapacity,
+		amplificationFactor: mult,
+	}
+}
+
+// physicalDiskResult holds the outputs of the physical disk model.
+type physicalDiskResult struct {
+	// load is the physical disk bytes used by the store.
+	load float64
+	// capacity is the total usable disk space (Used + Available).
+	capacity float64
+	// amplificationFactor converts logical bytes (MVCC) to physical bytes
+	// (>= 1, capped at maxDiskSpaceAmplification).
+	amplificationFactor float64
+}
+
+// computePhysicalDisk computes physical disk load, capacity, and space
+// amplification factor. Unlike the legacy computeStoreByteSizeCapacity which
+// operates in logical-byte space, this function works entirely in physical
+// units.
+//
+//   - load = Used (physical bytes consumed by the store)
+//   - capacity = Used + Available (total usable disk space)
+//   - amplificationFactor = clamp(Used / LogicalBytes, 1, maxDiskSpaceAmplification)
+//
+// For empty/new stores (logicalBytes == 0 or used == 0), the amplification
+// factor defaults to 1.0.
+func computePhysicalDisk(logicalBytes int64, used int64, available int64) physicalDiskResult {
+	capacity := float64(used + available)
+	var ampFactor float64
+	if logicalBytes > 0 && used > 0 {
+		ampFactor = float64(used) / float64(logicalBytes)
+		ampFactor = max(1.0, min(ampFactor, maxDiskSpaceAmplification))
+	} else {
+		ampFactor = 1.0
+	}
+	return physicalDiskResult{
+		load:                float64(used),
+		capacity:            capacity,
+		amplificationFactor: ampFactor,
+	}
+}
+
 // computeStoreCPURateCapacityWithSQL computes per-store CPU capacity using the
 // alternative model that accounts for SQL gateway and distributed SQL CPU
 // separately. This model fits:
@@ -138,9 +239,7 @@ func computeStoreByteSizeCapacity(
 // This model correctly attributes gateway SQL CPU (SQL_G) as background load
 // that doesn't scale with store work, while distributed SQL CPU (SQL_DIST) is
 // assumed to scale proportionally with KV work.
-func computeStoreCPURateCapacityWithSQL(
-	in storeCPURateCapacityInput,
-) (capacity float64) {
+func computeStoreCPURateCapacityWithSQL(in storeCPURateCapacityInput) (capacity float64) {
 	in.assertValid()
 
 	// Handle edge cases where we can't compute the model.

@@ -209,6 +209,14 @@ type storeLoad struct {
 	// provisioned disk bandwidth in the near future.
 	capacity LoadVector
 
+	// amplificationFactor converts logical (directly-tracked) range-level
+	// loads into physical units. For CPU, this accounts for indirect overhead
+	// (RPC, compactions, etc.); for disk, it accounts for space amplification
+	// (compression, LSM overhead, WAL, etc.). When applying a range's load
+	// delta to the adjusted store load, MMA multiplies the delta by this
+	// factor so that all arithmetic stays in physical units.
+	amplificationFactor [NumLoadDimensions]float64
+
 	reportedSecondaryLoad SecondaryLoadVector
 }
 
@@ -695,22 +703,32 @@ func highDiskSpaceUtilization(load LoadValue, capacity LoadValue, threshold floa
 		log.KvDistribution.Errorf(context.Background(), "disk capacity is unknown or zero")
 		return false
 	}
-	// load and capacity are both in terms of logical bytes.
-	//
-	//   load     = LogicalBytes
-	//   diskUtil = FractionUsed()  (i.e. Used/(Available+Used), or
-	//                               (Capacity-Available)/Capacity as fallback)
-	//   capacity = LogicalBytes / diskUtil
+	// load and capacity are both in physical disk bytes:
+	//   load     = Used (physical bytes consumed by the store)
+	//   capacity = Used + Available (total usable disk space)
 	//
 	// Therefore:
-	//   fractionUsed = load / capacity
-	//                = LogicalBytes / (LogicalBytes / diskUtil)
-	//                = diskUtil
+	//   fractionUsed = load / capacity = Used / (Used + Available)
 	//
-	// This recovers the actual disk utilization as reported by the store
-	// descriptor, expressed in terms of the logical byte load and capacity.
+	// This directly reflects the actual disk utilization.
 	fractionUsed := float64(load) / float64(capacity)
 	return fractionUsed >= threshold
+}
+
+// amplifyLoadVector multiplies each dimension of lv by the corresponding
+// amplification factor, converting logical range-level loads into physical
+// units. An amplification factor of 0 is treated as 1 (no amplification),
+// so that callers which haven't set the factor get pass-through behavior.
+func amplifyLoadVector(lv LoadVector, ampFactor [NumLoadDimensions]float64) LoadVector {
+	var result LoadVector
+	for i := range lv {
+		af := ampFactor[i]
+		if af == 0 {
+			af = 1.0
+		}
+		result[i] = LoadValue(float64(lv[i]) * af)
+	}
+	return result
 }
 
 const loadMultiplierForAddition = 1.1
@@ -737,6 +755,7 @@ var _ = RangeLoad{}.Load
 var _ = RangeLoad{}.RaftCPU
 var _ = storeLoad{}.reportedLoad
 var _ = storeLoad{}.capacity
+var _ = storeLoad{}.amplificationFactor
 var _ = storeLoad{}.reportedSecondaryLoad
 var _ = NodeLoad{}.NodeID
 var _ = NodeLoad{}.ReportedCPU
