@@ -12,14 +12,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
-// cpuIndirectOverheadMultiplier is the maximum ratio of total CPU caused by
-// store work to the directly-tracked store CPU. For example, a value of 3
-// means we assume each unit of direct MMA load (replica CPU) can cause up to 2
-// additional units of indirect CPU (RPC handling, compactions, etc.), for a
-// total of 3 units. Any node CPU usage beyond storesCPURate * multiplier is
-// treated as background load unrelated to MMA.
-const cpuIndirectOverheadMultiplier = 3.0
-
 // computeCPUCapacityWithCap computes per-store CPU capacity using a clamped
 // multiplier. Unlike the naive model (computeStoreCPURateCapacityNaive in
 // legacy_model_test.go, which assumes all node CPU usage is caused by
