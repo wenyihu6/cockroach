@@ -1364,7 +1364,6 @@ func (cs *clusterState) processStoreLoadMsg(
 	ss.loadSeqNum++
 	ss.storeLoad.reportedLoad = storeMsg.Load
 	ss.storeLoad.capacity = storeMsg.Capacity
-	ss.storeLoad.amplificationFactor = storeMsg.AmplificationFactor
 	ss.storeLoad.reportedSecondaryLoad = storeMsg.SecondaryLoad
 
 	// Reset the adjusted load to be the reported load. We will re-apply any
@@ -2198,31 +2197,25 @@ func (cs *clusterState) undoReplicaChange(ctx context.Context, change ReplicaCha
 }
 
 // applyChangeLoadDelta adds the change load delta to the adjusted load of the
-// store and node affected. The logical loadDelta is amplified by the target
-// store's current amplification factor to convert it to physical units before
-// adding.
+// store and node affected.
 func (cs *clusterState) applyChangeLoadDelta(change ReplicaChange) {
 	ss := cs.stores[change.target.StoreID]
-	physDelta := amplifyLoadVector(change.loadDelta, ss.storeLoad.amplificationFactor)
-	ss.adjusted.load.add(physDelta)
+	ss.adjusted.load.add(change.loadDelta)
 	ss.adjusted.secondaryLoad.add(change.secondaryLoadDelta)
 	ss.loadSeqNum++
 	ss.computeMaxFractionPending()
-	cs.nodes[ss.NodeID].adjustedCPU += physDelta[CPURate]
+	cs.nodes[ss.NodeID].adjustedCPU += change.loadDelta[CPURate]
 }
 
 // undoChangeLoadDelta subtracts the change load delta from the adjusted load
-// of the store and node affected. The logical loadDelta is amplified by the
-// target store's current amplification factor to convert it to physical units
-// before subtracting.
+// of the store and node affected.
 func (cs *clusterState) undoChangeLoadDelta(change ReplicaChange) {
 	ss := cs.stores[change.target.StoreID]
-	physDelta := amplifyLoadVector(change.loadDelta, ss.storeLoad.amplificationFactor)
-	ss.adjusted.load.subtract(physDelta)
+	ss.adjusted.load.subtract(change.loadDelta)
 	ss.adjusted.secondaryLoad.subtract(change.secondaryLoadDelta)
 	ss.loadSeqNum++
 	ss.computeMaxFractionPending()
-	cs.nodes[ss.NodeID].adjustedCPU -= physDelta[CPURate]
+	cs.nodes[ss.NodeID].adjustedCPU -= change.loadDelta[CPURate]
 }
 
 // setStore updates the store attributes and locality in the cluster state. If
@@ -2388,15 +2381,15 @@ func (cs *clusterState) canShedAndAddLoad(
 	//
 	// TODO(tbg): extract this into a helper and set it up so that it doesn't
 	// temporarily modify the cluster state.
-	// Amplify the logical delta using each store's amplification factor so
-	// that all speculative load adjustments are in physical units.
-	targetPhysDelta := amplifyLoadVector(delta, targetSS.storeLoad.amplificationFactor)
-	srcPhysDelta := amplifyLoadVector(delta, srcSS.storeLoad.amplificationFactor)
-
 	targetNS := cs.nodes[targetSS.NodeID]
-	// Add the amplified delta (with the 1.1x safety margin).
-	deltaToAdd := loadVectorToAdd(targetPhysDelta)
+	// Add the delta.
+	deltaToAdd := loadVectorToAdd(delta)
 	targetSS.adjusted.load.add(deltaToAdd)
+	// TODO(tbg): why does NodeLoad have an adjustedCPU field but not fields for
+	// the other load dimensions? We just added deltaToAdd to targetSS.adjusted,
+	// shouldn't this be wholly reflected in targetNS as well, not just for CPU?
+	// Or maybe CPU is the only dimension that matters at the node level. It feels
+	// sloppy/confusing though.
 	targetNS.adjustedCPU += deltaToAdd[CPURate]
 	targetSLS := computeLoadSummary(ctx, targetSS, targetNS, &means.storeLoad, &means.nodeLoad)
 	postTransferHighDiskSpaceUtil := highDiskSpaceUtilization(targetSS.adjusted.load[ByteSize],
@@ -2406,14 +2399,14 @@ func (cs *clusterState) canShedAndAddLoad(
 	targetSS.adjusted.load.subtract(deltaToAdd)
 	targetNS.adjustedCPU -= deltaToAdd[CPURate]
 
-	// Remove the amplified delta from source.
+	// Remove the delta.
 	srcNS := cs.nodes[srcSS.NodeID]
-	srcSS.adjusted.load.subtract(srcPhysDelta)
-	srcNS.adjustedCPU -= srcPhysDelta[CPURate]
+	srcSS.adjusted.load.subtract(delta)
+	srcNS.adjustedCPU -= delta[CPURate]
 	srcSLS := computeLoadSummary(ctx, srcSS, srcNS, &means.storeLoad, &means.nodeLoad)
 	// Undo the removal.
-	srcSS.adjusted.load.add(srcPhysDelta)
-	srcNS.adjustedCPU += srcPhysDelta[CPURate]
+	srcSS.adjusted.load.add(delta)
+	srcNS.adjustedCPU += delta[CPURate]
 
 	var failureReason strings.Builder
 	populateFailureReason := log.ExpensiveLogEnabled(ctx, 2)

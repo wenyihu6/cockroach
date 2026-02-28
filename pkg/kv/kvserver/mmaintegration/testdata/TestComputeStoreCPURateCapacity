@@ -54,7 +54,6 @@ truth:    kv-capacity: 12.00 cores/store (true-mult: 1.33)
 naive:    kv-capacity: 12.00 cores/store, capacity_err: 0.00%
 capped:   kv-capacity: 12.00 cores/store, capacity_err: 0.00%
 sql:      kv-capacity: 12.00 cores/store, capacity_err: 0.00%
-physical: load: 6.00 capacity: 16.00 amp: 1.33 util: 50.00%
 
 # Write-heavy KV, heavy compaction overhead (true mult = 4x).
 # - naive: correct — no background to confuse it.
@@ -68,7 +67,6 @@ truth:    kv-capacity: 8.00 cores/store (true-mult: 4.00)
 naive:    kv-capacity: 8.00 cores/store, capacity_err: 0.00%
 capped:   kv-capacity: 9.67 cores/store, capacity_err: +20.83%
 sql:      kv-capacity: 8.00 cores/store, capacity_err: 0.00%
-physical: load: 3.00 capacity: 29.00 amp: 3.00 util: 31.03%
 
 # ==========================================================================
 # SECTION 2: Mixed workloads with background load
@@ -91,7 +89,6 @@ truth:    kv-capacity: 6.29 cores/store (true-mult: 1.75)
 naive:    kv-capacity: 5.33 cores/store, capacity_err: -15.15%
 capped:   kv-capacity: 5.33 cores/store, capacity_err: -15.15%
 sql:      kv-capacity: 5.60 cores/store, capacity_err: -10.91%
-physical: load: 4.00 capacity: 16.00 amp: 3.00 util: 75.00%
 
 # Elastic-dominated, minimal KV. Background (10 cores) far exceeds KV
 # (1 core), so all models struggle to separate the two.
@@ -107,7 +104,6 @@ truth:    kv-capacity: 3.00 cores/store (true-mult: 2.00)
 naive:    kv-capacity: 1.33 cores/store, capacity_err: -55.56%
 capped:   kv-capacity: 2.33 cores/store, capacity_err: -22.22%
 sql:      kv-capacity: 1.67 cores/store, capacity_err: -44.44%
-physical: load: 1.00 capacity: 7.00 amp: 3.00 util: 42.86%
 
 # Light KV, heavy gateway, light elastic.
 # - naive: absorbs all 8 bg cores into per-KV cost - heavily pessimistic.
@@ -121,7 +117,6 @@ truth:    kv-capacity: 4.00 cores/store (true-mult: 2.00)
 naive:    kv-capacity: 2.67 cores/store, capacity_err: -33.33%
 capped:   kv-capacity: 3.33 cores/store, capacity_err: -16.67%
 sql:      kv-capacity: 4.00 cores/store, capacity_err: 0.00%
-physical: load: 2.00 capacity: 10.00 amp: 3.00 util: 60.00%
 
 # Heavy KV, heavy gateway, heavy elastic. Same KV as scenario 1 but
 # gateway=4 vs 1 — tests the effect of increased gateway visibility.
@@ -136,7 +131,6 @@ truth:    kv-capacity: 5.33 cores/store (true-mult: 1.50)
 naive:    kv-capacity: 4.57 cores/store, capacity_err: -14.29%
 capped:   kv-capacity: 4.67 cores/store, capacity_err: -12.50%
 sql:      kv-capacity: 5.03 cores/store, capacity_err: -5.71%
-physical: load: 4.00 capacity: 14.00 amp: 3.00 util: 85.71%
 
 # Moderate KV, heavy elastic, light gateway. Observed mult = 4x exceeds
 # the 3x cap, so capped peels off some background. Sql model is nearly
@@ -153,7 +147,6 @@ truth:    kv-capacity: 5.00 cores/store (true-mult: 2.00)
 naive:    kv-capacity: 4.00 cores/store, capacity_err: -20.00%
 capped:   kv-capacity: 4.33 cores/store, capacity_err: -13.33%
 sql:      kv-capacity: 4.25 cores/store, capacity_err: -15.00%
-physical: load: 3.00 capacity: 13.00 amp: 3.00 util: 69.23%
 
 # Light KV, heavy DistSQL, minimal background. Very high true overhead
 # (mult = 5x) from DistSQL execution of remote query fragments.
@@ -169,7 +162,6 @@ truth:    kv-capacity: 3.00 cores/store (true-mult: 5.00)
 naive:    kv-capacity: 2.91 cores/store, capacity_err: -3.03%
 capped:   kv-capacity: 3.67 cores/store, capacity_err: +22.22%
 sql:      kv-capacity: 3.02 cores/store, capacity_err: +0.76%
-physical: load: 2.00 capacity: 11.00 amp: 3.00 util: 54.55%
 
 # ==========================================================================
 # SECTION 3: Multi-store scenarios
@@ -187,7 +179,6 @@ truth:    kv-capacity: 3.33 cores/store (true-mult: 1.50)
 naive:    kv-capacity: 2.67 cores/store, capacity_err: -20.00%
 capped:   kv-capacity: 2.67 cores/store, capacity_err: -20.00%
 sql:      kv-capacity: 2.93 cores/store, capacity_err: -12.00%
-physical: load: 2.00 capacity: 8.00 amp: 3.00 util: 75.00%
 
 # ==========================================================================
 # SECTION 4: Edge cases
@@ -206,7 +197,6 @@ truth:    kv-capacity: 4.00 cores/store (true-mult: 1.00)
 naive:    kv-capacity: 8.00 cores/store, capacity_err: +100.00%
 capped:   kv-capacity: 1.33 cores/store, capacity_err: -66.67%
 sql:      kv-capacity: 5.33 cores/store, capacity_err: +33.33%
-physical: load: 0.00 capacity: 4.00 amp: 3.00 util: 0.00%
 
 # Overloaded node (usage > capacity), heavy background, no SQL metrics.
 # All models are optimistic: they assume CPU would free up proportionally
@@ -222,7 +212,6 @@ truth:    kv-capacity: 3.00 cores/store (true-mult: 2.00)
 naive:    kv-capacity: 3.56 cores/store, capacity_err: +18.52%
 capped:   kv-capacity: 3.33 cores/store, capacity_err: +11.11%
 sql:      kv-capacity: 3.56 cores/store, capacity_err: +18.52%
-physical: load: 4.00 capacity: 10.00 amp: 3.00 util: 120.00%
 
 # Overloaded: background alone exceeds node capacity. True capacity = 0.
 # - naive: doesn't model background, still reports positive capacity -
@@ -236,7 +225,6 @@ truth:    kv-capacity: 0.00 cores/store (true-mult: 2.00)
 naive:    kv-capacity: 0.50 cores/store, capacity_err: +Inf%
 capped:   kv-capacity: 0.00 cores/store, capacity_err: 0.00%
 sql:      kv-capacity: 0.50 cores/store, capacity_err: +Inf%
-physical: load: 1.00 capacity: 0.00 amp: 3.00 util: 0.00%
 
 # 100% utilization boundary: When nodeUsage = nodeCapacity, every model
 # reduces to kv / numStores. This is an algebraic identity - the
@@ -248,7 +236,6 @@ truth:    kv-capacity: 4.00 cores/store (true-mult: 2.00)
 naive:    kv-capacity: 4.00 cores/store, capacity_err: 0.00%
 capped:   kv-capacity: 4.00 cores/store, capacity_err: 0.00%
 sql:      kv-capacity: 4.00 cores/store, capacity_err: 0.00%
-physical: load: 4.00 capacity: 12.00 amp: 3.00 util: 100.00%
 
 # ==========================================================================
 # Mean |capacity_err| across all scenarios (excluding +Inf).

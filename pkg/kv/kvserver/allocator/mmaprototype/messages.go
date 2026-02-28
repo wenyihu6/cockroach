@@ -13,28 +13,18 @@ import (
 
 // Incoming messages for updating cluster state.
 
-// StoreLoadMsg is periodically sent by each store. Load and Capacity are in
-// physical units (e.g. CPU ns/s accounting for indirect overhead, physical disk
-// bytes used/available). The integration layer converts raw metrics to physical
-// quantities before constructing this message.
-//
-// For CPU, Load[CPURate] is the direct per-store replica CPU usage (unchanged),
-// while Capacity[CPURate] is the physical CPU capacity available to this store
-// (total node capacity minus background load, divided by the amplification
-// factor and number of stores). The AmplificationFactor[CPURate] converts
-// direct replica CPU to its total physical footprint.
-//
-// For disk, Load[ByteSize] is the physical disk bytes used by the store, and
-// Capacity[ByteSize] is Used + Available. The AmplificationFactor[ByteSize]
-// converts logical bytes (MVCC) to physical bytes.
+// StoreLoadMsg is periodically sent by each store.
 type StoreLoadMsg struct {
 	roachpb.NodeID
 	roachpb.StoreID
 
-	Load                LoadVector
-	Capacity            LoadVector
-	AmplificationFactor [NumLoadDimensions]float64
-	SecondaryLoad       SecondaryLoadVector
+	Load LoadVector
+	// Capacity[CPURate] is derived based on considering the aggregate usage
+	// across all stores, and using the utilization observed at the node, to
+	// derive a node level capacity, and then dividing that by the number of
+	// stores.
+	Capacity      LoadVector
+	SecondaryLoad SecondaryLoadVector
 
 	LoadTime time.Time
 }

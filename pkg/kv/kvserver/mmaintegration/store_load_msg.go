@@ -11,18 +11,15 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
-// MakeStoreLoadMsg makes a store load message. Load and Capacity are expressed
-// in physical units (CPU ns/s, physical disk bytes). The AmplificationFactor
-// converts logical per-range deltas to physical units inside MMA.
+// MakeStoreLoadMsg makes a store load message.
 func MakeStoreLoadMsg(
 	desc roachpb.StoreDescriptor, origTimestampNanos int64,
 ) mmaprototype.StoreLoadMsg {
 	var load, capacity mmaprototype.LoadVector
-	var ampFactor [mmaprototype.NumLoadDimensions]float64
 
-	// CPU: use the physical model when node-level metrics are available.
+	load[mmaprototype.CPURate] = mmaprototype.LoadValue(desc.Capacity.CPUPerSecond)
 	if desc.NodeCapacity.NodeCPURateCapacity > 0 && desc.NodeCapacity.NumStores > 0 {
-		cpuResult := computePhysicalCPU(storeCPURateCapacityInput{
+		cpuCap := computeStoreCPURateCapacityWithSQL(storeCPURateCapacityInput{
 			storesCPURate:           float64(desc.NodeCapacity.StoresCPURate),
 			nodeCPURateUsage:        float64(desc.NodeCapacity.NodeCPURateUsage),
 			nodeCPURateCapacity:     float64(desc.NodeCapacity.NodeCPURateCapacity),
@@ -30,43 +27,41 @@ func MakeStoreLoadMsg(
 			sqlDistCPUNanoPerSec:    float64(desc.NodeCapacity.SQLDistCPUNanoPerSec),
 			numStores:               desc.NodeCapacity.NumStores,
 		})
-		load[mmaprototype.CPURate] = mmaprototype.LoadValue(cpuResult.load)
-		capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(cpuResult.capacity)
-		ampFactor[mmaprototype.CPURate] = cpuResult.amplificationFactor
+		// cpuCap can be 0 when the node is overloaded (nodeCPURateUsage >
+		// nodeCPURateCapacity). This is correct behavior - it signals that the
+		// store has no CPU capacity available and should trigger load shedding.
+		capacity[mmaprototype.CPURate] = mmaprototype.LoadValue(cpuCap)
 	} else {
 		// NodeCapacity not yet populated (e.g. early in node startup before the
 		// first capacity sample). Fall back to assuming 50% CPU utilization.
-		load[mmaprototype.CPURate] = mmaprototype.LoadValue(desc.Capacity.CPUPerSecond)
 		capacity[mmaprototype.CPURate] = load[mmaprototype.CPURate] * 2
-		ampFactor[mmaprototype.CPURate] = 1.0
 	}
 
-	// Write bandwidth: no capacity model, amplification factor is 1.
 	load[mmaprototype.WriteBandwidth] = mmaprototype.LoadValue(desc.Capacity.WriteBytesPerSecond)
 	capacity[mmaprototype.WriteBandwidth] = mmaprototype.UnknownCapacity
-	ampFactor[mmaprototype.WriteBandwidth] = 1.0
 
-	// Disk: use the physical model.
-	diskResult := computePhysicalDisk(
-		desc.Capacity.LogicalBytes,
-		desc.Capacity.Used,
+	load[mmaprototype.ByteSize] = mmaprototype.LoadValue(desc.Capacity.LogicalBytes)
+	capacity[mmaprototype.ByteSize] = computeStoreByteSizeCapacity(
+		load[mmaprototype.ByteSize],
+		desc.Capacity.FractionUsed(),
 		desc.Capacity.Available,
 	)
-	load[mmaprototype.ByteSize] = mmaprototype.LoadValue(diskResult.load)
-	capacity[mmaprototype.ByteSize] = mmaprototype.LoadValue(diskResult.capacity)
-	ampFactor[mmaprototype.ByteSize] = diskResult.amplificationFactor
 
 	var secondaryLoad mmaprototype.SecondaryLoadVector
 	secondaryLoad[mmaprototype.LeaseCount] = mmaprototype.LoadValue(desc.Capacity.LeaseCount)
 	secondaryLoad[mmaprototype.ReplicaCount] = mmaprototype.LoadValue(desc.Capacity.RangeCount)
-
+	// TODO(tbg): this triggers early in tests, probably we're making load messages
+	// before having received the first capacity. Still, this is bad, should fix.
+	// or handle properly by communicating an unknown capacity.
+	// if capacity[mmaprototype.CPURate] == 0 {
+	// 	panic("ouch")
+	// }
 	return mmaprototype.StoreLoadMsg{
-		NodeID:              desc.Node.NodeID,
-		StoreID:             desc.StoreID,
-		Load:                load,
-		Capacity:            capacity,
-		AmplificationFactor: ampFactor,
-		SecondaryLoad:       secondaryLoad,
-		LoadTime:            timeutil.FromUnixNanos(origTimestampNanos),
+		NodeID:        desc.Node.NodeID,
+		StoreID:       desc.StoreID,
+		Load:          load,
+		Capacity:      capacity,
+		SecondaryLoad: secondaryLoad,
+		LoadTime:      timeutil.FromUnixNanos(origTimestampNanos),
 	}
 }
