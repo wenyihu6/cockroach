@@ -9,16 +9,22 @@ import (
 	"context"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
+	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
-// This file contains the capacity model functions used by MMA to derive
-// per-store physical load, capacity, and amplification factors from node-level
-// and disk-level metrics. All quantities passed into MMA are physical: load and
-// capacity are in the same physical units (CPU ns/s, disk bytes) so that
-// load/capacity recovers the actual utilization observable via OS metrics.
-// The amplification factor is used at the integration boundary to convert
-// per-range logical loads into physical units before passing them into MMA.
+// Boundary contract: MMA operates exclusively on physical units (CPU ns/s,
+// disk bytes). All conversion from logical per-range loads (direct replica CPU,
+// MVCC bytes) to physical quantities happens in this package:
+//
+//   - MakeStoreLoadMsg converts a StoreDescriptor into a StoreLoadMsg whose
+//     Load and Capacity fields are physical (CPU ns/s, disk bytes).
+//   - MakePhysicalRangeLoad converts logical per-range loads into a physical
+//     RangeLoad by applying AmplificationFactors.
+//   - ComputeAmplificationFactors derives the factors from a StoreDescriptor.
+//
+// AmplificationFactors are never passed into MMA itself. MMA sees only physical
+// LoadVectors, so its utilization metrics match observable node-level metrics.
 
 // storeCPURateCapacityInput holds the inputs needed to compute per-store
 // physical CPU load, capacity, and amplification factor. Using a struct avoids
@@ -264,4 +270,58 @@ func computePhysicalDisk(logicalBytes int64, used int64, available int64) physic
 		capacity:            capacity,
 		amplificationFactor: ampFactor,
 	}
+}
+
+// AmplificationFactors holds CPU and disk amplification factors that convert
+// logical per-range loads (direct replica CPU, MVCC bytes) into physical units.
+// These are computed from store metrics and applied at the integration boundary
+// so that MMA operates exclusively on physical quantities.
+type AmplificationFactors struct {
+	CPU  float64
+	Disk float64
+}
+
+// ComputeAmplificationFactors returns the CPU and disk amplification factors
+// for a store, given its descriptor. These factors convert logical per-range
+// loads (direct replica CPU, MVCC bytes) into physical units for use at the
+// MMA integration boundary.
+func ComputeAmplificationFactors(desc roachpb.StoreDescriptor) AmplificationFactors {
+	amp := AmplificationFactors{CPU: 1.0, Disk: 1.0}
+
+	if desc.NodeCapacity.NodeCPURateCapacity > 0 && desc.NodeCapacity.NumStores > 0 {
+		cpuResult := computePhysicalCPU(storeCPURateCapacityInput{
+			storesCPURate:       float64(desc.NodeCapacity.StoresCPURate),
+			nodeCPURateUsage:    float64(desc.NodeCapacity.NodeCPURateUsage),
+			nodeCPURateCapacity: float64(desc.NodeCapacity.NodeCPURateCapacity),
+			numStores:           desc.NodeCapacity.NumStores,
+		})
+		amp.CPU = cpuResult.amplificationFactor
+	}
+
+	diskResult := computePhysicalDisk(
+		desc.Capacity.LogicalBytes,
+		desc.Capacity.Used,
+		desc.Capacity.Available,
+	)
+	amp.Disk = diskResult.amplificationFactor
+	return amp
+}
+
+// MakePhysicalRangeLoad converts logical per-range load measurements into a
+// physical RangeLoad by applying the amplification factors. This is the single
+// entry point for all logical-to-physical range load conversion and should be
+// called at the integration boundary before passing range loads to MMA.
+func MakePhysicalRangeLoad(
+	requestCPUNanos, raftCPUNanos, writeBytesPerSec float64,
+	logicalBytes int64,
+	amp AmplificationFactors,
+) mmaprototype.RangeLoad {
+	var rl mmaprototype.RangeLoad
+	cpuNanos := requestCPUNanos + raftCPUNanos
+	rl.Load[mmaprototype.CPURate] = mmaprototype.LoadValue(cpuNanos * amp.CPU)
+	rl.RaftCPU = mmaprototype.LoadValue(raftCPUNanos * amp.CPU)
+	rl.Load[mmaprototype.WriteBandwidth] = mmaprototype.LoadValue(writeBytesPerSec)
+	rl.Load[mmaprototype.ByteSize] = mmaprototype.LoadValue(
+		float64(logicalBytes) * amp.Disk)
+	return rl
 }
