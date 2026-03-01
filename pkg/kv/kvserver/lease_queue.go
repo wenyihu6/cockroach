@@ -148,7 +148,7 @@ func (lq *leaseQueue) process(
 		lease, _ := repl.GetLease()
 		log.KvDistribution.Infof(ctx, "transferring lease to %d usage=%v, lease=[%v type=%v]", transferOp.Target, transferOp.Usage, lease, lease.Type())
 		lq.lastLeaseTransfer.Store(timeutil.Now())
-		amp := lq.store.MMAAmplificationFactors(ctx)
+		amp := lq.store.MMAAmplificationFactors()
 		changeID := lq.as.NonMMAPreTransferLease(
 			ctx,
 			lq.store.StoreID(),

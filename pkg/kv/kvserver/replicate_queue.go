@@ -1145,7 +1145,7 @@ func (rq *replicateQueue) TransferLease(
 	log.KvDistribution.Infof(ctx, "transferring lease to %v", target)
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
-	amp := rq.store.MMAAmplificationFactors(ctx)
+	amp := rq.store.MMAAmplificationFactors()
 	changeID := rq.as.NonMMAPreTransferLease(
 		ctx,
 		rq.store.StoreID(),
@@ -1193,7 +1193,7 @@ func (rq *replicateQueue) changeReplicas(
 ) error {
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
-	amp := rq.store.MMAAmplificationFactors(ctx)
+	amp := rq.store.MMAAmplificationFactors()
 	changeID := rq.as.NonMMAPreChangeReplicas(
 		ctx,
 		rq.store.StoreID(),

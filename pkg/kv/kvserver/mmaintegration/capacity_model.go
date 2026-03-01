@@ -171,6 +171,23 @@ type AmplificationFactors struct {
 // for a store, given its descriptor. These factors convert logical per-range
 // loads (direct replica CPU, MVCC bytes) into physical units for use at the
 // MMA integration boundary.
+//
+// Design note: the same computePhysicalCPU / computePhysicalDisk functions
+// are also called by MakeStoreLoadMsg to derive the store-level physical load
+// and capacity. Ideally both paths would use factors from the exact same
+// snapshot of store metrics, guaranteeing that the amplified per-range loads
+// are perfectly consistent with the store-level load MMA received. In
+// practice, the factors are computed from cached metrics that may be from a
+// slightly different point in time than the StoreDescriptor used by
+// MakeStoreLoadMsg. This is acceptable because:
+//  1. The underlying inputs (node CPU EWMA, space amplification) are
+//     slow-moving; the drift between two successive reads is negligible.
+//  2. MMA already tolerates mismatch between store-level load and the sum of
+//     per-range loads (not all ranges report, follower replicas contribute to
+//     store load but not to range loads, etc.).
+//
+// If tighter consistency is ever needed, the factors can be returned as a
+// byproduct of MakeStoreLoadMsg and cached alongside the StoreLoadMsg.
 func ComputeAmplificationFactors(desc roachpb.StoreDescriptor) AmplificationFactors {
 	amp := AmplificationFactors{CPU: 1.0, Disk: 1.0}
 

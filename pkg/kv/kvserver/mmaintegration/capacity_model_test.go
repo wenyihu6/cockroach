@@ -10,7 +10,6 @@ import (
 	"math"
 	"testing"
 
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/testutils/datapathutils"
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
@@ -182,13 +181,9 @@ func TestComputeStoreByteSizeCapacity(t *testing.T) {
 				fractionUsed := sc.FractionUsed()
 
 				// Legacy model: uses FractionUsed() = Used/(Used+Available).
-				result := computeStoreByteSizeCapacity(
-					mmaprototype.LoadValue(logicalBytes), fractionUsed, available,
-				)
+				result := computeStoreByteSizeCapacity(logicalBytes, fractionUsed, available)
 				// Wrong model: uses (Total-Available)/Total.
-				wrongResult := computeStoreByteSizeCapacityNaive(
-					mmaprototype.LoadValue(logicalBytes), total, available,
-				)
+				wrongResult := computeStoreByteSizeCapacityNaive(logicalBytes, total, available)
 
 				// Physical model: load=Used, capacity=Used+Available.
 				physResult := computePhysicalDisk(logicalBytes, used, available)
@@ -205,8 +200,8 @@ func TestComputeStoreByteSizeCapacity(t *testing.T) {
 						"legacy-capacity(wrong): %s (kv-util: %s, available: %s)\n"+
 						"physical: load=%s capacity=%s (util: %s, amp-factor: %.2f)\n",
 					fractionUsed, float64(total-available)/float64(total),
-					humanizeutil.IBytes(int64(result)), fmtUtil(logicalBytes, int64(result)), humanizeutil.IBytes(available),
-					humanizeutil.IBytes(int64(wrongResult)), fmtUtil(logicalBytes, int64(wrongResult)), humanizeutil.IBytes(available),
+					humanizeutil.IBytes(result), fmtUtil(logicalBytes, result), humanizeutil.IBytes(available),
+					humanizeutil.IBytes(wrongResult), fmtUtil(logicalBytes, wrongResult), humanizeutil.IBytes(available),
 					humanizeutil.IBytes(int64(physResult.load)),
 					humanizeutil.IBytes(int64(physResult.capacity)),
 					fmtUtil(int64(physResult.load), int64(physResult.capacity)),

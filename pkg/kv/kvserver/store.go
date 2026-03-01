@@ -3283,15 +3283,29 @@ func (s *Store) Descriptor(ctx context.Context, useCached bool) (*roachpb.StoreD
 	}, nil
 }
 
-// MMAAmplificationFactors computes the CPU and disk amplification factors for
-// this store from cached capacity metrics. These factors convert logical
-// per-range loads to physical units at the MMA integration boundary.
-func (s *Store) MMAAmplificationFactors(ctx context.Context) mmaintegration.AmplificationFactors {
-	desc, err := s.Descriptor(ctx, true /* useCached */)
-	if err != nil || desc == nil {
+// MMAAmplificationFactors returns the CPU and disk amplification factors for
+// this store. These factors convert logical per-range loads to physical units
+// at the MMA integration boundary.
+//
+// The factors are computed on each call from the cached store capacity and
+// node capacity, avoiding construction of a full StoreDescriptor. The two
+// mutex reads (CachedCapacity + GetNodeCapacity) are cheap and uncontended
+// at the call rates involved (once/min for leaseholder msgs, once per
+// rebalance for queue operations). See ComputeAmplificationFactors for
+// discussion of consistency with the store-level load in StoreLoadMsg.
+func (s *Store) MMAAmplificationFactors() mmaintegration.AmplificationFactors {
+	cap := s.storeGossip.CachedCapacity()
+	if cap == (roachpb.StoreCapacity{}) {
 		return mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0}
 	}
-	return mmaintegration.ComputeAmplificationFactors(*desc)
+	nc, err := s.nodeCapacityProvider.GetNodeCapacity(true /* useCached */)
+	if err != nil {
+		return mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0}
+	}
+	return mmaintegration.ComputeAmplificationFactors(roachpb.StoreDescriptor{
+		Capacity:     cap,
+		NodeCapacity: nc,
+	})
 }
 
 // RangeFeed registers a rangefeed over the specified span. It sends updates to

@@ -242,16 +242,11 @@ func (ms *mmaStore) GetReplicaIfExists(id roachpb.RangeID) replicaToApplyChanges
 	return r
 }
 
-// amplificationFactors computes the current CPU and disk amplification factors
-// for this store from cached capacity metrics. These factors convert logical
-// per-range loads to physical units at the integration boundary.
-func (ms *mmaStore) amplificationFactors(ctx context.Context) mmaintegration.AmplificationFactors {
-	s := (*Store)(ms)
-	desc, err := s.Descriptor(ctx, true /* useCached */)
-	if err != nil || desc == nil {
-		return mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0}
-	}
-	return mmaintegration.ComputeAmplificationFactors(*desc)
+// amplificationFactors returns the current CPU and disk amplification factors
+// for this store. These factors convert logical per-range loads to physical
+// units at the integration boundary.
+func (ms *mmaStore) amplificationFactors() mmaintegration.AmplificationFactors {
+	return (*Store)(ms).MMAAmplificationFactors()
 }
 
 // MakeStoreLeaseholderMsg constructs the StoreLeaseholderMsg by iterating over
@@ -266,7 +261,7 @@ func (ms *mmaStore) MakeStoreLeaseholderMsg(
 ) (msg mmaprototype.StoreLeaseholderMsg, numIgnoredRanges int) {
 	var msgs []mmaprototype.RangeMsg
 	s := (*Store)(ms)
-	amp := ms.amplificationFactors(ctx)
+	amp := ms.amplificationFactors()
 	// TODO(wenyihu6): this is called on every leaseholder replica every minute.
 	// We should pass scratch memory to avoid unnecessary allocation.
 	newStoreReplicaVisitor(s).Visit(func(r *Replica) bool {
