@@ -189,6 +189,7 @@ func pushReplicateChange(
 	case plan.AllocationTransferLeaseOp:
 		if as != nil {
 			// as may be nil in some tests.
+			// TODO(wenyihu6): compute real amplification factors for the simulator.
 			changeID = as.NonMMAPreTransferLease(
 				ctx,
 				localStoreID,
@@ -196,6 +197,7 @@ func pushReplicateChange(
 				repl.RangeUsageInfo(),
 				op.Source,
 				op.Target,
+				mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0},
 			)
 		}
 		stateChange = &state.LeaseTransferChange{
@@ -207,6 +209,7 @@ func pushReplicateChange(
 	case plan.AllocationChangeReplicasOp:
 		if as != nil {
 			// as may be nil in some tests.
+			// TODO(wenyihu6): compute real amplification factors for the simulator.
 			changeID = as.NonMMAPreChangeReplicas(
 				ctx,
 				localStoreID,
@@ -214,6 +217,7 @@ func pushReplicateChange(
 				repl.RangeUsageInfo(),
 				op.Chgs,
 				repl.StoreID(), /* leaseholder */
+				mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0},
 			)
 		}
 		log.VEventf(ctx, 1, "pushing state change for range=%s, details=%s changeIDs=%v coming from %s", repl.rng, op.Details, changeID, queueName)

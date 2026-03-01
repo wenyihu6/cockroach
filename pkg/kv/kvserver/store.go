@@ -3283,6 +3283,17 @@ func (s *Store) Descriptor(ctx context.Context, useCached bool) (*roachpb.StoreD
 	}, nil
 }
 
+// MMAAmplificationFactors computes the CPU and disk amplification factors for
+// this store from cached capacity metrics. These factors convert logical
+// per-range loads to physical units at the MMA integration boundary.
+func (s *Store) MMAAmplificationFactors(ctx context.Context) mmaintegration.AmplificationFactors {
+	desc, err := s.Descriptor(ctx, true /* useCached */)
+	if err != nil || desc == nil {
+		return mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0}
+	}
+	return mmaintegration.ComputeAmplificationFactors(*desc)
+}
+
 // RangeFeed registers a rangefeed over the specified span. It sends updates to
 // the provided stream and returns a future with an optional error when the rangefeed is
 // complete.

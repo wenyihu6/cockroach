@@ -16,11 +16,13 @@ import (
 )
 
 // convertLeaseTransferToMMA converts a lease transfer operation to mma replica
-// changes. It will be passed to mma.RegisterExternalChanges.
+// changes. It will be passed to mma.RegisterExternalChanges. The amp factors
+// convert logical per-range loads to physical units for MMA.
 func convertLeaseTransferToMMA(
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	transferFrom, transferTo roachpb.ReplicationTarget,
+	amp AmplificationFactors,
 ) mmaprototype.PendingRangeChange {
 	// TODO(wenyihu6): we are passing existing replicas to
 	// mmaprototype.MakeLeaseTransferChanges just to get the add and remove
@@ -41,11 +43,12 @@ func convertLeaseTransferToMMA(
 			},
 		}
 	}
+	rLoad := MakePhysicalRangeLoad(
+		usage.RequestCPUNanosPerSecond, usage.RaftCPUNanosPerSecond,
+		usage.WriteBytesPerSecond, usage.LogicalBytes, amp,
+	)
 	replicaChanges := mmaprototype.MakeLeaseTransferChanges(desc.RangeID,
-		existingReplicas,
-		mmaRangeLoad(usage),
-		transferTo,
-		transferFrom,
+		existingReplicas, rLoad, transferTo, transferFrom,
 	)
 	return mmaprototype.MakePendingRangeChange(desc.RangeID, replicaChanges[:])
 }
@@ -64,8 +67,12 @@ func convertReplicaChangeToMMA(
 	usage allocator.RangeUsageInfo,
 	changes kvpb.ReplicationChanges,
 	leaseholderStoreID roachpb.StoreID,
+	amp AmplificationFactors,
 ) (mmaprototype.PendingRangeChange, error) {
-	rLoad := mmaRangeLoad(usage)
+	rLoad := MakePhysicalRangeLoad(
+		usage.RequestCPUNanosPerSecond, usage.RaftCPUNanosPerSecond,
+		usage.WriteBytesPerSecond, usage.LogicalBytes, amp,
+	)
 	replicaChanges := make([]mmaprototype.ReplicaChange, 0, len(changes))
 	replicaSet := desc.Replicas()
 

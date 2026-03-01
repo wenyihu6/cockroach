@@ -107,22 +107,6 @@ func NewAllocatorSync(
 	return as
 }
 
-// mmaRangeLoad converts range load usage to mma range load.
-//
-// TODO(wenyihu6): This is bit redundant to mmaRangeLoad in kvserver. See if we
-// can refactor to use the same helper function.
-func mmaRangeLoad(rangeUsageInfo allocator.RangeUsageInfo) mmaprototype.RangeLoad {
-	var rl mmaprototype.RangeLoad
-	rl.Load[mmaprototype.CPURate] = mmaprototype.LoadValue(
-		rangeUsageInfo.RequestCPUNanosPerSecond + rangeUsageInfo.RaftCPUNanosPerSecond)
-	rl.RaftCPU = mmaprototype.LoadValue(rangeUsageInfo.RaftCPUNanosPerSecond)
-	rl.Load[mmaprototype.WriteBandwidth] = mmaprototype.LoadValue(rangeUsageInfo.WriteBytesPerSecond)
-	// Note that LogicalBytes is already populated as enginepb.MVCCStats.Total()
-	// in repl.RangeUsageInfo().
-	rl.Load[mmaprototype.ByteSize] = mmaprototype.LoadValue(rangeUsageInfo.LogicalBytes)
-	return rl
-}
-
 // addTrackedChange adds a tracked change to the allocator sync.
 func (as *AllocatorSync) addTrackedChange(change trackedAllocatorChange) SyncChangeID {
 	as.mu.Lock()
@@ -147,20 +131,22 @@ func (as *AllocatorSync) getTrackedChange(syncChangeID SyncChangeID) trackedAllo
 }
 
 // NonMMAPreTransferLease is called by the lease/replicate queue (of
-// localStoreID) to register a transfer operation. SyncChangeID is returned to
-// the caller. It is an identifier that can be used to call PostApply to apply
-// the change to the store pool upon success.
+// localStoreID) to register a transfer operation. The amp factors convert
+// logical per-range loads to physical units for MMA. SyncChangeID is returned
+// to the caller. It is an identifier that can be used to call PostApply to
+// apply the change to the store pool upon success.
 func (as *AllocatorSync) NonMMAPreTransferLease(
 	ctx context.Context,
 	localStoreID roachpb.StoreID,
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
 	transferFrom, transferTo roachpb.ReplicationTarget,
+	amp AmplificationFactors,
 ) SyncChangeID {
 	var isMMARegistered bool
 	var mmaChange mmaprototype.ExternalRangeChange
 	if kvserverbase.LoadBasedRebalancingModeIsMMA(&as.st.SV) {
-		change := convertLeaseTransferToMMA(desc, usage, transferFrom, transferTo)
+		change := convertLeaseTransferToMMA(desc, usage, transferFrom, transferTo, amp)
 		mmaChange, isMMARegistered = as.mmaAllocator.RegisterExternalChange(ctx, localStoreID, change)
 	}
 	trackedChange := trackedAllocatorChange{
@@ -177,7 +163,8 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 }
 
 // NonMMAPreChangeReplicas is called by the replicate queue (of localStoreID)
-// to register a change replicas operation. SyncChangeID is returned to the
+// to register a change replicas operation. The amp factors convert logical
+// per-range loads to physical units for MMA. SyncChangeID is returned to the
 // caller. It is an identifier that can be used to call PostApply to apply the
 // change to the store pool upon success.
 func (as *AllocatorSync) NonMMAPreChangeReplicas(
@@ -187,12 +174,15 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 	usage allocator.RangeUsageInfo,
 	changes kvpb.ReplicationChanges,
 	leaseholderStoreID roachpb.StoreID,
+	amp AmplificationFactors,
 ) SyncChangeID {
 	var isMMARegistered bool
 	var mmaChange mmaprototype.ExternalRangeChange
 	if kvserverbase.LoadBasedRebalancingModeIsMMA(&as.st.SV) {
 		var err error
-		change, err := convertReplicaChangeToMMA(desc, usage, changes, leaseholderStoreID)
+		change, err := convertReplicaChangeToMMA(
+			desc, usage, changes, leaseholderStoreID, amp,
+		)
 		if err != nil {
 			log.KvDistribution.Errorf(ctx, "failed to convert replica change to mma: %v", err)
 		} else {

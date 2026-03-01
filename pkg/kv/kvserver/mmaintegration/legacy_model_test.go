@@ -126,9 +126,7 @@ func computeStoreCPURateCapacityNaive(in storeCPURateCapacityInput) mmaprototype
 // and produce an unrealistically small capacity for stores with little data.
 // Retained here only for comparison with the correct model
 // (computeStoreByteSizeCapacity).
-func computeStoreByteSizeCapacityNaive(
-	logicalBytes mmaprototype.LoadValue, total int64, available int64,
-) mmaprototype.LoadValue {
+func computeStoreByteSizeCapacityNaive(logicalBytes int64, total int64, available int64) int64 {
 	var fullDiskFraction float64
 	if total > 0 {
 		fullDiskFraction = float64(total-available) / float64(total)

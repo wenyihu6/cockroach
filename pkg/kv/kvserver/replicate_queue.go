@@ -1145,6 +1145,7 @@ func (rq *replicateQueue) TransferLease(
 	log.KvDistribution.Infof(ctx, "transferring lease to %v", target)
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
+	amp := rq.store.MMAAmplificationFactors(ctx)
 	changeID := rq.as.NonMMAPreTransferLease(
 		ctx,
 		rq.store.StoreID(),
@@ -1152,6 +1153,7 @@ func (rq *replicateQueue) TransferLease(
 		rangeUsageInfo,
 		source,
 		target,
+		amp,
 	)
 
 	err := rlm.AdminTransferLease(ctx, target.StoreID, false /* bypassSafetyChecks */)
@@ -1191,6 +1193,7 @@ func (rq *replicateQueue) changeReplicas(
 ) error {
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
+	amp := rq.store.MMAAmplificationFactors(ctx)
 	changeID := rq.as.NonMMAPreChangeReplicas(
 		ctx,
 		rq.store.StoreID(),
@@ -1198,6 +1201,7 @@ func (rq *replicateQueue) changeReplicas(
 		rangeUsageInfo,
 		chgs,
 		repl.StoreID(),
+		amp,
 	)
 	// NB: this calls the impl rather than ChangeReplicas because
 	// the latter traps tests that try to call it while the replication

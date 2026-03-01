@@ -148,6 +148,7 @@ func (lq *leaseQueue) process(
 		lease, _ := repl.GetLease()
 		log.KvDistribution.Infof(ctx, "transferring lease to %d usage=%v, lease=[%v type=%v]", transferOp.Target, transferOp.Usage, lease, lease.Type())
 		lq.lastLeaseTransfer.Store(timeutil.Now())
+		amp := lq.store.MMAAmplificationFactors(ctx)
 		changeID := lq.as.NonMMAPreTransferLease(
 			ctx,
 			lq.store.StoreID(),
@@ -155,6 +156,7 @@ func (lq *leaseQueue) process(
 			transferOp.Usage,
 			transferOp.Source,
 			transferOp.Target,
+			amp,
 		)
 		err = repl.AdminTransferLease(ctx, transferOp.Target.StoreID, false /* bypassSafetyChecks */)
 		// Inform allocator sync that the change has been applied which applies

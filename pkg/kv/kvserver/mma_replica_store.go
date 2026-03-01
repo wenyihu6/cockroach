@@ -9,36 +9,24 @@ import (
 	"context"
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
-	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/load"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mmaintegration"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/raftutil"
 	"github.com/cockroachdb/cockroach/pkg/raft"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
-	"github.com/cockroachdb/cockroach/pkg/storage/enginepb"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 )
 
 type mmaReplica Replica
 
-// The returned RangeLoad contains stats across multiple dimensions that MMA uses
-// to determine top-k replicas and evaluate the load impact of rebalancing them.
-func mmaRangeLoad(
-	loadStats load.ReplicaLoadStats, mvccStats enginepb.MVCCStats,
-) mmaprototype.RangeLoad {
-	var rl mmaprototype.RangeLoad
-	rl.Load[mmaprototype.CPURate] = mmaprototype.LoadValue(
-		loadStats.RequestCPUNanosPerSecond + loadStats.RaftCPUNanosPerSecond)
-	rl.RaftCPU = mmaprototype.LoadValue(loadStats.RaftCPUNanosPerSecond)
-	rl.Load[mmaprototype.WriteBandwidth] = mmaprototype.LoadValue(loadStats.WriteBytesPerSecond)
-	rl.Load[mmaprototype.ByteSize] = mmaprototype.LoadValue(mvccStats.Total())
-	return rl
-}
-
-// mmaRangeLoad constructs a mmaprototype.RangeLoad from the replica's LoadStats.
-// The returned RangeLoad contains stats across multiple dimensions that MMA uses
-// to determine top-k replicas and evaluate the load impact of rebalancing them.
-func (mr *mmaReplica) mmaRangeLoad() mmaprototype.RangeLoad {
+// mmaRangeLoad constructs a physical RangeLoad from the replica's LoadStats by
+// delegating to MakePhysicalRangeLoad at the integration boundary.
+func (mr *mmaReplica) mmaRangeLoad(amp mmaintegration.AmplificationFactors) mmaprototype.RangeLoad {
 	r := (*Replica)(mr)
-	return mmaRangeLoad(r.LoadStats(), r.GetMVCCStats())
+	ls := r.LoadStats()
+	return mmaintegration.MakePhysicalRangeLoad(
+		ls.RequestCPUNanosPerSecond, ls.RaftCPUNanosPerSecond,
+		ls.WriteBytesPerSecond, r.GetMVCCStats().Total(), amp,
+	)
 }
 
 // maybePromiseSpanConfigUpdate determines whether an up-to-date span config
@@ -178,7 +166,9 @@ func constructRangeMsgReplicas(
 // know how to initialize a range it knows nothing about. More thinking is needed
 // to claim this method is not racy.
 func (mr *mmaReplica) tryConstructMMARangeMsg(
-	ctx context.Context, knownStores map[roachpb.StoreID]struct{},
+	ctx context.Context,
+	knownStores map[roachpb.StoreID]struct{},
+	amp mmaintegration.AmplificationFactors,
 ) (isLeaseholder bool, shouldBeSkipped bool, msg mmaprototype.RangeMsg) {
 	r := (*Replica)(mr)
 	if !r.IsInitialized() {
@@ -212,7 +202,7 @@ func (mr *mmaReplica) tryConstructMMARangeMsg(
 	}
 	// At this point, we know r is the leaseholder replica.
 	replicas := constructRangeMsgReplicas(desc, raftStatus, r.StoreID() /*leaseholderReplicaStoreID*/)
-	rLoad := mr.mmaRangeLoad()
+	rLoad := mr.mmaRangeLoad(amp)
 	if mr.maybePromiseSpanConfigUpdate() {
 		return true, false, mmaprototype.RangeMsg{
 			RangeID:                  r.RangeID,
@@ -252,22 +242,38 @@ func (ms *mmaStore) GetReplicaIfExists(id roachpb.RangeID) replicaToApplyChanges
 	return r
 }
 
+// amplificationFactors computes the current CPU and disk amplification factors
+// for this store from cached capacity metrics. These factors convert logical
+// per-range loads to physical units at the integration boundary.
+func (ms *mmaStore) amplificationFactors(ctx context.Context) mmaintegration.AmplificationFactors {
+	s := (*Store)(ms)
+	desc, err := s.Descriptor(ctx, true /* useCached */)
+	if err != nil || desc == nil {
+		return mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0}
+	}
+	return mmaintegration.ComputeAmplificationFactors(*desc)
+}
+
 // MakeStoreLeaseholderMsg constructs the StoreLeaseholderMsg by iterating over
-// all the replicas in the store and constructing the RangeMsg for each leaseholder
-// replica. KnownStores includes all the stores that are known to mma. If some
-// replicas in the range descriptor are not known to mma, we skip including them
-// in the range message, and numIgnoredRanges is returned here just for
-// logging purpose.
+// all the replicas in the store and constructing the RangeMsg for each
+// leaseholder replica. Per-range loads are amplified to physical units using
+// the store's amplification factors before being passed to MMA. KnownStores
+// includes all the stores that are known to mma. If some replicas in the range
+// descriptor are not known to mma, we skip including them in the range message,
+// and numIgnoredRanges is returned here just for logging purpose.
 func (ms *mmaStore) MakeStoreLeaseholderMsg(
 	ctx context.Context, knownStores map[roachpb.StoreID]struct{},
 ) (msg mmaprototype.StoreLeaseholderMsg, numIgnoredRanges int) {
 	var msgs []mmaprototype.RangeMsg
 	s := (*Store)(ms)
+	amp := ms.amplificationFactors(ctx)
 	// TODO(wenyihu6): this is called on every leaseholder replica every minute.
 	// We should pass scratch memory to avoid unnecessary allocation.
 	newStoreReplicaVisitor(s).Visit(func(r *Replica) bool {
 		mr := (*mmaReplica)(r)
-		isLeaseholder, shouldBeSkipped, msg := mr.tryConstructMMARangeMsg(ctx, knownStores)
+		isLeaseholder, shouldBeSkipped, msg := mr.tryConstructMMARangeMsg(
+			ctx, knownStores, amp,
+		)
 		if isLeaseholder {
 			if shouldBeSkipped {
 				numIgnoredRanges++

@@ -10,6 +10,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/allocator/mmaprototype"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/mmaintegration"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
 )
 
@@ -74,12 +75,15 @@ func MakeStoreLeaseholderMsgFromState(
 				"msg for s%d: did not find itself in the set of replicas", replica.Range(), storeID))
 		}
 
-		var rl mmaprototype.RangeLoad
+		// TODO(wenyihu6): compute real amplification factors for the simulator
+		// to convert logical per-range loads to physical units. For now, use 1.0
+		// (no amplification).
 		load := s.RangeUsageInfo(rng.RangeID(), replica.StoreID())
-		rl.Load[mmaprototype.WriteBandwidth] = mmaprototype.LoadValue(load.WriteBytesPerSecond)
-		rl.Load[mmaprototype.ByteSize] = mmaprototype.LoadValue(load.LogicalBytes)
-		rl.Load[mmaprototype.CPURate] = mmaprototype.LoadValue(load.RaftCPUNanosPerSecond + load.RequestCPUNanosPerSecond)
-		rl.RaftCPU = mmaprototype.LoadValue(load.RaftCPUNanosPerSecond)
+		rl := mmaintegration.MakePhysicalRangeLoad(
+			load.RequestCPUNanosPerSecond, load.RaftCPUNanosPerSecond,
+			load.WriteBytesPerSecond, load.LogicalBytes,
+			mmaintegration.AmplificationFactors{CPU: 1.0, Disk: 1.0},
+		)
 
 		rangeMsg := mmaprototype.RangeMsg{
 			RangeID:                  roachpb.RangeID(replica.Range()),
