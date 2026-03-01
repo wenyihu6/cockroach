@@ -13,12 +13,16 @@ import (
 )
 
 // This file contains the capacity model functions used by MMA to derive
-// per-store capacity from node-level and disk-level metrics. These are
-// extracted here so they can be unit tested directly.
+// per-store physical load, capacity, and amplification factors from node-level
+// and disk-level metrics. All quantities passed into MMA are physical: load and
+// capacity are in the same physical units (CPU ns/s, disk bytes) so that
+// load/capacity recovers the actual utilization observable via OS metrics.
+// The amplification factor is used at the integration boundary to convert
+// per-range logical loads into physical units before passing them into MMA.
 
-// storeCPURateCapacityInput holds the inputs needed to compute per-store CPU
-// capacity. Using a struct avoids accidentally swapping the order of parameters
-// when passing them to functions.
+// storeCPURateCapacityInput holds the inputs needed to compute per-store
+// physical CPU load, capacity, and amplification factor. Using a struct avoids
+// accidentally swapping the order of parameters.
 type storeCPURateCapacityInput struct {
 	// storesCPURate is the aggregated CPU usage across all stores on the node
 	// (sum of per-store CPU load usage) in ns/sec.
@@ -153,4 +157,111 @@ func computeCPUCapacityWithCap(in storeCPURateCapacityInput) (capacity float64) 
 	// Divide evenly across stores.
 	capacity = mmaDirectCapacity / float64(in.numStores)
 	return capacity
+}
+
+// physicalCPUResult holds the outputs of the physical CPU model.
+type physicalCPUResult struct {
+	// load is the per-store physical CPU usage in ns/s. The sum of load across
+	// all stores on a node equals the node's total CPU usage (nodeCPURateUsage).
+	load float64
+	// capacity is the per-store physical CPU capacity in ns/s. Equal to
+	// nodeCPURateCapacity / numStores, i.e. actual physical cores.
+	capacity float64
+	// amplificationFactor converts direct replica CPU (logical) to total
+	// physical CPU footprint (>= 1). Used at the integration boundary to
+	// amplify per-range load deltas before passing them into MMA.
+	amplificationFactor float64
+}
+
+// computePhysicalCPU computes per-store physical CPU load, capacity, and
+// amplification factor.
+//
+// All outputs are in physical CPU units (ns/s). MMA's utilization
+// (load/capacity) directly matches the node-level CPU utilization observable
+// via OS metrics:
+//
+//	sum(store.load) = nodeCPURateUsage
+//	sum(store.capacity) = nodeCPURateCapacity
+//	mean utilization = nodeCPURateUsage / nodeCPURateCapacity
+//
+// The amplification factor is the clamped ratio of total node CPU to
+// directly-tracked store CPU. It is used outside MMA to convert per-range
+// logical CPU deltas to physical units.
+//
+// For load distribution across stores: we spread the node's total CPU usage
+// proportionally to each store's share of storesCPURate. With a single store
+// this equals nodeCPURateUsage; with multiple stores each gets its proportional
+// share. When storesCPURate is 0 (no replicas reporting CPU yet), we split
+// evenly.
+func computePhysicalCPU(in storeCPURateCapacityInput) physicalCPUResult {
+	if in.numStores <= 0 || in.nodeCPURateCapacity <= 0 {
+		log.KvDistribution.Fatalf(
+			context.Background(), "numStores and nodeCPURateCapacity must be > 0",
+		)
+	}
+
+	numStores := float64(in.numStores)
+	capacity := in.nodeCPURateCapacity / numStores
+
+	// Compute amplification factor.
+	var ampFactor float64
+	if in.storesCPURate <= 0 {
+		ampFactor = cpuIndirectOverheadMultiplier
+	} else {
+		implicitMult := in.nodeCPURateUsage / in.storesCPURate
+		ampFactor = max(1, min(implicitMult, cpuIndirectOverheadMultiplier))
+	}
+
+	// Physical load per store: spread node CPU usage evenly across stores.
+	// With a single store this is just nodeCPURateUsage. With multiple stores
+	// each gets an equal share. A proportional distribution (weighted by each
+	// store's CPUPerSecond) would be more precise for multi-store but requires
+	// per-store info not available here; even splitting is the simplest
+	// starting point and matches how we split capacity.
+	load := in.nodeCPURateUsage / numStores
+
+	return physicalCPUResult{
+		load:                load,
+		capacity:            capacity,
+		amplificationFactor: ampFactor,
+	}
+}
+
+// maxDiskSpaceAmplification caps the ratio of physical disk bytes used to
+// logical (MVCC) bytes. Values above this are treated as if the extra physical
+// usage is independent of range data (e.g. WAL, auxiliary files).
+const maxDiskSpaceAmplification = 5.0
+
+// physicalDiskResult holds the outputs of the physical disk model.
+type physicalDiskResult struct {
+	// load is the physical disk bytes used by the store.
+	load float64
+	// capacity is the total usable disk space (Used + Available).
+	capacity float64
+	// amplificationFactor converts logical bytes (MVCC) to physical bytes
+	// (>= 1, capped at maxDiskSpaceAmplification). Used at the integration
+	// boundary to amplify per-range byte-size deltas.
+	amplificationFactor float64
+}
+
+// computePhysicalDisk computes physical disk load, capacity, and space
+// amplification factor. Both load and capacity are in physical bytes so that
+// load/capacity = Used/(Used+Available) = actual disk utilization.
+//
+// For empty/new stores (logicalBytes == 0 or used == 0), the amplification
+// factor defaults to 1.0.
+func computePhysicalDisk(logicalBytes int64, used int64, available int64) physicalDiskResult {
+	capacity := float64(used + available)
+	var ampFactor float64
+	if logicalBytes > 0 && used > 0 {
+		ampFactor = float64(used) / float64(logicalBytes)
+		ampFactor = max(1.0, min(ampFactor, maxDiskSpaceAmplification))
+	} else {
+		ampFactor = 1.0
+	}
+	return physicalDiskResult{
+		load:                float64(used),
+		capacity:            capacity,
+		amplificationFactor: ampFactor,
+	}
 }

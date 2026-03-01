@@ -80,6 +80,9 @@ func TestComputeStoreCPURateCapacity(t *testing.T) {
 				// Run models.
 				naiveCap := float64(computeStoreCPURateCapacityNaive(in)) / nsPerCore
 				cappedCap := computeCPUCapacityWithCap(in) / nsPerCore
+				physResult := computePhysicalCPU(in)
+				physLoad := physResult.load / nsPerCore
+				physCap := physResult.capacity / nsPerCore
 
 				// Compute error percentage.
 				// Negative = pessimistic (underestimates capacity, safer).
@@ -116,11 +119,13 @@ func TestComputeStoreCPURateCapacity(t *testing.T) {
 					"node-cpu: %.2f used / %.2f capacity (%.2f kv + %.2f proportional + %.2f background)\n"+
 						"truth:    kv-capacity: %.2f cores/store (true-mult: %.2f)\n"+
 						"naive:    kv-capacity: %.2f cores/store, capacity_err: %s\n"+
-						"capped:   kv-capacity: %.2f cores/store, capacity_err: %s\n",
+						"capped:   kv-capacity: %.2f cores/store, capacity_err: %s\n"+
+						"physical: load: %.2f capacity: %.2f (util: %.2f%%, amp-factor: %.2f)\n",
 					nodeUsageCores, nodeCapCores, kvCPUCores, propOverhead, bgCores,
 					trueCapPerStore, trueMult,
 					naiveCap, fmtErr(naiveCap),
 					cappedCap, fmtErr(cappedCap),
+					physLoad, physCap, physLoad/physCap*100, physResult.amplificationFactor,
 				)
 
 			case "mean":
@@ -176,7 +181,7 @@ func TestComputeStoreByteSizeCapacity(t *testing.T) {
 				}
 				fractionUsed := sc.FractionUsed()
 
-				// Current model: uses FractionUsed() = Used/(Used+Available).
+				// Legacy model: uses FractionUsed() = Used/(Used+Available).
 				result := computeStoreByteSizeCapacity(
 					mmaprototype.LoadValue(logicalBytes), fractionUsed, available,
 				)
@@ -185,17 +190,27 @@ func TestComputeStoreByteSizeCapacity(t *testing.T) {
 					mmaprototype.LoadValue(logicalBytes), total, available,
 				)
 
-				fmtUtil := func(load int64, cap mmaprototype.LoadValue) string {
+				// Physical model: load=Used, capacity=Used+Available.
+				physResult := computePhysicalDisk(logicalBytes, used, available)
+
+				fmtUtil := func(load int64, cap int64) string {
 					if cap > 0 {
 						return fmt.Sprintf("%.2f%%", float64(load)/float64(cap)*100)
 					}
 					return "N/A"
 				}
 				return fmt.Sprintf(
-					"fraction-used: %.4f (via Used) vs %.4f (via Total-Available)\nkv-capacity: %s (kv-util: %s, available: %s)\nkv-capacity(wrong): %s (kv-util: %s, available: %s)\n",
+					"fraction-used: %.4f (via Used) vs %.4f (via Total-Available)\n"+
+						"legacy-capacity: %s (kv-util: %s, available: %s)\n"+
+						"legacy-capacity(wrong): %s (kv-util: %s, available: %s)\n"+
+						"physical: load=%s capacity=%s (util: %s, amp-factor: %.2f)\n",
 					fractionUsed, float64(total-available)/float64(total),
-					humanizeutil.IBytes(int64(result)), fmtUtil(logicalBytes, result), humanizeutil.IBytes(available),
-					humanizeutil.IBytes(int64(wrongResult)), fmtUtil(logicalBytes, wrongResult), humanizeutil.IBytes(available),
+					humanizeutil.IBytes(int64(result)), fmtUtil(logicalBytes, int64(result)), humanizeutil.IBytes(available),
+					humanizeutil.IBytes(int64(wrongResult)), fmtUtil(logicalBytes, int64(wrongResult)), humanizeutil.IBytes(available),
+					humanizeutil.IBytes(int64(physResult.load)),
+					humanizeutil.IBytes(int64(physResult.capacity)),
+					fmtUtil(int64(physResult.load), int64(physResult.capacity)),
+					physResult.amplificationFactor,
 				)
 
 			default:
