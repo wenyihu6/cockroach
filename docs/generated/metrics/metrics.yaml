@@ -15604,7 +15604,7 @@ layers:
       derivative: NONE
     - name: mma.store.cpu.capacity
       exported_name: mma_store_cpu_capacity
-      description: Logical CPU capacity estimated by MMA by extrapolating from the current load and system CPU utilization after accounting for CPU load that MMA cannot account for that scales with KV work (RPC, DistSender, etc.) and load that doesn't (SQL).
+      description: Physical CPU capacity for this store in nanoseconds per second (nodeCPURateCapacity / numStores). This is the actual CPU capacity of the node divided equally among stores.
       y_axis_label: Nanoseconds/Sec
       type: GAUGE
       unit: NANOSECONDS
@@ -15634,9 +15634,9 @@ layers:
       unit: BYTES
       aggregation: AVG
       derivative: NONE
-    - name: mma.store.disk.logical
-      exported_name: mma_store_disk_logical
-      description: Logical bytes consumed by the replicas on this store as reported by MVCC statistics without accounting for any space amplification or compression.
+    - name: mma.store.disk.load
+      exported_name: mma_store_disk_load
+      description: Physical disk bytes used by this store (Used). This is the actual disk footprint including space amplification and compression effects.
       y_axis_label: Bytes
       type: GAUGE
       unit: BYTES
