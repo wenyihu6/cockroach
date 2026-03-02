@@ -11,9 +11,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
-// MakeStoreLoadMsg constructs a StoreLoadMsg with load and capacity expressed
-// in physical units. MMA receives only this message for aggregate store state;
-// amplification factors for per-range loads are obtained separately via
+// MakeStoreLoadMsg constructs a StoreLoadMsg with load and capacity in
+// node-CPU (ns/s) and disk-bytes. MMA receives only this message for aggregate
+// store state; the replica-CPU → node-CPU and MVCC-bytes → disk-bytes
+// conversion rates for per-range loads are obtained separately via
 // ComputeAmplificationFactors.
 func MakeStoreLoadMsg(
 	desc roachpb.StoreDescriptor, origTimestampNanos int64,

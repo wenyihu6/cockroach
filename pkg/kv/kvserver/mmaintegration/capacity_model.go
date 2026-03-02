@@ -13,78 +13,127 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 )
 
-// Boundary contract: MMA operates exclusively on physical units (CPU ns/s,
-// disk bytes). All conversion from logical per-range loads (direct replica CPU,
-// MVCC bytes) to physical quantities happens in this package:
+// Unit conversion boundary
+//
+// Per-range loads are reported in replica-CPU (ns/s) and MVCC-bytes — these
+// only account for work directly tracked at each replica (request evaluation,
+// raft processing, logical data size). Store and node-level metrics, however,
+// are measured in node-CPU (ns/s) and disk-bytes — these include all overhead
+// (RPC handling, compactions, WAL, tombstones, etc.).
+//
+// MMA operates exclusively in node-CPU and disk-bytes so that its utilization
+// numbers (load/capacity) match what is observable at the OS level. All
+// conversion from replica-CPU to node-CPU, and from MVCC-bytes to disk-bytes,
+// happens in this package via amplification factors that act as unit-conversion
+// rates:
+//
+//   node-CPU   = replica-CPU  × cpuAmpFactor
+//   disk-bytes = MVCC-bytes   × diskAmpFactor
+//
+// Three functions implement this boundary:
 //
 //   - MakeStoreLoadMsg converts a StoreDescriptor into a StoreLoadMsg whose
-//     Load and Capacity fields are physical (CPU ns/s, disk bytes).
-//   - MakePhysicalRangeLoad converts logical per-range loads into a physical
-//     RangeLoad by applying AmplificationFactors.
-//   - ComputeAmplificationFactors derives the factors from a StoreDescriptor.
+//     Load and Capacity fields are in node-CPU (ns/s) and disk-bytes.
+//   - MakePhysicalRangeLoad converts per-range loads from replica-CPU and
+//     MVCC-bytes into node-CPU and disk-bytes by applying AmplificationFactors.
+//   - ComputeAmplificationFactors derives the conversion rates from a
+//     StoreDescriptor.
 //
-// AmplificationFactors are never passed into MMA itself. MMA sees only physical
-// LoadVectors, so its utilization metrics match observable node-level metrics.
+// AmplificationFactors are never passed into MMA itself. MMA sees only
+// node-CPU and disk-bytes LoadVectors.
 
 // storeCPURateCapacityInput holds the inputs needed to compute per-store
-// physical CPU load, capacity, and amplification factor. Using a struct avoids
-// accidentally swapping the order of parameters.
+// node-CPU load, capacity, and the replica-CPU → node-CPU conversion factor.
+// Using a struct avoids accidentally swapping the order of parameters.
 type storeCPURateCapacityInput struct {
-	// storesCPURate is the aggregated CPU usage across all stores on the node
-	// (sum of per-store CPU load usage) in ns/sec.
+	// storesCPURate is the aggregate replica-CPU across all stores on the node
+	// (sum of directly-tracked per-store CPU) in ns/s.
 	storesCPURate float64
-	// nodeCPURateUsage is the total CPU usage of the node (from OS-level
-	// metrics) in ns/sec.
+	// nodeCPURateUsage is the total node-CPU usage (from OS-level metrics) in
+	// ns/s. This includes indirect overhead not tracked per-replica.
 	nodeCPURateUsage float64
-	// nodeCPURateCapacity is the total CPU capacity of the node (from OS-level
-	// metrics) in ns/sec.
+	// nodeCPURateCapacity is the total node-CPU capacity (from OS-level
+	// metrics) in ns/s — e.g. 8 cores = 8e9.
 	nodeCPURateCapacity float64
 	// numStores is the number of stores on the node.
 	numStores int32
 }
 
-// cpuIndirectOverheadMultiplier is the maximum ratio of total CPU caused by
-// store work to the directly-tracked store CPU. For example, a value of 3
-// means we assume each unit of direct MMA load (replica CPU) can cause up to 2
-// additional units of indirect CPU (RPC handling, compactions, etc.), for a
-// total of 3 units. Any node CPU usage beyond storesCPURate * multiplier is
-// treated as background load unrelated to MMA.
+// cpuIndirectOverheadMultiplier caps the replica-CPU → node-CPU conversion
+// factor. A value of 3 means each nanosecond of replica-CPU can account for up
+// to 3 nanoseconds of node-CPU (the original work plus up to 2× indirect
+// overhead from RPC handling, compactions, etc.). Any node-CPU usage beyond
+// storesCPURate × multiplier is treated as background work unrelated to
+// replica activity.
 const cpuIndirectOverheadMultiplier = 3.0
 
-// physicalCPUResult holds the outputs of the physical CPU model.
+// physicalCPUResult holds the outputs of the CPU unit-conversion model.
 type physicalCPUResult struct {
-	// load is the per-store physical CPU usage in ns/s. The sum of load across
-	// all stores on a node equals the node's total CPU usage (nodeCPURateUsage).
+	// load is the per-store CPU in node-CPU ns/s. The sum across all stores on
+	// a node equals nodeCPURateUsage.
 	load float64
-	// capacity is the per-store physical CPU capacity in ns/s. Equal to
-	// nodeCPURateCapacity / numStores, i.e. actual physical cores.
+	// capacity is the per-store CPU capacity in node-CPU ns/s. Equal to
+	// nodeCPURateCapacity / numStores.
 	capacity float64
-	// amplificationFactor converts direct replica CPU (logical) to total
-	// physical CPU footprint (>= 1). Used at the integration boundary to
-	// amplify per-range load deltas before passing them into MMA.
+	// amplificationFactor is the replica-CPU → node-CPU conversion rate
+	// (>= 1, <= cpuIndirectOverheadMultiplier). Applied at the integration
+	// boundary to convert per-range replica-CPU deltas into node-CPU before
+	// passing them into MMA.
 	amplificationFactor float64
 }
 
-// computePhysicalCPU computes per-store physical CPU load, capacity, and
-// amplification factor.
+// computePhysicalCPU computes per-store node-CPU load, capacity, and the
+// replica-CPU → node-CPU conversion factor.
 //
-// All outputs are in physical CPU units (ns/s). MMA's utilization
-// (load/capacity) directly matches the node-level CPU utilization observable
-// via OS metrics:
+// All outputs are in node-CPU (ns/s), so MMA's utilization (load/capacity)
+// directly matches the OS-observable CPU utilization:
 //
-//	sum(store.load) = nodeCPURateUsage
+//	sum(store.load)     = nodeCPURateUsage
 //	sum(store.capacity) = nodeCPURateCapacity
-//	mean utilization = nodeCPURateUsage / nodeCPURateCapacity
+//	mean utilization    = nodeCPURateUsage / nodeCPURateCapacity
 //
-// The amplification factor is the clamped ratio of total node CPU to
-// directly-tracked store CPU. It is used outside MMA to convert per-range
-// logical CPU deltas to physical units.
+// The amplification factor is the clamped ratio of node-CPU to replica-CPU
+// (i.e. nodeCPURateUsage / storesCPURate). It is used outside MMA to convert
+// per-range loads from replica-CPU to node-CPU.
 //
-// For load distribution across stores: we spread the node's total CPU usage
-// proportionally to each store's share of storesCPURate. With a single store
-// this equals nodeCPURateUsage; with multiple stores each gets its proportional
-// share. When storesCPURate is 0 (no replicas reporting CPU yet), we split
-// evenly.
+// Downstream consumers — all in node-CPU (ns/s):
+//
+//  1. MakeStoreLoadMsg sets StoreLoadMsg.Load[CPURate] = load and
+//     StoreLoadMsg.Capacity[CPURate] = capacity. Inside MMA,
+//     processStoreLoadMsg stores these as storeState.reportedLoad[CPURate]
+//     and storeState.capacity[CPURate].
+//
+//  2. computeMeansForStoreSet sums load and capacity across stores:
+//     meanUtil = sum(load) / sum(capacity). Because both sides are in
+//     node-CPU the ratio equals real cluster CPU utilization.
+//
+//  3. loadSummaryForDimension compares a store's load and capacity to the
+//     cluster mean:
+//     - fractionAbove = load/meanLoad - 1   (drives mean-based rebalancing)
+//     - fractionUsed  = load/capacity        (drives overload detection)
+//
+//  4. canShedAndAddLoad temporarily adds/subtracts per-range deltas (in
+//     node-CPU, after conversion from replica-CPU via ampFactor) to a
+//     store's adjusted load and recomputes the load summary to decide
+//     whether a transfer is safe.
+//
+// Unit-consistency proof (single-store node):
+//
+//	sum(per-range replica-CPU) ≈ storesCPURate
+//	ampFactor                  = nodeCPURateUsage / storesCPURate  (clamped)
+//	sum(per-range node-CPU)    = sum(per-range replica-CPU) × ampFactor
+//	                           ≈ storesCPURate × (nodeCPURateUsage / storesCPURate)
+//	                           = nodeCPURateUsage
+//	                           = store.load
+//
+// So when canShedAndAddLoad (item 4) adds a per-range node-CPU delta to a
+// store's adjusted load (also node-CPU), the arithmetic is in consistent
+// units, and load/capacity continues to reflect actual CPU utilization.
+//
+// Multi-store distribution: we split the node's total CPU usage evenly across
+// stores (matching how capacity is split). A proportional split weighted by
+// each store's replica-CPU would be more precise but requires per-store info
+// not available here.
 func computePhysicalCPU(in storeCPURateCapacityInput) physicalCPUResult {
 	if in.numStores <= 0 || in.nodeCPURateCapacity <= 0 {
 		log.KvDistribution.Fatalf(
@@ -95,7 +144,8 @@ func computePhysicalCPU(in storeCPURateCapacityInput) physicalCPUResult {
 	numStores := float64(in.numStores)
 	capacity := in.nodeCPURateCapacity / numStores
 
-	// Compute amplification factor.
+	// Compute the replica-CPU → node-CPU conversion rate. When no replica-CPU
+	// is reported yet (storesCPURate <= 0), assume the maximum overhead.
 	var ampFactor float64
 	if in.storesCPURate <= 0 {
 		ampFactor = cpuIndirectOverheadMultiplier
@@ -119,29 +169,31 @@ func computePhysicalCPU(in storeCPURateCapacityInput) physicalCPUResult {
 	}
 }
 
-// maxDiskSpaceAmplification caps the ratio of physical disk bytes used to
-// logical (MVCC) bytes. Values above this are treated as if the extra physical
-// usage is independent of range data (e.g. WAL, auxiliary files).
+// maxDiskSpaceAmplification caps the MVCC-bytes → disk-bytes conversion
+// factor. Ratios above this are treated as if the extra disk usage is
+// independent of range data (e.g. WAL, auxiliary files).
 const maxDiskSpaceAmplification = 5.0
 
-// physicalDiskResult holds the outputs of the physical disk model.
+// physicalDiskResult holds the outputs of the disk unit-conversion model.
 type physicalDiskResult struct {
-	// load is the physical disk bytes used by the store.
+	// load is the store's disk usage in disk-bytes.
 	load float64
-	// capacity is the total usable disk space (Used + Available).
+	// capacity is the total usable disk space (Used + Available) in disk-bytes.
 	capacity float64
-	// amplificationFactor converts logical bytes (MVCC) to physical bytes
-	// (>= 1, capped at maxDiskSpaceAmplification). Used at the integration
-	// boundary to amplify per-range byte-size deltas.
+	// amplificationFactor is the MVCC-bytes → disk-bytes conversion rate
+	// (>= 1, <= maxDiskSpaceAmplification). Applied at the integration
+	// boundary to convert per-range MVCC-byte sizes into disk-bytes before
+	// passing them into MMA.
 	amplificationFactor float64
 }
 
-// computePhysicalDisk computes physical disk load, capacity, and space
-// amplification factor. Both load and capacity are in physical bytes so that
-// load/capacity = Used/(Used+Available) = actual disk utilization.
+// computePhysicalDisk computes per-store disk-byte load, capacity, and the
+// MVCC-bytes → disk-bytes conversion factor. Both load and capacity are in
+// disk-bytes so that load/capacity = Used/(Used+Available) = actual disk
+// utilization.
 //
-// For empty/new stores (logicalBytes == 0 or used == 0), the amplification
-// factor defaults to 1.0.
+// For empty/new stores (logicalBytes == 0 or used == 0), the conversion
+// factor defaults to 1.0 (MVCC-bytes ≈ disk-bytes).
 func computePhysicalDisk(logicalBytes int64, used int64, available int64) physicalDiskResult {
 	capacity := float64(used + available)
 	var ampFactor float64
@@ -158,27 +210,26 @@ func computePhysicalDisk(logicalBytes int64, used int64, available int64) physic
 	}
 }
 
-// AmplificationFactors holds CPU and disk amplification factors that convert
-// logical per-range loads (direct replica CPU, MVCC bytes) into physical units.
+// AmplificationFactors holds the unit-conversion rates for CPU and disk.
+// CPU converts replica-CPU → node-CPU; Disk converts MVCC-bytes → disk-bytes.
 // These are computed from store metrics and applied at the integration boundary
-// so that MMA operates exclusively on physical quantities.
+// so that MMA operates exclusively in node-CPU and disk-bytes.
 type AmplificationFactors struct {
-	CPU  float64
-	Disk float64
+	CPU  float64 // replica-CPU → node-CPU
+	Disk float64 // MVCC-bytes → disk-bytes
 }
 
-// ComputeAmplificationFactors returns the CPU and disk amplification factors
-// for a store, given its descriptor. These factors convert logical per-range
-// loads (direct replica CPU, MVCC bytes) into physical units for use at the
-// MMA integration boundary.
+// ComputeAmplificationFactors returns the replica-CPU → node-CPU and
+// MVCC-bytes → disk-bytes conversion rates for a store, derived from its
+// descriptor.
 //
 // Design note: the same computePhysicalCPU / computePhysicalDisk functions
-// are also called by MakeStoreLoadMsg to derive the store-level physical load
-// and capacity. Ideally both paths would use factors from the exact same
-// snapshot of store metrics, guaranteeing that the amplified per-range loads
-// are perfectly consistent with the store-level load MMA received. In
-// practice, the factors are computed from cached metrics that may be from a
-// slightly different point in time than the StoreDescriptor used by
+// are also called by MakeStoreLoadMsg to derive the store-level load and
+// capacity in node-CPU / disk-bytes. Ideally both paths would use factors from
+// the exact same snapshot of store metrics, guaranteeing that the converted
+// per-range loads are perfectly consistent with the store-level load MMA
+// received. In practice, the factors are computed from cached metrics that may
+// be from a slightly different point in time than the StoreDescriptor used by
 // MakeStoreLoadMsg. This is acceptable because:
 //  1. The underlying inputs (node CPU EWMA, space amplification) are
 //     slow-moving; the drift between two successive reads is negligible.
@@ -210,10 +261,12 @@ func ComputeAmplificationFactors(desc roachpb.StoreDescriptor) AmplificationFact
 	return amp
 }
 
-// MakePhysicalRangeLoad converts logical per-range load measurements into a
-// physical RangeLoad by applying the amplification factors. This is the single
-// entry point for all logical-to-physical range load conversion and should be
-// called at the integration boundary before passing range loads to MMA.
+// MakePhysicalRangeLoad converts per-range loads from replica-CPU and
+// MVCC-bytes into node-CPU and disk-bytes by applying the amplification
+// factors. This is the single entry point for all per-range unit conversion
+// and should be called at the integration boundary before passing range loads
+// to MMA. WriteBandwidth is already in a common unit and passes through
+// without conversion.
 func MakePhysicalRangeLoad(
 	requestCPUNanos, raftCPUNanos, writeBytesPerSec float64,
 	logicalBytes int64,
@@ -229,10 +282,11 @@ func MakePhysicalRangeLoad(
 	return rl
 }
 
-// computeStoreByteSizeCapacity is the legacy logical-space disk capacity model,
-// retained for comparison in tests. It computes capacity in LogicalBytes-space
-// so that load/capacity recovers the actual disk utilization, encoding the
-// space amplification into the capacity.
+// computeStoreByteSizeCapacity is the legacy disk capacity model retained for
+// comparison in tests. Unlike the current model which converts everything to
+// disk-bytes, this kept load in MVCC-bytes and baked the MVCC→disk conversion
+// into a virtual capacity so that load/capacity still recovered actual disk
+// utilization.
 func computeStoreByteSizeCapacity(
 	logicalBytes int64, diskFractionUsed float64, availableBytes int64,
 ) int64 {
@@ -243,8 +297,10 @@ func computeStoreByteSizeCapacity(
 	return int64(float64(logicalBytes) / diskFractionUsed)
 }
 
-// computeCPUCapacityWithCap is the legacy logical-space CPU capacity model,
-// retained for comparison in tests.
+// computeCPUCapacityWithCap is the legacy CPU capacity model retained for
+// comparison in tests. Unlike the current model which converts everything to
+// node-CPU, this kept load in replica-CPU and baked the replica→node
+// conversion into a virtual capacity.
 func computeCPUCapacityWithCap(in storeCPURateCapacityInput) (capacity float64) {
 	if in.numStores <= 0 || in.nodeCPURateCapacity <= 0 {
 		log.KvDistribution.Fatalf(

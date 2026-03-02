@@ -17,7 +17,8 @@ import (
 
 // convertLeaseTransferToMMA converts a lease transfer operation to mma replica
 // changes. It will be passed to mma.RegisterExternalChanges. The amp factors
-// convert logical per-range loads to physical units for MMA.
+// convert per-range loads from replica-CPU / MVCC-bytes to node-CPU /
+// disk-bytes for MMA.
 func convertLeaseTransferToMMA(
 	desc *roachpb.RangeDescriptor,
 	usage allocator.RangeUsageInfo,
