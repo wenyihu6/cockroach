@@ -5,7 +5,12 @@
 
 package admission
 
-import "github.com/cockroachdb/cockroach/pkg/util/syncutil"
+import (
+	"encoding/json"
+
+	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
+	"github.com/cockroachdb/errors"
+)
 
 // ResourceGroupID identifies a resource group for CPU isolation.
 // Resource groups generalize the fixed 2-tier resourceTier system
@@ -187,4 +192,41 @@ func (r *ResourceGroupRegistry) ComputeTargetUtilizations(
 type targetUtilizationPair struct {
 	noBurst  float64
 	canBurst float64
+}
+
+// resourceGroupJSON is the JSON representation of a resource group for
+// configuration via cluster settings or test knobs.
+type resourceGroupJSON struct {
+	Name      string `json:"name"`
+	WeightCPU int32  `json:"weight_cpu"`
+	MaxCPU    bool   `json:"max_cpu"`
+}
+
+// ParseResourceGroupsJSON parses a JSON array of resource group configs.
+// Example: [{"name":"default","weight_cpu":100,"max_cpu":true},{"name":"batch","weight_cpu":25,"max_cpu":false}]
+func ParseResourceGroupsJSON(jsonStr string) (*ResourceGroupRegistry, error) {
+	if jsonStr == "" {
+		return nil, nil
+	}
+	var groups []resourceGroupJSON
+	if err := json.Unmarshal([]byte(jsonStr), &groups); err != nil {
+		return nil, errors.Wrap(err, "parsing resource groups JSON")
+	}
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	r := &ResourceGroupRegistry{}
+	r.mu.groups = make([]ResourceGroupConfig, len(groups))
+	for i, g := range groups {
+		if g.WeightCPU <= 0 {
+			return nil, errors.Newf("resource group %q has invalid weight_cpu: %d", g.Name, g.WeightCPU)
+		}
+		r.mu.groups[i] = ResourceGroupConfig{
+			Name:      g.Name,
+			WeightCPU: g.WeightCPU,
+			MaxCPU:    g.MaxCPU,
+		}
+		r.mu.totalWeight += g.WeightCPU
+	}
+	return r, nil
 }

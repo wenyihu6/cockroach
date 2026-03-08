@@ -93,6 +93,47 @@ func TestResourceGroupRegistry(t *testing.T) {
 	})
 }
 
+func TestParseResourceGroupsJSON(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		r, err := ParseResourceGroupsJSON("")
+		require.NoError(t, err)
+		require.Nil(t, r)
+	})
+
+	t.Run("single_group", func(t *testing.T) {
+		r, err := ParseResourceGroupsJSON(`[{"name":"default","weight_cpu":100,"max_cpu":true}]`)
+		require.NoError(t, err)
+		require.Equal(t, 1, r.NumGroups())
+		g := r.GetGroup(0)
+		require.Equal(t, "default", g.Name)
+		require.Equal(t, int32(100), g.WeightCPU)
+		require.True(t, g.MaxCPU)
+	})
+
+	t.Run("three_groups", func(t *testing.T) {
+		json := `[
+			{"name":"default","weight_cpu":100,"max_cpu":true},
+			{"name":"analytics","weight_cpu":50,"max_cpu":false},
+			{"name":"batch","weight_cpu":25,"max_cpu":false}
+		]`
+		r, err := ParseResourceGroupsJSON(json)
+		require.NoError(t, err)
+		require.Equal(t, 3, r.NumGroups())
+		require.Equal(t, int32(175), r.TotalWeight())
+	})
+
+	t.Run("invalid_weight", func(t *testing.T) {
+		_, err := ParseResourceGroupsJSON(`[{"name":"bad","weight_cpu":0,"max_cpu":true}]`)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "invalid weight_cpu")
+	})
+
+	t.Run("invalid_json", func(t *testing.T) {
+		_, err := ParseResourceGroupsJSON(`not json`)
+		require.Error(t, err)
+	})
+}
+
 func TestCPUTimeTokenGranterDynamic(t *testing.T) {
 	t.Run("3_tiers", func(t *testing.T) {
 		granter := newCPUTimeTokenGranter(3)
