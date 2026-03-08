@@ -183,6 +183,12 @@ func planOpaque(ctx context.Context, p *planner, stmt tree.Statement) (planNode,
 		return p.CreateTrigger(ctx, n)
 	case *tree.CreateType:
 		return p.CreateType(ctx, n)
+	case *tree.CreateResourceGroup:
+		return p.CreateResourceGroup(ctx, n)
+	case *tree.AlterResourceGroup:
+		return p.AlterResourceGroup(ctx, n)
+	case *tree.DropResourceGroup:
+		return p.DropResourceGroup(ctx, n)
 	case *tree.CreateRole:
 		return p.CreateRole(ctx, n)
 	case *tree.CreateSequence:
@@ -391,6 +397,9 @@ func init() {
 		&tree.CreateSequence{},
 		&tree.CreateTrigger{},
 		&tree.CreateType{},
+		&tree.CreateResourceGroup{},
+		&tree.AlterResourceGroup{},
+		&tree.DropResourceGroup{},
 		&tree.CreateRole{},
 		&tree.Deallocate{},
 		&tree.DeclareCursor{},

@@ -1055,7 +1055,7 @@ func (u *sqlSymUnion) filterType() tree.FilterType {
 %token <str> LINESTRING LINESTRINGM LINESTRINGZ LINESTRINGZM
 %token <str> LIST LOCAL LOCALITY LOCALTIME LOCALTIMESTAMP LOCKED LOGGED LOGICAL LOGICALLY LOGIN LOOKUP LOW LSHIFT
 
-%token <str> MATCH MATERIALIZED MERGE MINVALUE MAXVALUE METHOD MINUTE MODIFYCLUSTERSETTING MODE MONTH MOVE
+%token <str> MATCH MATERIALIZED MAX_CPU MERGE MINVALUE MAXVALUE METHOD MINUTE MODIFYCLUSTERSETTING MODE MONTH MOVE
 %token <str> MULTILINESTRING MULTILINESTRINGM MULTILINESTRINGZ MULTILINESTRINGZM
 %token <str> MULTIPOINT MULTIPOINTM MULTIPOINTZ MULTIPOINTZM
 %token <str> MULTIPOLYGON MULTIPOLYGONM MULTIPOLYGONZ MULTIPOLYGONZM
@@ -1105,7 +1105,7 @@ func (u *sqlSymUnion) filterType() tree.FilterType {
 %token <str> VIEWCLUSTERSETTING VIRTUAL VISIBLE INVISIBLE VISIBILITY VOLATILE VOTERS
 %token <str> VIRTUAL_CLUSTER_NAME VIRTUAL_CLUSTER
 
-%token <str> WATCHED_TABLES WHEN WHERE WINDOW WITH WITHIN WITHOUT WORK WRITE
+%token <str> WATCHED_TABLES WEIGHT_CPU WHEN WHERE WINDOW WITH WITHIN WITHOUT WORK WRITE
 
 %token <str> YEAR
 
@@ -1301,6 +1301,9 @@ func (u *sqlSymUnion) filterType() tree.FilterType {
 %type <tree.Statement> alter_external_connection_stmt
 %type <tree.Statement> create_index_stmt
 %type <tree.Statement> create_role_stmt
+%type <tree.Statement> create_resource_group_stmt
+%type <tree.Statement> alter_resource_group_stmt
+%type <tree.Statement> drop_resource_group_stmt
 %type <tree.Statement> create_schedule_for_backup_stmt
 %type <tree.Statement> alter_backup_schedule
 %type <tree.Statement> create_schema_stmt
@@ -1983,6 +1986,7 @@ stmt_without_legacy_transaction:
 alter_stmt:
   alter_ddl_stmt      // help texts in sub-rule
 | alter_external_connection_stmt // EXTEND WITH HELP: ALTER EXTERNAL CONNECTION
+| alter_resource_group_stmt // EXTEND WITH HELP: ALTER RESOURCE GROUP
 | alter_role_stmt     // EXTEND WITH HELP: ALTER ROLE
 | alter_virtual_cluster_stmt   /* SKIP DOC */
 | alter_unsupported_stmt
@@ -4802,6 +4806,7 @@ comment_text:
 // CREATE CHANGEFEED
 create_stmt:
   create_role_stmt       // EXTEND WITH HELP: CREATE ROLE
+| create_resource_group_stmt // EXTEND WITH HELP: CREATE RESOURCE GROUP
 | create_ddl_stmt        // help texts in sub-rule
 | create_stats_stmt      // EXTEND WITH HELP: CREATE STATISTICS
 | create_changefeed_stmt // EXTEND WITH HELP: CREATE CHANGEFEED
@@ -6614,6 +6619,7 @@ discard_stmt:
 // DROP USER, DROP ROLE, DROP TYPE
 drop_stmt:
   drop_ddl_stmt                 // help texts in sub-rule
+| drop_resource_group_stmt      // EXTEND WITH HELP: DROP RESOURCE GROUP
 | drop_role_stmt                // EXTEND WITH HELP: DROP ROLE
 | drop_schedule_stmt            // EXTEND WITH HELP: DROP SCHEDULES
 | drop_external_connection_stmt // EXTEND WITH HELP: DROP EXTERNAL CONNECTION
@@ -10508,6 +10514,7 @@ show_locality_stmt:
 // %Help: SHOW RESOURCE GROUPS - list resource groups for CPU isolation
 // %Category: Misc
 // %Text: SHOW RESOURCE GROUPS
+// %SeeAlso: CREATE RESOURCE GROUP, ALTER RESOURCE GROUP, DROP RESOURCE GROUP
 show_resource_groups_stmt:
   SHOW RESOURCE GROUPS
   {
@@ -12282,6 +12289,73 @@ password_clause:
   {
     $$.val = tree.KVOption{Key: tree.Name($1), Value: tree.DNull}
   }
+
+// %Help: CREATE RESOURCE GROUP - create a resource group for CPU isolation
+// %Category: Misc
+// %Text: CREATE RESOURCE GROUP [IF NOT EXISTS] <name> WEIGHT_CPU = <int> [MAX_CPU = <bool>]
+// %SeeAlso: ALTER RESOURCE GROUP, DROP RESOURCE GROUP, SHOW RESOURCE GROUPS
+create_resource_group_stmt:
+  CREATE RESOURCE GROUP name WEIGHT_CPU '=' a_expr
+  {
+    $$.val = &tree.CreateResourceGroup{Name: tree.Name($4), WeightCPU: $7.expr(), MaxCPU: false}
+  }
+| CREATE RESOURCE GROUP name WEIGHT_CPU '=' a_expr MAX_CPU '=' TRUE
+  {
+    $$.val = &tree.CreateResourceGroup{Name: tree.Name($4), WeightCPU: $7.expr(), MaxCPU: true}
+  }
+| CREATE RESOURCE GROUP name WEIGHT_CPU '=' a_expr MAX_CPU '=' FALSE
+  {
+    $$.val = &tree.CreateResourceGroup{Name: tree.Name($4), WeightCPU: $7.expr(), MaxCPU: false}
+  }
+| CREATE RESOURCE GROUP IF NOT EXISTS name WEIGHT_CPU '=' a_expr
+  {
+    $$.val = &tree.CreateResourceGroup{Name: tree.Name($7), WeightCPU: $10.expr(), MaxCPU: false, IfNotExists: true}
+  }
+| CREATE RESOURCE GROUP IF NOT EXISTS name WEIGHT_CPU '=' a_expr MAX_CPU '=' TRUE
+  {
+    $$.val = &tree.CreateResourceGroup{Name: tree.Name($7), WeightCPU: $10.expr(), MaxCPU: true, IfNotExists: true}
+  }
+| CREATE RESOURCE GROUP IF NOT EXISTS name WEIGHT_CPU '=' a_expr MAX_CPU '=' FALSE
+  {
+    $$.val = &tree.CreateResourceGroup{Name: tree.Name($7), WeightCPU: $10.expr(), MaxCPU: false, IfNotExists: true}
+  }
+| CREATE RESOURCE GROUP error // SHOW HELP: CREATE RESOURCE GROUP
+
+// %Help: ALTER RESOURCE GROUP - alter a resource group
+// %Category: Misc
+// %Text: ALTER RESOURCE GROUP <name> SET WEIGHT_CPU = <int> | MAX_CPU = <bool>
+// %SeeAlso: CREATE RESOURCE GROUP, DROP RESOURCE GROUP, SHOW RESOURCE GROUPS
+alter_resource_group_stmt:
+  ALTER RESOURCE GROUP name SET WEIGHT_CPU '=' a_expr
+  {
+    $$.val = &tree.AlterResourceGroup{Name: tree.Name($4), WeightCPU: $8.expr()}
+  }
+| ALTER RESOURCE GROUP name SET MAX_CPU '=' TRUE
+  {
+    b := true
+    $$.val = &tree.AlterResourceGroup{Name: tree.Name($4), MaxCPU: &b}
+  }
+| ALTER RESOURCE GROUP name SET MAX_CPU '=' FALSE
+  {
+    b := false
+    $$.val = &tree.AlterResourceGroup{Name: tree.Name($4), MaxCPU: &b}
+  }
+| ALTER RESOURCE GROUP error // SHOW HELP: ALTER RESOURCE GROUP
+
+// %Help: DROP RESOURCE GROUP - drop a resource group
+// %Category: Misc
+// %Text: DROP RESOURCE GROUP [IF EXISTS] <name>
+// %SeeAlso: CREATE RESOURCE GROUP, ALTER RESOURCE GROUP, SHOW RESOURCE GROUPS
+drop_resource_group_stmt:
+  DROP RESOURCE GROUP name
+  {
+    $$.val = &tree.DropResourceGroup{Name: tree.Name($4)}
+  }
+| DROP RESOURCE GROUP IF EXISTS name
+  {
+    $$.val = &tree.DropResourceGroup{Name: tree.Name($6), IfExists: true}
+  }
+| DROP RESOURCE GROUP error // SHOW HELP: DROP RESOURCE GROUP
 
 // %Help: CREATE ROLE - define a new role
 // %Category: Priv
@@ -18918,6 +18992,7 @@ unreserved_keyword:
 | LOW
 | MATCH
 | MATERIALIZED
+| MAX_CPU
 | MAXVALUE
 | MERGE
 | METHOD
@@ -19199,6 +19274,7 @@ unreserved_keyword:
 | VOLATILE
 | VOTERS
 | WATCHED_TABLES
+| WEIGHT_CPU
 | WITHIN
 | WITHOUT
 | WRITE
@@ -19499,6 +19575,7 @@ bare_label_keywords:
 | LOW
 | MATCH
 | MATERIALIZED
+| MAX_CPU
 | MAXVALUE
 | MERGE
 | METHOD
@@ -19822,6 +19899,7 @@ bare_label_keywords:
 | VOLATILE
 | VOTERS
 | WATCHED_TABLES
+| WEIGHT_CPU
 | WHEN
 | WORK
 | WRITE

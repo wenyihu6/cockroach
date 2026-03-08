@@ -1949,6 +1949,71 @@ func (node *CreateRole) Format(ctx *FmtCtx) {
 	}
 }
 
+// CreateResourceGroup represents a CREATE RESOURCE GROUP statement.
+type CreateResourceGroup struct {
+	Name      Name
+	WeightCPU Expr
+	MaxCPU    bool
+	// IfNotExists indicates IF NOT EXISTS was specified.
+	IfNotExists bool
+}
+
+// Format implements the NodeFormatter interface.
+func (node *CreateResourceGroup) Format(ctx *FmtCtx) {
+	ctx.WriteString("CREATE RESOURCE GROUP ")
+	if node.IfNotExists {
+		ctx.WriteString("IF NOT EXISTS ")
+	}
+	ctx.FormatNode(&node.Name)
+	ctx.WriteString(" WEIGHT_CPU = ")
+	ctx.FormatNode(node.WeightCPU)
+	if node.MaxCPU {
+		ctx.WriteString(" MAX_CPU = true")
+	} else {
+		ctx.WriteString(" MAX_CPU = false")
+	}
+}
+
+// AlterResourceGroup represents an ALTER RESOURCE GROUP statement.
+type AlterResourceGroup struct {
+	Name      Name
+	WeightCPU Expr  // nil if not changing
+	MaxCPU    *bool // nil if not changing
+}
+
+// Format implements the NodeFormatter interface.
+func (node *AlterResourceGroup) Format(ctx *FmtCtx) {
+	ctx.WriteString("ALTER RESOURCE GROUP ")
+	ctx.FormatNode(&node.Name)
+	ctx.WriteString(" SET")
+	if node.WeightCPU != nil {
+		ctx.WriteString(" WEIGHT_CPU = ")
+		ctx.FormatNode(node.WeightCPU)
+	}
+	if node.MaxCPU != nil {
+		if *node.MaxCPU {
+			ctx.WriteString(" MAX_CPU = true")
+		} else {
+			ctx.WriteString(" MAX_CPU = false")
+		}
+	}
+}
+
+// DropResourceGroup represents a DROP RESOURCE GROUP statement.
+type DropResourceGroup struct {
+	Name     Name
+	IfExists bool
+}
+
+// Format implements the NodeFormatter interface.
+func (node *DropResourceGroup) Format(ctx *FmtCtx) {
+	ctx.WriteString("DROP RESOURCE GROUP ")
+	if node.IfExists {
+		ctx.WriteString("IF EXISTS ")
+	}
+	ctx.FormatNode(&node.Name)
+}
+
 // ViewOptions represents options for CREATE VIEW statements.
 type ViewOptions struct {
 	SecurityInvoker bool

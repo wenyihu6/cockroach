@@ -1137,6 +1137,16 @@ func (*CreateRole) StatementTag() string { return "CREATE ROLE" }
 
 func (*CreateRole) hiddenFromShowQueries() {}
 
+func (*CreateResourceGroup) StatementReturnType() StatementReturnType { return DDL }
+func (*CreateResourceGroup) StatementType() StatementType             { return TypeDDL }
+func (*CreateResourceGroup) StatementTag() string                     { return "CREATE RESOURCE GROUP" }
+func (*AlterResourceGroup) StatementReturnType() StatementReturnType  { return DDL }
+func (*AlterResourceGroup) StatementType() StatementType              { return TypeDDL }
+func (*AlterResourceGroup) StatementTag() string                      { return "ALTER RESOURCE GROUP" }
+func (*DropResourceGroup) StatementReturnType() StatementReturnType   { return DDL }
+func (*DropResourceGroup) StatementType() StatementType               { return TypeDDL }
+func (*DropResourceGroup) StatementTag() string                       { return "DROP RESOURCE GROUP" }
+
 // StatementReturnType implements the Statement interface.
 func (*CreateView) StatementReturnType() StatementReturnType { return DDL }
 
@@ -2651,6 +2661,9 @@ func (n *CreateIndex) String() string                         { return AsString(
 func (n *CreateLogicalReplicationStream) String() string      { return AsString(n) }
 func (n *CreatePolicy) String() string                        { return AsString(n) }
 func (n *CreateRole) String() string                          { return AsString(n) }
+func (n *CreateResourceGroup) String() string                 { return AsString(n) }
+func (n *AlterResourceGroup) String() string                  { return AsString(n) }
+func (n *DropResourceGroup) String() string                   { return AsString(n) }
 func (n *CreateTable) String() string                         { return AsString(n) }
 func (n *CreateTenant) String() string                        { return AsString(n) }
 func (n *CreateTenantFromReplication) String() string         { return AsString(n) }
