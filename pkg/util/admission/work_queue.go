@@ -189,6 +189,11 @@ type WorkInfo struct {
 	ReplicatedWorkInfo ReplicatedWorkInfo
 	// WorkloadID is used for ASH sampling.
 	WorkloadID uint64
+	// ResourceGroup identifies the resource group for CPU isolation. When
+	// resource groups are configured, this determines which WorkQueue and
+	// token bucket the work is routed to. When unset (zero value), the
+	// default resource group is used.
+	ResourceGroup ResourceGroupID
 }
 
 // ReplicatedWorkInfo groups everything needed to admit replicated writes, done

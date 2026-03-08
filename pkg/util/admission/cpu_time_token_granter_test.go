@@ -25,8 +25,8 @@ func TestCPUTimeTokenGranter(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	var requesters [numResourceTiers]*testRequester
-	granter := &cpuTimeTokenGranter{}
+	requesters := make([]*testRequester, numDefaultResourceTiers)
+	granter := newCPUTimeTokenGranter(numDefaultResourceTiers)
 	tier0Granter := &cpuTimeTokenChildGranter{
 		tier:   testTier0,
 		parent: granter,
@@ -153,19 +153,19 @@ func TestCPUTimeTokenGranter(t *testing.T) {
 			// The delta & the bucket capacity are hard-coded. It is unwiedly
 			// to make them data-driven arguments, and the payoff would be
 			// low anyway.
-			var delta [numResourceTiers][numBurstQualifications]int64
+			delta := makeTokenCounts(int(numDefaultResourceTiers))
 			delta[testTier0][canBurst] = 5
 			delta[testTier0][noBurst] = 4
 			delta[testTier1][canBurst] = 3
 			delta[testTier1][noBurst] = 1
-			var bucketCapacity [numResourceTiers][numBurstQualifications]int64
+			bucketCapacity := make(capacities, numDefaultResourceTiers)
 			bucketCapacity[testTier0][canBurst] = 4
 			bucketCapacity[testTier0][noBurst] = 3
 			bucketCapacity[testTier1][canBurst] = 10
 			bucketCapacity[testTier1][noBurst] = 1
 			granter.refill(delta, bucketCapacity)
 			fmt.Fprint(&buf, "refill(\n")
-			for tier := int(numResourceTiers - 1); tier >= 0; tier-- {
+			for tier := int(numDefaultResourceTiers - 1); tier >= 0; tier-- {
 				for qual := int(numBurstQualifications - 1); qual >= 0; qual-- {
 					fmt.Fprintf(&buf, "\ttier%d %s -> delta: %v, cap: %v\n",
 						tier, burstQualification(qual).String(), delta[tier][qual], bucketCapacity[tier][qual])

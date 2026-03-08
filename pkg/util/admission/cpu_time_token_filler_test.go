@@ -117,7 +117,7 @@ func (m *testModel) fit(_ context.Context, targets targetUtilizations) rates {
 		return int(math.Round(scaled))
 	}
 	fmt.Fprint(m.buf, "fit(\n")
-	for tier := int(numResourceTiers - 1); tier >= 0; tier-- {
+	for tier := int(numDefaultResourceTiers - 1); tier >= 0; tier-- {
 		for qual := int(numBurstQualifications - 1); qual >= 0; qual-- {
 			fmt.Fprintf(m.buf, "\ttier%d %s -> %v%%\n", tier, burstQualification(qual).String(), round(targets[tier][qual]))
 		}
@@ -130,7 +130,7 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	granter := &cpuTimeTokenGranter{}
+	granter := newCPUTimeTokenGranter(int(numDefaultResourceTiers))
 	tier0Granter := &cpuTimeTokenChildGranter{
 		tier:   testTier0,
 		parent: granter,
@@ -139,7 +139,7 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		tier:   testTier1,
 		parent: granter,
 	}
-	var requesters [numResourceTiers]*testRequester
+	requesters := make([]*testRequester, numDefaultResourceTiers)
 	requesters[testTier0] = &testRequester{
 		additionalID: "tier0",
 		granter:      tier0Granter,
@@ -161,22 +161,23 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		return str
 	}
 
-	model := &testModel{buf: &buf}
+	model := &testModel{buf: &buf, rates: makeRates(int(numDefaultResourceTiers))}
 	model.rates[testTier0][canBurst] = 5000
 	model.rates[testTier0][noBurst] = 4000
 	model.rates[testTier1][canBurst] = 3000
 	model.rates[testTier1][noBurst] = 2000
-	burstMgrs := [numResourceTiers]*testBurstManager{
+	burstMgrs := [numDefaultResourceTiers]*testBurstManager{
 		testTier0: {},
 		testTier1: {},
 	}
 	allocator := cpuTimeTokenAllocator{
 		granter:  granter,
+		numTiers: int(numDefaultResourceTiers),
 		settings: cluster.MakeClusterSettings(),
 		model:    model,
-		queues: [numResourceTiers]workQueueIForAllocator{
-			testTier0: burstMgrs[testTier0],
-			testTier1: burstMgrs[testTier1],
+		queues: []workQueueIForAllocator{
+			burstMgrs[testTier0],
+			burstMgrs[testTier1],
 		},
 	}
 	printBurstMgrs = func() string {
@@ -258,7 +259,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	dur := 5 * time.Second
 	actualCPUTime.append(dur, 1) // appended value ignored by init
 
-	var targets targetUtilizations
+	targets := make(targetUtilizations, numDefaultResourceTiers)
 	targets[testTier1][noBurst] = 0.8
 	targets[testTier1][canBurst] = 0.85
 	targets[testTier0][noBurst] = 0.9

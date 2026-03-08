@@ -44,6 +44,10 @@ func cpuTimeTokenACIsEnabled(sv *settings.Values) bool {
 // that does slot-based or CPU time token AC is returned from
 // GetKVWorkQueue. This way, we support both, without requiring a process
 // restart.
+//
+// With resource groups, CPUGrantCoordinators routes work to per-group
+// WorkQueues based on ResourceGroupID instead of the binary
+// isSystemTenant flag.
 type CPUGrantCoordinators struct {
 	st           *cluster.Settings
 	slotsCoord   *GrantCoordinator
@@ -53,11 +57,8 @@ type CPUGrantCoordinators struct {
 // GetKVWorkQueue returns a WorkQueue to use for KVWork. If
 // admission.cpu_time_tokens.enabled is true, it returns a WorkQueue that
 // implements CPU time token AC. Else it returns a WorkQueue that does
-// slots-based AC. If CPU time token AC, there is one WorkQueue for system
-// tenant work and another for app tenant work. The system tenant WorkQueue
-// is backed by a granter that allows greater resource usage than the app
-// tenant WorkQueue. This is a prioritization scheme. For details regarding
-// the granters, see cpu_time_token_granter.go.
+// slots-based AC. If CPU time token AC, there is one WorkQueue per
+// resource tier/group.
 func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
@@ -66,6 +67,15 @@ func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueu
 		return coord.cpuTimeCoord.getWorkQueue(systemTenant)
 	}
 	return coord.cpuTimeCoord.getWorkQueue(appTenant)
+}
+
+// GetKVWorkQueueForGroup returns the WorkQueue for a specific resource group.
+// If CPU time token AC is not enabled, falls back to the slots-based queue.
+func (coord *CPUGrantCoordinators) GetKVWorkQueueForGroup(groupID ResourceGroupID) *WorkQueue {
+	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
+		return coord.slotsCoord.GetWorkQueue(KVWork)
+	}
+	return coord.cpuTimeCoord.getWorkQueue(resourceTier(groupID))
 }
 
 // GetSQLWorkQueue returns a WorkQueue for SQLKVResponseWork or
@@ -100,8 +110,9 @@ func (cg *CPUGrantCoordinators) Close() {
 }
 
 type cpuTimeTokenGrantCoordinator struct {
-	filler *cpuTimeTokenFiller
-	queues [numResourceTiers]requesterClose
+	filler   *cpuTimeTokenFiller
+	numTiers int
+	queues   []requesterClose
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -111,11 +122,18 @@ func makeCPUTimeTokenGrantCoordinator(
 	registry *metric.Registry,
 	knobs *TestingKnobs,
 ) *cpuTimeTokenGrantCoordinator {
-	granter := &cpuTimeTokenGranter{}
-	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
+	numTiers := numDefaultResourceTiers
+	var rgRegistry *ResourceGroupRegistry
+	if opts.ResourceGroupRegistry != nil {
+		numTiers = opts.ResourceGroupRegistry.NumGroups()
+		rgRegistry = opts.ResourceGroupRegistry
+	}
+
+	granter := newCPUTimeTokenGranter(numTiers)
+	childGranters := make([]cpuTimeTokenChildGranter, numTiers)
+	for tier := 0; tier < numTiers; tier++ {
 		childGranters[tier] = cpuTimeTokenChildGranter{
-			tier:   tier,
+			tier:   resourceTier(tier),
 			parent: granter,
 		}
 	}
@@ -126,7 +144,10 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 	allocator := &cpuTimeTokenAllocator{
 		granter:  granter,
+		numTiers: numTiers,
+		queues:   make([]workQueueIForAllocator, numTiers),
 		settings: settings,
+		registry: rgRegistry,
 	}
 	model := &cpuTimeTokenLinearModel{
 		granter:            granter,
@@ -136,23 +157,23 @@ func makeCPUTimeTokenGrantCoordinator(
 	allocator.model = model
 	filler.allocator = allocator
 
-	var requesters [numResourceTiers]requester
+	requesters := make([]requester, numTiers)
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
-		opts := makeWorkQueueOptions(KVWork)
-		opts.mode = usesCPUTimeTokens
+	for tier := 0; tier < numTiers; tier++ {
+		wqOpts := makeWorkQueueOptions(KVWork)
+		wqOpts.mode = usesCPUTimeTokens
 		requesters[tier] = makeWorkQueue(
-			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, opts)
+			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, wqOpts)
 		granter.requester[tier] = requesters[tier]
-		// This type assertion is always valid, since makeWorkQueue always
-		// returns a *WorkQueue.
 		allocator.queues[tier] = requesters[tier].(*WorkQueue)
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
-		filler: filler,
+		filler:   filler,
+		numTiers: numTiers,
+		queues:   make([]requesterClose, numTiers),
 	}
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
+	for tier := 0; tier < numTiers; tier++ {
 		coordinator.queues[tier] = requesters[tier]
 	}
 
@@ -181,6 +202,10 @@ func makeCPUTimeTokenGrantCoordinator(
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue(tier resourceTier) *WorkQueue {
+	if int(tier) >= len(coord.queues) {
+		// Fall back to the last tier if the requested tier doesn't exist.
+		tier = resourceTier(len(coord.queues) - 1)
+	}
 	return coord.queues[tier].(*WorkQueue)
 }
 

@@ -7,7 +7,6 @@ package admission
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"time"
 
@@ -205,13 +204,18 @@ var _ cpuTimeTokenAllocatorI = &cpuTimeTokenAllocator{}
 // every interval, while respecting the bucket capacities. The computation
 // of the rate of tokens to add every interval is left to cpuTimeModel.
 type cpuTimeTokenAllocator struct {
-	granter *cpuTimeTokenGranter
+	granter  *cpuTimeTokenGranter
+	numTiers int
 	// queues holds references to WorkQueues for each resource tier. Used to
 	// refill per-tenant burst buckets that determine queue priority ordering.
 	// See cpu_time_token_burst.go for more.
-	queues   [numResourceTiers]workQueueIForAllocator
+	queues   []workQueueIForAllocator
 	settings *cluster.Settings
 	model    cpuTimeModel
+	// registry is non-nil when resource groups are configured. When set,
+	// per-group target utilizations are computed from group weights instead
+	// of using the hardcoded 2-tier cluster settings.
+	registry *ResourceGroupRegistry
 
 	// refillRates stores the number of CPU time tokens to add to each bucket
 	// per interval (1s).
@@ -224,21 +228,42 @@ type cpuTimeTokenAllocator struct {
 
 // rates stores a token count per second, for example, the refill
 // rates at which we add tokens per second, one per bucket in
-// cpuTimeTokenGranter.
-type rates [numResourceTiers][numBurstQualifications]int64
+// cpuTimeTokenGranter. Indexed by [tier][burstQualification].
+type rates [][numBurstQualifications]int64
 
 // capacities stores the maximum number of tokens that can be in the
-// buckets, one per bucket in cpuTimeTokenGranter.
-type capacities [numResourceTiers][numBurstQualifications]int64
+// buckets, one per bucket in cpuTimeTokenGranter. Indexed by
+// [tier][burstQualification].
+type capacities [][numBurstQualifications]int64
 
 // tokenCounts stores unit-less token counts, one per bucket in
-// cpuTimeTokenGranter.
-type tokenCounts [numResourceTiers][numBurstQualifications]int64
+// cpuTimeTokenGranter. Indexed by [tier][burstQualification].
+type tokenCounts [][numBurstQualifications]int64
 
 // targetUtilizations stores a target CPU utilization, as a float64 (so
 // 0.8 for 80% CPU utilization), one per bucket in CPUTimeTokenGranter. This
 // is aggregate CPU usage, so 0.8 means 80% of CPU time across all cores.
-type targetUtilizations [numResourceTiers][numBurstQualifications]float64
+// Indexed by [tier][burstQualification].
+type targetUtilizations [][numBurstQualifications]float64
+
+// makeRates creates a rates slice for the given number of tiers.
+func makeRates(numTiers int) rates {
+	return make(rates, numTiers)
+}
+
+// makeTokenCounts creates a tokenCounts slice for the given number of tiers.
+func makeTokenCounts(numTiers int) tokenCounts {
+	return make(tokenCounts, numTiers)
+}
+
+// ratesToCapacities converts rates to capacities (same values, different type).
+func ratesToCapacities(r rates) capacities {
+	c := make(capacities, len(r))
+	for i := range r {
+		c[i] = [numBurstQualifications]int64(r[i])
+	}
+	return c
+}
 
 // allocateTokens allocates tokens to a cpuTimeTokenGranter. allocateTokens
 // adds the desired number of tokens every interval, while respecting the bucket
@@ -265,7 +290,7 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 	// a.refillRates must be added every 1s, but allocateTokens is called more than once
 	// every 1s (typically). The amount we need to allocate this call to allocateTokens
 	// is stored in allocations.
-	var allocations tokenCounts
+	allocations := makeTokenCounts(len(a.refillRates))
 	for wc := range a.refillRates {
 		for kind := range a.refillRates[wc] {
 			toAllocate := allocateFunc(
@@ -288,36 +313,54 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 	// default values, this implies that an application tenant can burst,
 	// if they are using roughly less than 20% of the CPU on a CRDB node
 	// (0.8 * 0.25 = 0.2).
-	for resourceTier := range numResourceTiers {
-		toAdd := allocations[resourceTier][noBurst] / 4
-		burstCapacity := a.refillRates[resourceTier][noBurst] / 4
-		a.queues[resourceTier].refillBurstBuckets(toAdd, burstCapacity)
+	for tier := range a.numTiers {
+		toAdd := allocations[tier][noBurst] / 4
+		burstCapacity := a.refillRates[tier][noBurst] / 4
+		a.queues[tier].refillBurstBuckets(toAdd, burstCapacity)
 	}
 }
 
 // resetInterval is called to signal the beginning of a new interval.
 // allocateTokens adds the desired number of tokens every interval.
 func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
-	// Compute target utilizations from cluster settings. The noBurst targets are
-	// configurable by cluster settings. A canBurst target adds a delta to the
-	// corresponding noBurst target, and the delta is also configurable by a
-	// cluster setting. The code here is not general with respect to
-	// numResourceTiers & numBurstQualifications. This isn't necessary for the
-	// Serverless use case on which we will first introduce CPU time token AC.
-	var targets targetUtilizations
-	if numResourceTiers != 2 || numBurstQualifications != 2 {
-		panic(fmt.Sprintf(
-			"resetInterval requires that numResourceTiers = 2 and numBurstQualifications = 2 but got %d, %d", numResourceTiers, numBurstQualifications))
-	}
+	// Compute target utilizations. When a ResourceGroupRegistry is configured,
+	// per-group targets are computed from weights. Otherwise, the legacy 2-tier
+	// behavior uses cluster settings for system/app targets.
+	targets := make(targetUtilizations, a.numTiers)
 	burstDelta := KVCPUTimeUtilBurstDelta.Get(&a.settings.SV)
-	appTarget := KVCPUTimeAppUtilGoal.Get(&a.settings.SV)
-	targets[appTenant][noBurst] = appTarget
-	targets[appTenant][canBurst] = appTarget + burstDelta
-	systemTarget := KVCPUTimeSystemUtilGoal.Get(&a.settings.SV)
-	targets[systemTenant][noBurst] = systemTarget
-	targets[systemTenant][canBurst] = systemTarget + burstDelta
+	if a.registry != nil {
+		// Resource group mode: compute per-group targets from weights.
+		appTarget := KVCPUTimeAppUtilGoal.Get(&a.settings.SV)
+		groupTargets := a.registry.ComputeTargetUtilizations(appTarget, burstDelta)
+		for i := range groupTargets {
+			if i < a.numTiers {
+				targets[i][noBurst] = groupTargets[i].noBurst
+				targets[i][canBurst] = groupTargets[i].canBurst
+			}
+		}
+	} else {
+		// Legacy 2-tier mode.
+		appTarget := KVCPUTimeAppUtilGoal.Get(&a.settings.SV)
+		if a.numTiers > int(appTenant) {
+			targets[appTenant][noBurst] = appTarget
+			targets[appTenant][canBurst] = appTarget + burstDelta
+		}
+		systemTarget := KVCPUTimeSystemUtilGoal.Get(&a.settings.SV)
+		if a.numTiers > int(systemTenant) {
+			targets[systemTenant][noBurst] = systemTarget
+			targets[systemTenant][canBurst] = systemTarget + burstDelta
+		}
+	}
 
 	newRefillRates := a.model.fit(ctx, targets)
+
+	// Lazily initialize refillRates and allocated on first call.
+	if a.refillRates == nil {
+		a.refillRates = makeRates(a.numTiers)
+	}
+	if a.allocated == nil {
+		a.allocated = makeTokenCounts(a.numTiers)
+	}
 
 	// deltaRefillRates is the difference in tokens to add per interval (1s)
 	// from the previous call to fit to this one. We add it immediately to the
@@ -328,7 +371,7 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 	// TODO(josh): This is missing logic to prevent token counts from becoming
 	// negative. Also, the above comment needs to be beefed up.
 	// https://github.com/cockroachdb/cockroach/issues/158539
-	var deltaRefillRates tokenCounts
+	deltaRefillRates := makeTokenCounts(len(newRefillRates))
 	for tier := range newRefillRates {
 		for qual := range newRefillRates[tier] {
 			deltaRefillRates[tier][qual] = newRefillRates[tier][qual] - a.refillRates[tier][qual]
@@ -341,10 +384,10 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 	a.refillRates = newRefillRates
 
 	// Apply the delta to the per-tenant burst buckets also.
-	for resourceTier := range numResourceTiers {
-		toAdd := deltaRefillRates[resourceTier][noBurst] / 4
-		burstCapacity := bucketCapacities[resourceTier][noBurst] / 4
-		a.queues[resourceTier].refillBurstBuckets(toAdd, burstCapacity)
+	for tier := range a.numTiers {
+		toAdd := deltaRefillRates[tier][noBurst] / 4
+		burstCapacity := bucketCapacities[tier][noBurst] / 4
+		a.queues[tier].refillBurstBuckets(toAdd, burstCapacity)
 	}
 
 	// Reset allocated.
@@ -642,7 +685,7 @@ func (m *cpuTimeTokenLinearModel) fit(ctx context.Context, targets targetUtiliza
 func (*cpuTimeTokenLinearModel) computeRefillRates(
 	targets targetUtilizations, tokenToCPUTimeMultiplier float64, cpuCapacity float64,
 ) rates {
-	var refillRates rates
+	refillRates := makeRates(len(targets))
 	for tier := range targets {
 		for qual := range targets[tier] {
 			refillRates[tier][qual] = int64(cpuCapacity * float64(time.Second) * targets[tier][qual] / tokenToCPUTimeMultiplier)

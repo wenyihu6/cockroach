@@ -112,6 +112,11 @@ type Options struct {
 	SQLSQLResponseBurstTokens     int64
 	CPUMetricsProvider            CPUMetricsProvider
 	TestingDisableSkipEnforcement bool
+	// ResourceGroupRegistry, when non-nil, configures N resource groups
+	// for CPU isolation. Each group gets its own WorkQueue and token
+	// bucket in the CPU time token AC system. When nil, the default
+	// 2-tier (system/app tenant) behavior is used.
+	ResourceGroupRegistry *ResourceGroupRegistry
 	// Only non-nil for tests.
 	makeRequesterFunc      makeRequesterFunc
 	makeStoreRequesterFunc makeStoreRequesterFunc

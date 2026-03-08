@@ -260,8 +260,8 @@ fit(
 	tier0 canBurst -> 100%
 )
 cpuTTG canBurst noBurst
-tier0  5001     4001
-tier1  3001     2001
+tier0  5000     4000
+tier1  3000     2000
 burstM
 tier0  1000
 tier1  500
