@@ -1080,7 +1080,7 @@ func (u *sqlSymUnion) filterType() tree.FilterType {
 %token <str> RANGE RANGES READ REAL REASON REASSIGN RECURSIVE RECURRING REDACT REF REFERENCES REFERENCING REFRESH
 %token <str> REGCLASS REGION REGIONAL REGIONS REGNAMESPACE REGPROC REGPROCEDURE REGROLE REGTYPE REINDEX
 %token <str> RELATIVE RELOCATE REMOVE_PATH REMOVE_REGIONS RENAME REPEATABLE REPLACE REPLICATED REPLICATION
-%token <str> RELEASE RESET RESOLVED RESTART RESTORE RESTRICT RESTRICTED RESTRICTIVE RESUME RETENTION RETURNING RETURN RETURNS REVISION REVISION_HISTORY
+%token <str> RELEASE RESET RESOLVED RESOURCE RESTART RESTORE RESTRICT RESTRICTED RESTRICTIVE RESUME RETENTION RETURNING RETURN RETURNS REVISION REVISION_HISTORY
 %token <str> REVOKE RIGHT ROLE ROLES ROLLBACK ROLLUP ROUTINES ROW ROWS RSHIFT RULE RUN RUNNING
 
 %token <str> SAVEPOINT SCANS SCATTER SCHEDULE SCHEDULES SCROLL SCHEMA SCHEMA_ONLY SCHEMAS SCRUB
@@ -1427,6 +1427,7 @@ func (u *sqlSymUnion) filterType() tree.FilterType {
 %type <tree.Statement> show_locality_stmt
 %type <tree.Statement> show_survival_goal_stmt
 %type <tree.Statement> show_regions_stmt
+%type <tree.Statement> show_resource_groups_stmt
 %type <tree.Statement> show_roles_stmt
 %type <tree.Statement> show_schemas_stmt
 %type <tree.Statement> show_sequences_stmt
@@ -8685,6 +8686,7 @@ show_stmt:
 | show_ranges_stmt           // EXTEND WITH HELP: SHOW RANGES
 | show_range_for_row_stmt
 | show_regions_stmt          // EXTEND WITH HELP: SHOW REGIONS
+| show_resource_groups_stmt  // EXTEND WITH HELP: SHOW RESOURCE GROUPS
 | show_survival_goal_stmt    // EXTEND_WITH_HELP: SHOW SURVIVAL GOAL
 | show_roles_stmt            // EXTEND WITH HELP: SHOW ROLES
 | show_savepoint_stmt        // EXTEND WITH HELP: SHOW SAVEPOINT
@@ -10502,6 +10504,16 @@ show_locality_stmt:
   {
     $$.val = &tree.ShowVar{Name: "locality"}
   }
+
+// %Help: SHOW RESOURCE GROUPS - list resource groups for CPU isolation
+// %Category: Misc
+// %Text: SHOW RESOURCE GROUPS
+show_resource_groups_stmt:
+  SHOW RESOURCE GROUPS
+  {
+    $$.val = &tree.ShowResourceGroups{}
+  }
+| SHOW RESOURCE GROUPS error // SHOW HELP: SHOW RESOURCE GROUPS
 
 show_fingerprints_stmt:
   SHOW experimental_or_not_fingerprints FROM TABLE table_name opt_with_show_fingerprints_options
@@ -19040,6 +19052,7 @@ unreserved_keyword:
 | REPLICATION
 | RESET
 | RESOLVED
+| RESOURCE
 | RESTART
 | RESTORE
 | RESTRICT
@@ -19634,6 +19647,7 @@ bare_label_keywords:
 | REPLICATION
 | RESET
 | RESOLVED
+| RESOURCE
 | RESTART
 | RESTORE
 | RESTRICT

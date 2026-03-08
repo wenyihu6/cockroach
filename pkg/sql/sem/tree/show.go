@@ -396,6 +396,14 @@ func (node *ShowDatabases) Format(ctx *FmtCtx) {
 	}
 }
 
+// ShowResourceGroups represents a SHOW RESOURCE GROUPS statement.
+type ShowResourceGroups struct{}
+
+// Format implements the NodeFormatter interface.
+func (node *ShowResourceGroups) Format(ctx *FmtCtx) {
+	ctx.WriteString("SHOW RESOURCE GROUPS")
+}
+
 // ShowEnums represents a SHOW ENUMS statement.
 type ShowEnums struct {
 	ObjectNamePrefix

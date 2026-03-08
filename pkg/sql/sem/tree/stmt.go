@@ -1893,6 +1893,15 @@ func (*ShowDatabases) StatementType() StatementType { return TypeDML }
 func (*ShowDatabases) StatementTag() string { return "SHOW DATABASES" }
 
 // StatementReturnType implements the Statement interface.
+func (*ShowResourceGroups) StatementReturnType() StatementReturnType { return Rows }
+
+// StatementType implements the Statement interface.
+func (*ShowResourceGroups) StatementType() StatementType { return TypeDML }
+
+// StatementTag returns a short string identifying the type of statement.
+func (*ShowResourceGroups) StatementTag() string { return "SHOW RESOURCE GROUPS" }
+
+// StatementReturnType implements the Statement interface.
 func (*ShowEnums) StatementReturnType() StatementReturnType { return Rows }
 
 // StatementType implements the Statement interface.
@@ -2731,6 +2740,7 @@ func (n *ShowCreateAllRoutines) String() string               { return AsString(
 func (n *ShowCreateSchedules) String() string                 { return AsString(n) }
 func (n *ShowDatabases) String() string                       { return AsString(n) }
 func (n *ShowDatabaseIndexes) String() string                 { return AsString(n) }
+func (n *ShowResourceGroups) String() string                  { return AsString(n) }
 func (n *ShowEnums) String() string                           { return AsString(n) }
 func (n *ShowFullTableScans) String() string                  { return AsString(n) }
 func (n *ShowCreateRoutine) String() string                   { return AsString(n) }

@@ -125,6 +125,9 @@ func TryDelegate(
 	case *tree.ShowRegions:
 		return d.delegateShowRegions(t)
 
+	case *tree.ShowResourceGroups:
+		return d.delegateShowResourceGroups(t)
+
 	case *tree.ShowRoleGrants:
 		return d.delegateShowRoleGrants(t)
 
