@@ -113,6 +113,9 @@ type cpuTimeTokenGranter struct {
 		// so long as token bucket replenishing respects it also.
 		buckets    [][numBurstQualifications]tokenBucket
 		tokensUsed int64
+		// perTierTokensUsed tracks token consumption per resource tier
+		// within the current interval. Reset by resetTokensUsedInInterval.
+		perTierTokensUsed []int64
 	}
 }
 
@@ -124,6 +127,7 @@ func newCPUTimeTokenGranter(numTiers int) *cpuTimeTokenGranter {
 		requester: make([]requester, numTiers),
 	}
 	stg.mu.buckets = make([][numBurstQualifications]tokenBucket, numTiers)
+	stg.mu.perTierTokensUsed = make([]int64, numTiers)
 	return stg
 }
 
@@ -173,6 +177,9 @@ func (stg *cpuTimeTokenGranter) tryGet(
 		return false
 	}
 	stg.tookWithoutPermissionLocked(count)
+	if int(tier) < len(stg.mu.perTierTokensUsed) {
+		stg.mu.perTierTokensUsed[tier] += count
+	}
 	return true
 }
 
@@ -256,7 +263,32 @@ func (stg *cpuTimeTokenGranter) resetTokensUsedInInterval() int64 {
 	defer stg.mu.Unlock()
 	tokensUsed := stg.mu.tokensUsed
 	stg.mu.tokensUsed = 0
+	for i := range stg.mu.perTierTokensUsed {
+		stg.mu.perTierTokensUsed[i] = 0
+	}
 	return tokensUsed
+}
+
+// getPerTierTokensUsed returns a snapshot of per-tier token usage since
+// the last reset. Useful for observability and metrics.
+func (stg *cpuTimeTokenGranter) getPerTierTokensUsed() []int64 {
+	stg.mu.Lock()
+	defer stg.mu.Unlock()
+	result := make([]int64, len(stg.mu.perTierTokensUsed))
+	copy(result, stg.mu.perTierTokensUsed)
+	return result
+}
+
+// getPerTierTokenBalances returns a snapshot of per-tier token balances
+// for the noBurst bucket. Useful for observability.
+func (stg *cpuTimeTokenGranter) getPerTierTokenBalances() []int64 {
+	stg.mu.Lock()
+	defer stg.mu.Unlock()
+	result := make([]int64, len(stg.mu.buckets))
+	for i := range stg.mu.buckets {
+		result[i] = stg.mu.buckets[i][noBurst].tokens
+	}
+	return result
 }
 
 // refill adds toAdd tokens to the corresponding buckets, while respecting

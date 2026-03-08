@@ -129,8 +129,54 @@ func (cg *CPUGrantCoordinators) Close() {
 
 type cpuTimeTokenGrantCoordinator struct {
 	filler   *cpuTimeTokenFiller
+	granter  *cpuTimeTokenGranter
+	registry *ResourceGroupRegistry
 	numTiers int
 	queues   []requesterClose
+}
+
+// ResourceGroupStatus holds observability info for a single resource group.
+type ResourceGroupStatus struct {
+	ID        ResourceGroupID
+	Name      string
+	WeightCPU int32
+	MaxCPU    bool
+	// TokenBalance is the current noBurst token balance.
+	TokenBalance int64
+	// TokensUsed is the tokens consumed since last reset.
+	TokensUsed int64
+}
+
+// GetResourceGroupStatus returns the status of all configured resource groups.
+// Returns nil if resource groups are not configured or CPU time token AC is
+// not enabled.
+func (coord *CPUGrantCoordinators) GetResourceGroupStatus() []ResourceGroupStatus {
+	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
+		return nil
+	}
+	tc := coord.cpuTimeCoord
+	if tc.registry == nil {
+		return nil
+	}
+	groups, _ := tc.registry.Snapshot()
+	balances := tc.granter.getPerTierTokenBalances()
+	usage := tc.granter.getPerTierTokensUsed()
+	result := make([]ResourceGroupStatus, len(groups))
+	for i, g := range groups {
+		result[i] = ResourceGroupStatus{
+			ID:        ResourceGroupID(i),
+			Name:      g.Name,
+			WeightCPU: g.WeightCPU,
+			MaxCPU:    g.MaxCPU,
+		}
+		if i < len(balances) {
+			result[i].TokenBalance = balances[i]
+		}
+		if i < len(usage) {
+			result[i].TokensUsed = usage[i]
+		}
+	}
+	return result
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -188,6 +234,8 @@ func makeCPUTimeTokenGrantCoordinator(
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
 		filler:   filler,
+		granter:  granter,
+		registry: rgRegistry,
 		numTiers: numTiers,
 		queues:   make([]requesterClose, numTiers),
 	}

@@ -58,6 +58,17 @@ func TestCPUTimeTokenACWithResourceGroups(t *testing.T) {
 	require.Equal(t, usesCPUTimeTokens, q1.mode)
 	require.Equal(t, usesCPUTimeTokens, q2.mode)
 
+	// Verify GetResourceGroupStatus returns correct info.
+	status := cpuCoords.GetResourceGroupStatus()
+	require.Equal(t, 3, len(status))
+	require.Equal(t, "default", status[0].Name)
+	require.Equal(t, int32(100), status[0].WeightCPU)
+	require.True(t, status[0].MaxCPU)
+	require.Equal(t, "analytics", status[1].Name)
+	require.Equal(t, int32(50), status[1].WeightCPU)
+	require.False(t, status[1].MaxCPU)
+	require.Equal(t, "batch", status[2].Name)
+
 	// When disabled, all groups fall back to the same slots queue.
 	cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, false)
 	q0Slots := cpuCoords.GetKVWorkQueueForGroup(0)
@@ -66,6 +77,9 @@ func TestCPUTimeTokenACWithResourceGroups(t *testing.T) {
 	require.Equal(t, usesSlots, q0Slots.mode)
 	require.Equal(t, q0Slots, q1Slots)
 	require.Equal(t, q1Slots, q2Slots)
+
+	// Status returns nil when disabled.
+	require.Nil(t, cpuCoords.GetResourceGroupStatus())
 }
 
 func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
