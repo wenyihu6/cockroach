@@ -16,6 +16,58 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCPUTimeTokenACWithResourceGroups(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	var ambientCtx log.AmbientContext
+	settings := cluster.MakeTestingClusterSettings()
+	registry := metric.NewRegistry()
+
+	// Configure 3 resource groups.
+	rgRegistry := NewResourceGroupRegistry()
+	rgRegistry.AddGroup(ResourceGroupConfig{Name: "analytics", WeightCPU: 50, MaxCPU: false})
+	rgRegistry.AddGroup(ResourceGroupConfig{Name: "batch", WeightCPU: 25, MaxCPU: false})
+
+	opts := Options{ResourceGroupRegistry: rgRegistry}
+	knobs := &TestingKnobs{DisableCPUTimeTokenFillerGoroutine: true}
+	coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, knobs)
+	defer coords.Close()
+	cpuCoords := coords.RegularCPU
+
+	defer func(prev bool) {
+		cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, prev)
+	}(cpuTimeTokenACEnabled.Get(&settings.SV))
+
+	// Enable CPU time token AC.
+	cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, true)
+
+	// Verify each resource group gets its own WorkQueue.
+	q0 := cpuCoords.GetKVWorkQueueForGroup(0)
+	q1 := cpuCoords.GetKVWorkQueueForGroup(1)
+	q2 := cpuCoords.GetKVWorkQueueForGroup(2)
+	require.NotNil(t, q0)
+	require.NotNil(t, q1)
+	require.NotNil(t, q2)
+	require.NotEqual(t, q0, q1)
+	require.NotEqual(t, q1, q2)
+	require.NotEqual(t, q0, q2)
+
+	// All should use CPU time tokens mode.
+	require.Equal(t, usesCPUTimeTokens, q0.mode)
+	require.Equal(t, usesCPUTimeTokens, q1.mode)
+	require.Equal(t, usesCPUTimeTokens, q2.mode)
+
+	// When disabled, all groups fall back to the same slots queue.
+	cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, false)
+	q0Slots := cpuCoords.GetKVWorkQueueForGroup(0)
+	q1Slots := cpuCoords.GetKVWorkQueueForGroup(1)
+	q2Slots := cpuCoords.GetKVWorkQueueForGroup(2)
+	require.Equal(t, usesSlots, q0Slots.mode)
+	require.Equal(t, q0Slots, q1Slots)
+	require.Equal(t, q1Slots, q2Slots)
+}
+
 func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)

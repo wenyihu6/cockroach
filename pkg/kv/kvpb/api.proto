@@ -3138,6 +3138,11 @@ message AdmissionHeader {
   // already been accounted for, and can start reserving more only when it
   // exceeds.
   bool no_memory_reserved_at_source = 5;
+
+  // ResourceGroup identifies the resource group for CPU isolation. When
+  // resource groups are configured, this determines which WorkQueue and
+  // token bucket the work is routed to. 0 means the default resource group.
+  uint32 resource_group = 6;
 }
 
 // A BatchRequest contains one or more requests to be executed in

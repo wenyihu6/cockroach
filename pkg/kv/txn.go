@@ -267,9 +267,10 @@ func NewLeafTxn(
 			)
 		}
 		txn.admissionHeader = kvpb.AdmissionHeader{
-			CreateTime: header.CreateTime,
-			Priority:   header.Priority,
-			Source:     header.Source,
+			CreateTime:    header.CreateTime,
+			Priority:      header.Priority,
+			Source:        header.Source,
+			ResourceGroup: header.ResourceGroup,
 		}
 	}
 	return txn
@@ -1895,6 +1896,13 @@ func (txn *Txn) HasBufferedWrites() bool {
 	txn.mu.Lock()
 	defer txn.mu.Unlock()
 	return txn.mu.sender.HasBufferedWrites()
+}
+
+// SetResourceGroup sets the resource group for CPU isolation on this
+// transaction's admission header. This is used to route work to the
+// appropriate per-group WorkQueue and token bucket.
+func (txn *Txn) SetResourceGroup(groupID uint32) {
+	txn.admissionHeader.ResourceGroup = groupID
 }
 
 // AdmissionHeader returns the admission header for work done in the context

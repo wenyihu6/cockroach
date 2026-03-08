@@ -372,7 +372,12 @@ func (n *controllerImpl) AdmitKVWork(
 			}
 		}
 	}
-	cpuAdmissionQ := n.cpuGrantCoords.GetKVWorkQueue(admissionInfo.TenantID.IsSystem())
+	var cpuAdmissionQ *admission.WorkQueue
+	if admissionInfo.ResourceGroup != admission.DefaultResourceGroupID {
+		cpuAdmissionQ = n.cpuGrantCoords.GetKVWorkQueueForGroup(admissionInfo.ResourceGroup)
+	} else {
+		cpuAdmissionQ = n.cpuGrantCoords.GetKVWorkQueue(admissionInfo.TenantID.IsSystem())
+	}
 	if admissionEnabled {
 		// Bulk jobs such as backups or row-level TTL issue KV requests with a
 		// priority of admissionpb.BulkNormalPri or lower; these are eligible for
@@ -727,6 +732,7 @@ func workInfoForBatch(
 		CreateTime:      createTime,
 		BypassAdmission: bypassAdmission,
 		WorkloadID:      ba.Header.WorkloadID,
+		ResourceGroup:   admission.ResourceGroupID(ba.AdmissionHeader.ResourceGroup),
 	}
 	return admissionInfo
 }
