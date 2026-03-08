@@ -2698,6 +2698,25 @@ var varGen = map[string]sessionVar{
 	},
 
 	// CockroachDB extension.
+	`default_transaction_resource_group`: {
+		GetStringVal: makeIntGetStringValFn(`default_transaction_resource_group`),
+		Set: func(_ context.Context, m sessionmutator.SessionDataMutator, s string) error {
+			i, err := strconv.ParseUint(s, 10, 32)
+			if err != nil {
+				return err
+			}
+			m.SetDefaultTxnResourceGroup(uint32(i))
+			return nil
+		},
+		Get: func(evalCtx *extendedEvalContext, _ *kv.Txn) (string, error) {
+			return strconv.FormatUint(uint64(evalCtx.SessionData().DefaultTxnResourceGroup), 10), nil
+		},
+		GlobalDefault: func(sv *settings.Values) string {
+			return "0"
+		},
+	},
+
+	// CockroachDB extension.
 	`copy_transaction_quality_of_service`: {
 		GetStringVal: makePostgresBoolGetStringValFn(`copy_transaction_quality_of_service`),
 		Set: func(_ context.Context, m sessionmutator.SessionDataMutator, s string) error {

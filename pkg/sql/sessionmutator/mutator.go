@@ -608,6 +608,12 @@ func (m *SessionDataMutator) SetQualityOfService(val sessiondatapb.QoSLevel) {
 	m.Data.DefaultTxnQualityOfService = val.Validate()
 }
 
+// SetDefaultTxnResourceGroup sets the resource group ID for CPU isolation
+// on newly created transactions.
+func (m *SessionDataMutator) SetDefaultTxnResourceGroup(val uint32) {
+	m.Data.DefaultTxnResourceGroup = val
+}
+
 func (m *SessionDataMutator) SetCopyQualityOfService(val sessiondatapb.QoSLevel) {
 	m.Data.CopyTxnQualityOfService = val.Validate()
 }
