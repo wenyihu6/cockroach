@@ -19,6 +19,24 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 )
 
+// ResourceGroupsConfig is a cluster setting that configures resource groups
+// for CPU isolation via a JSON array. Example:
+//
+//	SET CLUSTER SETTING admission.resource_groups.config =
+//	  '[{"name":"default","weight_cpu":100,"max_cpu":true},
+//	    {"name":"batch","weight_cpu":25,"max_cpu":false}]';
+//
+// An empty string (the default) disables resource groups, falling back to
+// the 2-tier system/app tenant behavior.
+var ResourceGroupsConfig = settings.RegisterStringSetting(
+	settings.SystemOnly,
+	"admission.resource_groups.config",
+	"JSON array configuring resource groups for CPU isolation; "+
+		"empty string disables resource groups",
+	"",
+	settings.WithPublic,
+)
+
 var cpuTimeTokenACEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"admission.cpu_time_tokens.enabled",

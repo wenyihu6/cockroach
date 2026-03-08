@@ -584,6 +584,15 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		admissionKnobs = &admission.TestingKnobs{}
 	}
 	admissionOptions.CPUMetricsProvider = &cpuMetricsProvider{}
+	// Configure resource groups from cluster setting if set.
+	if rgConfig := admission.ResourceGroupsConfig.Get(&st.SV); rgConfig != "" {
+		rgRegistry, err := admission.ParseResourceGroupsJSON(rgConfig)
+		if err != nil {
+			log.Ops.Warningf(ctx, "invalid admission.resource_groups.config: %v", err)
+		} else if rgRegistry != nil {
+			admissionOptions.ResourceGroupRegistry = rgRegistry
+		}
+	}
 	gcoords := admission.NewGrantCoordinators(
 		cfg.AmbientCtx,
 		st,
