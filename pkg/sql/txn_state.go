@@ -210,6 +210,7 @@ func (ts *txnState) resetForNewSQLTxn(
 	omitInRangefeeds bool,
 	bufferedWritesEnabled bool,
 	rng *rand.Rand,
+	resourceGroup uint32,
 ) (txnID uuid.UUID) {
 	// Reset state vars to defaults.
 	ts.sqlTimestamp = sqlTimestamp
@@ -282,6 +283,9 @@ func (ts *txnState) resetForNewSQLTxn(
 			ts.mu.txn = txn
 		}
 
+		if resourceGroup != 0 {
+			ts.mu.txn.SetResourceGroup(resourceGroup)
+		}
 		txnID = ts.mu.txn.ID()
 		sp.SetTag("txn", attribute.StringValue(txnID.String()))
 		ts.mu.txnStart = crtime.NowMono()

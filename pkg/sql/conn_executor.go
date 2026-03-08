@@ -4318,6 +4318,7 @@ func (ex *connExecutor) txnStateTransitionsApplyWrapper(
 				ex.omitInRangefeeds(),
 				ex.bufferedWritesEnabled(ex.Ctx()),
 				ex.rng.internal,
+				ex.sessionData().DefaultTxnResourceGroup,
 			)
 			chainEvent := eventTxnStart{ImplicitTxn: fsm.False}
 			err := func() error {

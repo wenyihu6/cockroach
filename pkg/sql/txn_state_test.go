@@ -285,6 +285,7 @@ func TestTransitions(t *testing.T) {
 			evPayload: makeEventTxnStartPayload(pri, tree.ReadWrite, timeutil.Now(),
 				nil /* historicalTimestamp */, tranCtx, sessiondatapb.Normal, isolation.Serializable,
 				false /* omitInRangefeeds */, false /* bufferedWritesEnabled */, rng,
+				0, /* resourceGroup */
 			),
 			expState: stateOpen{ImplicitTxn: fsm.True, WasUpgraded: fsm.False},
 			expAdv: expAdvance{
@@ -312,6 +313,7 @@ func TestTransitions(t *testing.T) {
 			evPayload: makeEventTxnStartPayload(pri, tree.ReadWrite, timeutil.Now(),
 				nil /* historicalTimestamp */, tranCtx, sessiondatapb.Normal, isolation.Serializable,
 				false /* omitInRangefeeds */, false /* bufferedWritesEnabled */, rng,
+				0, /* resourceGroup */
 			),
 			expState: stateOpen{ImplicitTxn: fsm.False, WasUpgraded: fsm.False},
 			expAdv: expAdvance{

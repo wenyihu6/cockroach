@@ -123,6 +123,8 @@ type eventTxnStartPayload struct {
 	omitInRangefeeds      bool
 	bufferedWritesEnabled bool
 	rng                   *rand.Rand
+	// resourceGroup is the resource group ID for CPU isolation.
+	resourceGroup uint32
 }
 
 // makeEventTxnStartPayload creates an eventTxnStartPayload.
@@ -137,6 +139,7 @@ func makeEventTxnStartPayload(
 	omitInRangefeeds bool,
 	bufferedWritesEnabled bool,
 	rng *rand.Rand,
+	resourceGroup uint32,
 ) eventTxnStartPayload {
 	return eventTxnStartPayload{
 		pri:                   pri,
@@ -149,6 +152,7 @@ func makeEventTxnStartPayload(
 		omitInRangefeeds:      omitInRangefeeds,
 		bufferedWritesEnabled: bufferedWritesEnabled,
 		rng:                   rng,
+		resourceGroup:         resourceGroup,
 	}
 }
 
@@ -606,6 +610,7 @@ func noTxnToOpen(args fsm.Args) error {
 		payload.omitInRangefeeds,
 		payload.bufferedWritesEnabled,
 		payload.rng,
+		payload.resourceGroup,
 	)
 	ts.setAdvanceInfo(
 		advCode,

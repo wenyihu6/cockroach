@@ -805,6 +805,11 @@ message LocalOnlySessionData {
   // in the stable stats cache, a trace message would be logged, and
   // still the whole stable stats cache will be used for planning.
   util.hlc.Timestamp stats_as_of = 204 [(gogoproto.nullable) = false];
+  // DefaultTxnResourceGroup is the resource group ID for CPU isolation
+  // assigned to newly created transactions. When resource groups are
+  // configured, this determines which WorkQueue and token bucket the
+  // work is routed to. 0 means the default resource group.
+  uint32 default_txn_resource_group = 205;
 
   ///////////////////////////////////////////////////////////////////////////
   // WARNING: consider whether a session parameter you're adding needs to  //
