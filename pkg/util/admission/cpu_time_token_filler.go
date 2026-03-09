@@ -396,7 +396,11 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 	// bucketCapacities.
 	bucketCapacities := capacities(newRefillRates)
 
-	// Compute global refill rate: sum of all per-group noBurst rates.
+	// Compute global refill rate. The global bucket caps total node CPU
+	// usage. The rate is set to the sum of all per-group canBurst rates,
+	// but capped at 1.0 * capacity (can't exceed 100% CPU). This enables
+	// work-conserving: when a group is idle, others can use the spare
+	// global capacity (up to their per-group canBurst cap).
 	if a.registry != nil {
 		var newGlobalRate int64
 		for tier := range newRefillRates {

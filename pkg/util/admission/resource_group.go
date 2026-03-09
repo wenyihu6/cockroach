@@ -158,19 +158,20 @@ func (r *ResourceGroupRegistry) Snapshot() (groups []ResourceGroupConfig, totalW
 //   - noBurst target = baseNoBurstTarget * (W / T)
 //     This is the group's minimum guaranteed CPU share.
 //   - canBurst target depends on MaxCPU:
-//   - MaxCPU=true:  baseNoBurstTarget + burstDelta (full node target)
-//     — allows bursting to use idle capacity from other groups.
-//   - MaxCPU=false: same as noBurst (no bursting beyond minimum share)
+//   - MaxCPU=true:  1.0 (can burst up to 100% of node CPU)
+//   - MaxCPU=false: 0.75 (can burst up to 75% of node CPU)
+//
+// The noBurst bucket enforces the minimum guarantee (proportional to
+// weight). The canBurst bucket allows using idle capacity from other
+// groups, up to the MaxCPU limit. The global bucket (in the granter)
+// limits total CPU across all groups.
 //
 // Example: 3 groups (online=160, batch=20, support=20), totalWeight=200,
 // baseNoBurstTarget=0.8:
 //
-//	online (MaxCPU=true):  noBurst=0.64, canBurst=0.85
-//	batch  (MaxCPU=false): noBurst=0.08, canBurst=0.08
-//	support(MaxCPU=false): noBurst=0.08, canBurst=0.08
-//
-// This ensures online_rg can burst to use idle CPU, while batch_rg and
-// support_rg are capped at their proportional share.
+//	online  (MaxCPU=true):  noBurst=0.64, canBurst=1.0
+//	batch   (MaxCPU=false): noBurst=0.08, canBurst=0.75
+//	support (MaxCPU=false): noBurst=0.08, canBurst=0.75
 func (r *ResourceGroupRegistry) ComputeTargetUtilizations(
 	baseNoBurstTarget float64, burstDelta float64,
 ) []targetUtilizationPair {
