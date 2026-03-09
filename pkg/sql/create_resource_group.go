@@ -7,12 +7,14 @@ package sql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
+	"github.com/cockroachdb/cockroach/pkg/util/admission"
 	"github.com/cockroachdb/errors"
 )
 
@@ -54,6 +56,48 @@ func nextResourceGroupID(ctx context.Context, p *planner) (int64, error) {
 		return 0, err
 	}
 	return int64(tree.MustBeDInt(row[0])), nil
+}
+
+// syncResourceGroupsToSetting reads all resource groups from the system
+// table and writes them to the cluster setting so the admission engine
+// picks up the change.
+func syncResourceGroupsToSetting(ctx context.Context, p *planner) error {
+	rows, err := p.InternalSQLTxn().QueryBufferedEx(
+		ctx,
+		"sync-resource-groups",
+		p.Txn(),
+		sessiondata.NodeUserSessionDataOverride,
+		"SELECT name, weight_cpu, max_cpu FROM system.resource_groups ORDER BY id",
+	)
+	if err != nil {
+		return err
+	}
+	type rgJSON struct {
+		Name      string `json:"name"`
+		WeightCPU int32  `json:"weight_cpu"`
+		MaxCPU    bool   `json:"max_cpu"`
+	}
+	groups := make([]rgJSON, len(rows))
+	for i, row := range rows {
+		groups[i] = rgJSON{
+			Name:      string(tree.MustBeDString(row[0])),
+			WeightCPU: int32(tree.MustBeDInt(row[1])),
+			MaxCPU:    bool(tree.MustBeDBool(row[2])),
+		}
+	}
+	data, err := json.Marshal(groups)
+	if err != nil {
+		return err
+	}
+	_, err = p.InternalSQLTxn().ExecEx(
+		ctx,
+		"sync-resource-groups-setting",
+		p.Txn(),
+		sessiondata.NodeUserSessionDataOverride,
+		fmt.Sprintf("SET CLUSTER SETTING %s = $1", admission.ResourceGroupsConfig.Name()),
+		string(data),
+	)
+	return err
 }
 
 type createResourceGroupNode struct {
@@ -118,7 +162,10 @@ func (n *createResourceGroupNode) startExec(params runParams) error {
 		"INSERT INTO system.resource_groups (id, name, weight_cpu, max_cpu) VALUES ($1, $2, $3, $4)",
 		id, name, weightCPU, n.n.MaxCPU,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return syncResourceGroupsToSetting(params.ctx, params.p)
 }
 
 func (n *createResourceGroupNode) Next(runParams) (bool, error) { return false, nil }
@@ -168,7 +215,10 @@ func (n *alterResourceGroupNode) startExec(params runParams) error {
 		"UPDATE system.resource_groups SET weight_cpu = $1, max_cpu = $2 WHERE id = $3",
 		newWeight, newMaxCPU, id,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return syncResourceGroupsToSetting(params.ctx, params.p)
 }
 
 func (n *alterResourceGroupNode) Next(runParams) (bool, error) { return false, nil }
@@ -204,10 +254,13 @@ func (n *dropResourceGroupNode) startExec(params runParams) error {
 		"drop-resource-group",
 		params.p.Txn(),
 		sessiondata.NodeUserSessionDataOverride,
-		fmt.Sprintf("DELETE FROM system.resource_groups WHERE name = $1"),
+		"DELETE FROM system.resource_groups WHERE name = $1",
 		name,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+	return syncResourceGroupsToSetting(params.ctx, params.p)
 }
 
 func (n *dropResourceGroupNode) Next(runParams) (bool, error) { return false, nil }
