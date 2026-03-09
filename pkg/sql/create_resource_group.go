@@ -7,53 +7,53 @@ package sql
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/tree"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
-	"github.com/cockroachdb/cockroach/pkg/util/admission"
 	"github.com/cockroachdb/errors"
 )
 
-// resourceGroupJSON matches the JSON format used by
-// admission.ParseResourceGroupsJSON.
-type resourceGroupJSON struct {
-	Name      string `json:"name"`
-	WeightCPU int32  `json:"weight_cpu"`
-	MaxCPU    bool   `json:"max_cpu"`
-}
-
-func readResourceGroups(p *planner) ([]resourceGroupJSON, error) {
-	configStr := admission.ResourceGroupsConfig.Get(&p.ExecCfg().Settings.SV)
-	if configStr == "" {
-		return nil, nil
-	}
-	var groups []resourceGroupJSON
-	if err := json.Unmarshal([]byte(configStr), &groups); err != nil {
-		return nil, errors.Wrap(err, "parsing resource groups config")
-	}
-	return groups, nil
-}
-
-func writeResourceGroups(ctx context.Context, p *planner, groups []resourceGroupJSON) error {
-	data, err := json.Marshal(groups)
-	if err != nil {
-		return err
-	}
-	_, err = p.InternalSQLTxn().ExecEx(
+// readResourceGroupByName looks up a resource group by name from the
+// system.resource_groups table. Returns (id, weight, maxCPU, found, err).
+func readResourceGroupByName(
+	ctx context.Context, p *planner, name string,
+) (int64, int32, bool, bool, error) {
+	row, err := p.InternalSQLTxn().QueryRowEx(
 		ctx,
-		"update-resource-groups",
+		"read-resource-group",
 		p.Txn(),
 		sessiondata.NodeUserSessionDataOverride,
-		fmt.Sprintf(
-			"SET CLUSTER SETTING %s = $1",
-			admission.ResourceGroupsConfig.Name()),
-		string(data),
+		"SELECT id, weight_cpu, max_cpu FROM system.resource_groups WHERE name = $1",
+		name,
 	)
-	return err
+	if err != nil {
+		return 0, 0, false, false, err
+	}
+	if row == nil {
+		return 0, 0, false, false, nil
+	}
+	id := int64(tree.MustBeDInt(row[0]))
+	weight := int32(tree.MustBeDInt(row[1]))
+	maxCPU := bool(tree.MustBeDBool(row[2]))
+	return id, weight, maxCPU, true, nil
+}
+
+// nextResourceGroupID returns the next available resource group ID.
+func nextResourceGroupID(ctx context.Context, p *planner) (int64, error) {
+	row, err := p.InternalSQLTxn().QueryRowEx(
+		ctx,
+		"next-resource-group-id",
+		p.Txn(),
+		sessiondata.NodeUserSessionDataOverride,
+		"SELECT COALESCE(MAX(id), -1) + 1 FROM system.resource_groups",
+	)
+	if err != nil {
+		return 0, err
+	}
+	return int64(tree.MustBeDInt(row[0])), nil
 }
 
 type createResourceGroupNode struct {
@@ -93,25 +93,32 @@ func (n *createResourceGroupNode) startExec(params runParams) error {
 		return err
 	}
 
-	groups, err := readResourceGroups(params.p)
+	name := string(n.n.Name)
+	_, _, _, found, err := readResourceGroupByName(params.ctx, params.p, name)
 	if err != nil {
 		return err
 	}
-	name := string(n.n.Name)
-	for _, g := range groups {
-		if g.Name == name {
-			if n.n.IfNotExists {
-				return nil
-			}
-			return errors.Newf("resource group %q already exists", name)
+	if found {
+		if n.n.IfNotExists {
+			return nil
 		}
+		return errors.Newf("resource group %q already exists", name)
 	}
-	groups = append(groups, resourceGroupJSON{
-		Name:      name,
-		WeightCPU: weightCPU,
-		MaxCPU:    n.n.MaxCPU,
-	})
-	return writeResourceGroups(params.ctx, params.p, groups)
+
+	id, err := nextResourceGroupID(params.ctx, params.p)
+	if err != nil {
+		return err
+	}
+
+	_, err = params.p.InternalSQLTxn().ExecEx(
+		params.ctx,
+		"create-resource-group",
+		params.p.Txn(),
+		sessiondata.NodeUserSessionDataOverride,
+		"INSERT INTO system.resource_groups (id, name, weight_cpu, max_cpu) VALUES ($1, $2, $3, $4)",
+		id, name, weightCPU, n.n.MaxCPU,
+	)
+	return err
 }
 
 func (n *createResourceGroupNode) Next(runParams) (bool, error) { return false, nil }
@@ -130,32 +137,38 @@ func (p *planner) AlterResourceGroup(
 }
 
 func (n *alterResourceGroupNode) startExec(params runParams) error {
-	groups, err := readResourceGroups(params.p)
+	name := string(n.n.Name)
+	id, currentWeight, currentMaxCPU, found, err := readResourceGroupByName(
+		params.ctx, params.p, name)
 	if err != nil {
 		return err
-	}
-	name := string(n.n.Name)
-	found := false
-	for i, g := range groups {
-		if g.Name == name {
-			found = true
-			if n.n.WeightCPU != nil {
-				w, err := evalWeightCPU(params, n.n.WeightCPU)
-				if err != nil {
-					return err
-				}
-				groups[i].WeightCPU = w
-			}
-			if n.n.MaxCPU != nil {
-				groups[i].MaxCPU = *n.n.MaxCPU
-			}
-			break
-		}
 	}
 	if !found {
 		return errors.Newf("resource group %q does not exist", name)
 	}
-	return writeResourceGroups(params.ctx, params.p, groups)
+
+	newWeight := currentWeight
+	if n.n.WeightCPU != nil {
+		w, err := evalWeightCPU(params, n.n.WeightCPU)
+		if err != nil {
+			return err
+		}
+		newWeight = w
+	}
+	newMaxCPU := currentMaxCPU
+	if n.n.MaxCPU != nil {
+		newMaxCPU = *n.n.MaxCPU
+	}
+
+	_, err = params.p.InternalSQLTxn().ExecEx(
+		params.ctx,
+		"alter-resource-group",
+		params.p.Txn(),
+		sessiondata.NodeUserSessionDataOverride,
+		"UPDATE system.resource_groups SET weight_cpu = $1, max_cpu = $2 WHERE id = $3",
+		newWeight, newMaxCPU, id,
+	)
+	return err
 }
 
 func (n *alterResourceGroupNode) Next(runParams) (bool, error) { return false, nil }
@@ -174,19 +187,10 @@ func (p *planner) DropResourceGroup(
 }
 
 func (n *dropResourceGroupNode) startExec(params runParams) error {
-	groups, err := readResourceGroups(params.p)
+	name := string(n.n.Name)
+	_, _, _, found, err := readResourceGroupByName(params.ctx, params.p, name)
 	if err != nil {
 		return err
-	}
-	name := string(n.n.Name)
-	found := false
-	newGroups := make([]resourceGroupJSON, 0, len(groups))
-	for _, g := range groups {
-		if g.Name == name {
-			found = true
-			continue
-		}
-		newGroups = append(newGroups, g)
 	}
 	if !found {
 		if n.n.IfExists {
@@ -194,7 +198,16 @@ func (n *dropResourceGroupNode) startExec(params runParams) error {
 		}
 		return errors.Newf("resource group %q does not exist", name)
 	}
-	return writeResourceGroups(params.ctx, params.p, newGroups)
+
+	_, err = params.p.InternalSQLTxn().ExecEx(
+		params.ctx,
+		"drop-resource-group",
+		params.p.Txn(),
+		sessiondata.NodeUserSessionDataOverride,
+		fmt.Sprintf("DELETE FROM system.resource_groups WHERE name = $1"),
+		name,
+	)
+	return err
 }
 
 func (n *dropResourceGroupNode) Next(runParams) (bool, error) { return false, nil }

@@ -113,6 +113,7 @@ const (
 	InspectErrorsTableName                  SystemTableName = "inspect_errors"
 	StatementHintsTableName                 SystemTableName = "statement_hints"
 	TableStatisticsLocksTableName           SystemTableName = "table_statistics_locks"
+	ResourceGroupsTableName                 SystemTableName = "resource_groups"
 )
 
 // Oid for virtual database and table.

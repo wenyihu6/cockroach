@@ -1282,6 +1282,19 @@ CREATE TABLE system.table_statistics_locks (
     CONSTRAINT "primary" PRIMARY KEY (table_id ASC, kind ASC),
     FAMILY "primary" (table_id, kind, job_ids)
 );`
+
+	// ResourceGroupsTableSchema defines the system.resource_groups table
+	// that persists resource group definitions for CPU isolation.
+	ResourceGroupsTableSchema = `
+CREATE TABLE system.resource_groups (
+    id         INT8 NOT NULL,
+    name       STRING NOT NULL,
+    weight_cpu INT8 NOT NULL DEFAULT 100,
+    max_cpu    BOOL NOT NULL DEFAULT true,
+    CONSTRAINT "primary" PRIMARY KEY (id ASC),
+    UNIQUE INDEX resource_groups_name_idx (name ASC),
+    FAMILY "primary" (id, name, weight_cpu, max_cpu)
+);`
 )
 
 func pk(name string) descpb.IndexDescriptor {
@@ -1528,6 +1541,7 @@ func MakeSystemTables() []SystemTable {
 		StatementHintsTable,
 		ClusterMetricsTable,
 		TableStatisticsLocksTable,
+		ResourceGroupsTable,
 	}
 }
 
@@ -5489,6 +5503,47 @@ var (
 				KeyColumnNames:      []string{"table_id", "kind"},
 				KeyColumnDirections: []catenumpb.IndexColumn_Direction{catenumpb.IndexColumn_ASC, catenumpb.IndexColumn_ASC},
 				KeyColumnIDs:        []descpb.ColumnID{1, 2},
+			},
+		),
+	)
+
+	ResourceGroupsTable = makeSystemTable(
+		ResourceGroupsTableSchema,
+		systemTable(
+			catconstants.ResourceGroupsTableName,
+			descpb.InvalidID, // dynamically assigned
+			[]descpb.ColumnDescriptor{
+				{Name: "id", ID: 1, Type: types.Int},
+				{Name: "name", ID: 2, Type: types.String},
+				{Name: "weight_cpu", ID: 3, Type: types.Int},
+				{Name: "max_cpu", ID: 4, Type: types.Bool},
+			},
+			[]descpb.ColumnFamilyDescriptor{
+				{
+					Name:            "primary",
+					ID:              0,
+					ColumnNames:     []string{"id", "name", "weight_cpu", "max_cpu"},
+					ColumnIDs:       []descpb.ColumnID{1, 2, 3, 4},
+					DefaultColumnID: 4,
+				},
+			},
+			descpb.IndexDescriptor{
+				Name:                "primary",
+				ID:                  1,
+				Unique:              true,
+				KeyColumnNames:      []string{"id"},
+				KeyColumnDirections: singleASC,
+				KeyColumnIDs:        singleID1,
+			},
+			descpb.IndexDescriptor{
+				Name:                "resource_groups_name_idx",
+				ID:                  2,
+				Unique:              true,
+				KeyColumnNames:      []string{"name"},
+				KeyColumnDirections: singleASC,
+				KeyColumnIDs:        []descpb.ColumnID{2},
+				Version:             descpb.StrictIndexColumnIDGuaranteesVersion,
+				KeySuffixColumnIDs:  []descpb.ColumnID{1},
 			},
 		),
 	)
