@@ -211,9 +211,7 @@ func (stg *cpuTimeTokenGranter) returnGrantForTier(tier resourceTier, count int6
 
 // tookWithoutPermissionForTier is the tier-aware version of
 // tookWithoutPermission.
-func (stg *cpuTimeTokenGranter) tookWithoutPermissionForTier(
-	tier resourceTier, count int64,
-) {
+func (stg *cpuTimeTokenGranter) tookWithoutPermissionForTier(tier resourceTier, count int64) {
 	stg.mu.Lock()
 	defer stg.mu.Unlock()
 	if stg.useIndependentBudgets {
