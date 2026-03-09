@@ -80,6 +80,7 @@ go_test(
         "granter_test.go",
         "io_load_listener_test.go",
         "replicated_write_admission_test.go",
+        "resource_group_integration_test.go",
         "resource_group_test.go",
         "scheduler_latency_listener_test.go",
         "sequencer_test.go",
