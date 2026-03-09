@@ -195,43 +195,83 @@ func TestCPUTimeTokenGranterDynamic(t *testing.T) {
 	t.Run("tryGet_independent_budgets", func(t *testing.T) {
 		granter := newCPUTimeTokenGranter(3, true)
 
-		// Seed buckets.
+		// Seed per-group buckets and global bucket.
 		toAdd := makeTokenCounts(3)
 		for i := range toAdd {
 			toAdd[i] = [numBurstQualifications]int64{1000, 1000}
 		}
 		caps := ratesToCapacities(rates(toAdd))
-		granter.refill(toAdd, caps)
+		granter.refill(toAdd, caps, refillGlobalParams{toAdd: 3000, capacity: 3000})
 
 		// Tier 0 gets 100 tokens.
 		ok := granter.tryGet(0, canBurst, 100)
 		require.True(t, ok)
 
 		// Only tier 0 should have been deducted; tiers 1 and 2 are independent.
+		// Global bucket is deducted by all.
 		granter.mu.Lock()
 		require.Equal(t, int64(900), granter.mu.buckets[0][canBurst].tokens)
 		require.Equal(t, int64(1000), granter.mu.buckets[1][canBurst].tokens)
 		require.Equal(t, int64(1000), granter.mu.buckets[2][canBurst].tokens)
+		require.Equal(t, int64(2900), granter.mu.globalBucket.tokens)
 		granter.mu.Unlock()
 	})
 
 	t.Run("tryGet_denied_when_tier_exhausted", func(t *testing.T) {
 		granter := newCPUTimeTokenGranter(3, true)
 
-		// Seed: tier 2 starts with 0 tokens.
+		// Seed: tier 2 starts with 0 tokens. Global has plenty.
 		toAdd := makeTokenCounts(3)
 		toAdd[0] = [numBurstQualifications]int64{1000, 1000}
 		toAdd[1] = [numBurstQualifications]int64{500, 500}
 		toAdd[2] = [numBurstQualifications]int64{0, 0}
 		caps := ratesToCapacities(rates(toAdd))
-		granter.refill(toAdd, caps)
+		granter.refill(toAdd, caps, refillGlobalParams{toAdd: 3000, capacity: 3000})
 
 		// Tier 0: should succeed.
 		ok := granter.tryGet(0, canBurst, 50)
 		require.True(t, ok)
 
-		// Tier 2: should fail (tokens <= 0).
+		// Tier 2: should fail (per-group tokens <= 0, even though global
+		// has capacity — group is at its cap).
 		ok = granter.tryGet(2, canBurst, 50)
+		require.False(t, ok)
+	})
+
+	t.Run("work_conserving_via_global_bucket", func(t *testing.T) {
+		granter := newCPUTimeTokenGranter(3, true)
+
+		// Tier 0 (online_rg): large budget, Tier 1/2: small budget.
+		// Global = sum of all.
+		toAdd := makeTokenCounts(3)
+		toAdd[0] = [numBurstQualifications]int64{800, 640}
+		toAdd[1] = [numBurstQualifications]int64{80, 80}
+		toAdd[2] = [numBurstQualifications]int64{80, 80}
+		caps := ratesToCapacities(rates(toAdd))
+		granter.refill(toAdd, caps, refillGlobalParams{toAdd: 800, capacity: 800})
+
+		// Tier 0 (online) uses only 50 tokens (low load).
+		ok := granter.tryGet(0, noBurst, 50)
+		require.True(t, ok)
+
+		// Tier 1 (batch) wants 80 tokens — exactly its per-group budget.
+		ok = granter.tryGet(1, noBurst, 80)
+		require.True(t, ok)
+
+		// Tier 2 (support) wants 80 tokens — exactly its budget.
+		ok = granter.tryGet(2, noBurst, 80)
+		require.True(t, ok)
+
+		// Global: 800 - 50 - 80 - 80 = 590 remaining. Plenty of headroom
+		// because online didn't use its full share.
+		granter.mu.Lock()
+		require.Equal(t, int64(590), granter.mu.globalBucket.tokens)
+		granter.mu.Unlock()
+
+		// Now batch wants MORE than its per-group budget (which is
+		// exhausted at 0). This is denied even though global has
+		// capacity — the per-group cap enforces the minimum guarantee.
+		ok = granter.tryGet(1, noBurst, 10)
 		require.False(t, ok)
 	})
 }

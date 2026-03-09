@@ -104,23 +104,27 @@ type cpuTimeTokenGranter struct {
 	//   false (legacy): every request deducts from ALL tiers' buckets,
 	//     creating a priority hierarchy where higher tiers eat into lower
 	//     tiers' budgets.
-	//   true (resource groups): each request only deducts from its own
-	//     tier's buckets, giving each group an independent CPU budget.
-	//     Work-conserving behavior is achieved through the canBurst bucket
-	//     which has higher capacity for MaxCPU=true groups.
+	//   true (resource groups): each request deducts from its own tier's
+	//     buckets AND the global bucket. The global bucket ensures total
+	//     CPU stays within the target. Per-group buckets ensure each
+	//     group gets at least its minimum share. When a group is idle,
+	//     its unused tokens stay in its per-group bucket but the global
+	//     bucket retains the capacity, allowing other groups to use it.
 	useIndependentBudgets bool
 	requester             []requester
 	mu                    struct {
 		syncutil.Mutex
-		// When useIndependentBudgets is false:
-		//   Invariant #1: For any two buckets A & B, if A has a lower ordinal
-		//   resourceTier, then A must have more tokens than B.
-		//   Invariant #2: For any two buckets A & B with same resourceTier,
-		//   if A has lower ordinal burstQualification, A has more tokens.
-		// When useIndependentBudgets is true:
-		//   Each tier's buckets are independent. No cross-tier invariants.
+		// Per-group token buckets. In legacy mode, deducted from all tiers.
+		// In resource group mode, only deducted from the requesting tier.
 		buckets    [][numBurstQualifications]tokenBucket
 		tokensUsed int64
+		// globalBucket is the node-wide CPU budget. Only used when
+		// useIndependentBudgets is true. All requests deduct from this
+		// regardless of which group they belong to. Rate = targetUtil *
+		// cpuCapacity / multiplier. This is what enables work-conserving:
+		// when group A is idle, its per-group tokens go unused, but the
+		// global bucket still has capacity for groups B and C.
+		globalBucket tokenBucket
 		// perTierTokensUsed tracks token consumption per resource tier
 		// within the current interval. Reset by resetTokensUsedInInterval.
 		perTierTokensUsed []int64
@@ -186,7 +190,12 @@ func (stg *cpuTimeTokenGranter) tryGet(
 		return false
 	}
 	if stg.useIndependentBudgets {
+		// Check global budget too — ensures total CPU stays within target.
+		if stg.mu.globalBucket.tokens <= 0 {
+			return false
+		}
 		stg.tookFromTierLocked(tier, count)
+		stg.mu.globalBucket.tokens -= count
 	} else {
 		stg.tookFromAllLocked(count)
 	}
@@ -202,6 +211,7 @@ func (stg *cpuTimeTokenGranter) returnGrantForTier(tier resourceTier, count int6
 	defer stg.mu.Unlock()
 	if stg.useIndependentBudgets {
 		stg.tookFromTierLocked(tier, -count)
+		stg.mu.globalBucket.tokens += count
 	} else {
 		stg.tookFromAllLocked(-count)
 	}
@@ -216,6 +226,7 @@ func (stg *cpuTimeTokenGranter) tookWithoutPermissionForTier(tier resourceTier, 
 	defer stg.mu.Unlock()
 	if stg.useIndependentBudgets {
 		stg.tookFromTierLocked(tier, count)
+		stg.mu.globalBucket.tokens -= count
 	} else {
 		stg.tookFromAllLocked(count)
 	}
@@ -275,14 +286,12 @@ func (stg *cpuTimeTokenGranter) tryGrantLocked() bool {
 		}
 		if stg.mu.buckets[tier][qual].tokens <= 0 {
 			if stg.useIndependentBudgets {
-				// In independent mode, each tier has its own budget.
-				// This tier is exhausted, but others may still have
-				// tokens. Continue checking.
 				continue
 			}
-			// In legacy mode, tiers share a priority hierarchy.
-			// If a higher-priority tier is exhausted, all lower
-			// tiers are too.
+			return false
+		}
+		if stg.useIndependentBudgets && stg.mu.globalBucket.tokens <= 0 {
+			// Global budget exhausted — no more grants for any tier.
 			return false
 		}
 		tokens := stg.requester[tier].granted(noGrantChain)
@@ -291,6 +300,7 @@ func (stg *cpuTimeTokenGranter) tryGrantLocked() bool {
 		}
 		if stg.useIndependentBudgets {
 			stg.tookFromTierLocked(resourceTier(tier), tokens)
+			stg.mu.globalBucket.tokens -= tokens
 		} else {
 			stg.tookFromAllLocked(tokens)
 		}
@@ -339,7 +349,16 @@ func (stg *cpuTimeTokenGranter) getPerTierTokenBalances() []int64 {
 // bring the bucket above capacity will be discarded instead. refill attempts
 // to grant admission to waiting requests in case where tokens are added to
 // some bucket.
-func (stg *cpuTimeTokenGranter) refill(toAdd tokenCounts, bucketCapacities capacities) {
+// refillGlobalParams holds global bucket refill parameters.
+// Only used when useIndependentBudgets is true.
+type refillGlobalParams struct {
+	toAdd    int64
+	capacity int64
+}
+
+func (stg *cpuTimeTokenGranter) refill(
+	toAdd tokenCounts, bucketCapacities capacities, globalParams ...refillGlobalParams,
+) {
 	stg.mu.Lock()
 	defer stg.mu.Unlock()
 
@@ -357,7 +376,19 @@ func (stg *cpuTimeTokenGranter) refill(toAdd tokenCounts, bucketCapacities capac
 		}
 	}
 
-	// Grant if tokens are added to any of the buckets.
+	// Refill global bucket if parameters are provided.
+	if len(globalParams) > 0 {
+		gp := globalParams[0]
+		if gp.toAdd > 0 {
+			shouldGrant = true
+		}
+		newGlobal := stg.mu.globalBucket.tokens + gp.toAdd
+		if newGlobal > gp.capacity {
+			newGlobal = gp.capacity
+		}
+		stg.mu.globalBucket.tokens = newGlobal
+	}
+
 	if shouldGrant {
 		stg.grantUntilNoWaitingRequestsLocked()
 	}

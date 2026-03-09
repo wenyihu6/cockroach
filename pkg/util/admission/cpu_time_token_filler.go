@@ -224,6 +224,11 @@ type cpuTimeTokenAllocator struct {
 	// cpuTimeTokenAllocator. No mutex, since only a single goroutine will call
 	// the allocator.
 	allocated tokenCounts
+
+	// Global bucket state for resource group mode. The global rate is the
+	// sum of all per-group noBurst rates (= targetUtil * capacity / multiplier).
+	globalRefillRate int64
+	globalAllocated  int64
 }
 
 // rates stores a token count per second, for example, the refill
@@ -303,7 +308,17 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 	// one second worth of tokens at the current refill rate. This is a fairly
 	// arbitrary decision.
 	bucketCapacities := capacities(a.refillRates)
-	a.granter.refill(allocations, bucketCapacities)
+	if a.registry != nil && a.globalRefillRate > 0 {
+		globalToAllocate := allocateFunc(
+			a.globalRefillRate, a.globalAllocated, expectedRemainingTicksInInterval)
+		a.globalAllocated += globalToAllocate
+		a.granter.refill(allocations, bucketCapacities, refillGlobalParams{
+			toAdd:    globalToAllocate,
+			capacity: a.globalRefillRate,
+		})
+	} else {
+		a.granter.refill(allocations, bucketCapacities)
+	}
 
 	// Refill per-tenant burst buckets in the WorkQueues. The burst bucket
 	// refill rate and capacity should be 1/4th of the noBurst refill rate
@@ -380,7 +395,22 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 	// See comment above the call to refill in allocateTokens for a discussion of
 	// bucketCapacities.
 	bucketCapacities := capacities(newRefillRates)
-	a.granter.refill(deltaRefillRates, bucketCapacities)
+
+	// Compute global refill rate: sum of all per-group noBurst rates.
+	if a.registry != nil {
+		var newGlobalRate int64
+		for tier := range newRefillRates {
+			newGlobalRate += newRefillRates[tier][noBurst]
+		}
+		globalDelta := newGlobalRate - a.globalRefillRate
+		a.globalRefillRate = newGlobalRate
+		a.granter.refill(deltaRefillRates, bucketCapacities, refillGlobalParams{
+			toAdd:    globalDelta,
+			capacity: newGlobalRate,
+		})
+	} else {
+		a.granter.refill(deltaRefillRates, bucketCapacities)
+	}
 	a.refillRates = newRefillRates
 
 	// Apply the delta to the per-tenant burst buckets also.
@@ -391,6 +421,7 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 	}
 
 	// Reset allocated.
+	a.globalAllocated = 0
 	for wc := range a.allocated {
 		for kind := range a.allocated[wc] {
 			a.allocated[wc][kind] = 0
