@@ -114,3 +114,46 @@ func TestResourceGroupFallbackToSlots(t *testing.T) {
 	require.Equal(t, q0, q1)
 	require.Equal(t, usesSlots, q0.mode)
 }
+
+// TestResourceGroupDynamicWeightUpdate verifies that changing the cluster
+// setting updates group weights without a restart.
+func TestResourceGroupDynamicWeightUpdate(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	var ambientCtx log.AmbientContext
+	settings := cluster.MakeTestingClusterSettings()
+	registry := metric.NewRegistry()
+
+	// Start with 2 groups.
+	rgRegistry, err := ParseResourceGroupsJSON(
+		`[{"name":"default","weight_cpu":100,"max_cpu":true},
+		  {"name":"batch","weight_cpu":25,"max_cpu":false}]`)
+	require.NoError(t, err)
+
+	opts := Options{ResourceGroupRegistry: rgRegistry}
+	knobs := &TestingKnobs{DisableCPUTimeTokenFillerGoroutine: true}
+	coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, knobs)
+	defer coords.Close()
+	cpuCoords := coords.RegularCPU
+
+	defer func(prev bool) {
+		cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, prev)
+	}(cpuTimeTokenACEnabled.Get(&settings.SV))
+	cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, true)
+
+	// Verify initial weights.
+	status := cpuCoords.GetResourceGroupStatus()
+	require.Equal(t, int32(25), status[1].WeightCPU)
+	require.False(t, status[1].MaxCPU)
+
+	// Update weights via cluster setting.
+	ResourceGroupsConfig.Override(context.Background(), &settings.SV,
+		`[{"name":"default","weight_cpu":100,"max_cpu":true},
+		  {"name":"batch","weight_cpu":75,"max_cpu":true}]`)
+
+	// Verify updated weights.
+	status = cpuCoords.GetResourceGroupStatus()
+	require.Equal(t, int32(75), status[1].WeightCPU)
+	require.True(t, status[1].MaxCPU)
+}

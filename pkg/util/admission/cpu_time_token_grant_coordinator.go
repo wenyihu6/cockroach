@@ -243,6 +243,38 @@ func makeCPUTimeTokenGrantCoordinator(
 		coordinator.queues[tier] = requesters[tier]
 	}
 
+	// Watch for resource group config changes. Weight updates take effect
+	// within 1 second (the allocator reads from the registry each interval).
+	// Adding/removing groups requires a node restart.
+	if rgRegistry != nil {
+		ResourceGroupsConfig.SetOnChange(&settings.SV, func(ctx context.Context) {
+			newConfig := ResourceGroupsConfig.Get(&settings.SV)
+			if newConfig == "" {
+				return
+			}
+			newRegistry, err := ParseResourceGroupsJSON(newConfig)
+			if err != nil {
+				log.Ops.Warningf(ctx, "invalid resource groups config update: %v", err)
+				return
+			}
+			newGroups, _ := newRegistry.Snapshot()
+			existingGroups, _ := rgRegistry.Snapshot()
+			// Update weights for existing groups. We can't add/remove
+			// groups dynamically (would need new WorkQueues).
+			for i := range existingGroups {
+				if i < len(newGroups) {
+					rgRegistry.UpdateGroup(ResourceGroupID(i), newGroups[i])
+				}
+			}
+			if len(newGroups) != len(existingGroups) {
+				log.Ops.Warningf(ctx,
+					"resource group count changed from %d to %d; "+
+						"adding/removing groups requires a node restart",
+					len(existingGroups), len(newGroups))
+			}
+		})
+	}
+
 	// The filler ticking appears to have a slight negative impact on perf.
 	// For now, we accept this, since CPU time token AC will be off by
 	// default, and only enabled in Serverless. To track fixing the perf
