@@ -83,13 +83,41 @@ func TestResourceGroupRegistry(t *testing.T) {
 
 		// Group 0 (default, MaxCPU=true): noBurst = 0.8 * 0.5 = 0.4
 		require.InDelta(t, 0.4, targets[0].noBurst, 0.001)
-		// canBurst = 0.4 + 0.05*0.5 = 0.425
-		require.InDelta(t, 0.425, targets[0].canBurst, 0.001)
+		// canBurst = 0.8 + 0.05 = 0.85 (full node target, since MaxCPU=true)
+		require.InDelta(t, 0.85, targets[0].canBurst, 0.001)
 
-		// Group 1 (analytics, MaxCPU=false): noBurst = min(0.8*0.5, 0.75*0.5) = min(0.4, 0.375) = 0.375
-		require.InDelta(t, 0.375, targets[1].noBurst, 0.001)
-		// canBurst = min(0.4+0.025, 0.75*0.5) = min(0.425, 0.375) = 0.375
-		require.InDelta(t, 0.375, targets[1].canBurst, 0.001)
+		// Group 1 (analytics, MaxCPU=false): noBurst = 0.8 * 0.5 = 0.4
+		require.InDelta(t, 0.4, targets[1].noBurst, 0.001)
+		// canBurst = same as noBurst (MaxCPU=false, no bursting)
+		require.InDelta(t, 0.4, targets[1].canBurst, 0.001)
+	})
+
+	t.Run("compute_target_utilizations_requirements_example", func(t *testing.T) {
+		// From requirements doc: online=160, batch=20, support=20
+		r := &ResourceGroupRegistry{}
+		r.mu.groups = []ResourceGroupConfig{
+			{Name: "online_rg", WeightCPU: 160, MaxCPU: true},
+			{Name: "batch_rg", WeightCPU: 20, MaxCPU: false},
+			{Name: "support_rg", WeightCPU: 20, MaxCPU: false},
+		}
+		r.mu.totalWeight = 200
+
+		targets := r.ComputeTargetUtilizations(0.8, 0.05)
+		require.Equal(t, 3, len(targets))
+
+		// online_rg: weight=160/200=80%, noBurst = 0.8*0.8 = 0.64
+		require.InDelta(t, 0.64, targets[0].noBurst, 0.001)
+		// canBurst = 0.85 (full node, MaxCPU=true)
+		require.InDelta(t, 0.85, targets[0].canBurst, 0.001)
+
+		// batch_rg: weight=20/200=10%, noBurst = 0.8*0.1 = 0.08
+		require.InDelta(t, 0.08, targets[1].noBurst, 0.001)
+		// canBurst = 0.08 (same as noBurst, MaxCPU=false)
+		require.InDelta(t, 0.08, targets[1].canBurst, 0.001)
+
+		// support_rg: same as batch_rg
+		require.InDelta(t, 0.08, targets[2].noBurst, 0.001)
+		require.InDelta(t, 0.08, targets[2].canBurst, 0.001)
 	})
 }
 
@@ -136,14 +164,14 @@ func TestParseResourceGroupsJSON(t *testing.T) {
 
 func TestCPUTimeTokenGranterDynamic(t *testing.T) {
 	t.Run("3_tiers", func(t *testing.T) {
-		granter := newCPUTimeTokenGranter(3)
+		granter := newCPUTimeTokenGranter(3, true)
 		require.Equal(t, 3, granter.numTiers)
 		require.Equal(t, 3, len(granter.requester))
 		require.Equal(t, 3, len(granter.mu.buckets))
 	})
 
 	t.Run("refill_dynamic", func(t *testing.T) {
-		granter := newCPUTimeTokenGranter(3)
+		granter := newCPUTimeTokenGranter(3, true)
 		// No requesters, so no granting will happen.
 
 		toAdd := makeTokenCounts(3)
@@ -164,8 +192,8 @@ func TestCPUTimeTokenGranterDynamic(t *testing.T) {
 		granter.mu.Unlock()
 	})
 
-	t.Run("tryGet_deducts_all_tiers", func(t *testing.T) {
-		granter := newCPUTimeTokenGranter(3)
+	t.Run("tryGet_independent_budgets", func(t *testing.T) {
+		granter := newCPUTimeTokenGranter(3, true)
 
 		// Seed buckets.
 		toAdd := makeTokenCounts(3)
@@ -179,16 +207,16 @@ func TestCPUTimeTokenGranterDynamic(t *testing.T) {
 		ok := granter.tryGet(0, canBurst, 100)
 		require.True(t, ok)
 
-		// All tiers should have been deducted.
+		// Only tier 0 should have been deducted; tiers 1 and 2 are independent.
 		granter.mu.Lock()
 		require.Equal(t, int64(900), granter.mu.buckets[0][canBurst].tokens)
-		require.Equal(t, int64(900), granter.mu.buckets[1][canBurst].tokens)
-		require.Equal(t, int64(900), granter.mu.buckets[2][canBurst].tokens)
+		require.Equal(t, int64(1000), granter.mu.buckets[1][canBurst].tokens)
+		require.Equal(t, int64(1000), granter.mu.buckets[2][canBurst].tokens)
 		granter.mu.Unlock()
 	})
 
 	t.Run("tryGet_denied_when_tier_exhausted", func(t *testing.T) {
-		granter := newCPUTimeTokenGranter(3)
+		granter := newCPUTimeTokenGranter(3, true)
 
 		// Seed: tier 2 starts with 0 tokens.
 		toAdd := makeTokenCounts(3)

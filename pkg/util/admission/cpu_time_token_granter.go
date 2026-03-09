@@ -64,12 +64,12 @@ func (cg *cpuTimeTokenChildGranter) tryGet(qual burstQualification, count int64)
 
 // returnGrant implements granter.
 func (cg *cpuTimeTokenChildGranter) returnGrant(count int64) {
-	cg.parent.returnGrant(count)
+	cg.parent.returnGrantForTier(cg.tier, count)
 }
 
 // tookWithoutPermission implements granter.
 func (cg *cpuTimeTokenChildGranter) tookWithoutPermission(count int64) {
-	cg.parent.tookWithoutPermission(count)
+	cg.parent.tookWithoutPermissionForTier(cg.tier, count)
 }
 
 // continueGrantChain implements granter.
@@ -99,18 +99,26 @@ func (cg *cpuTimeTokenChildGranter) continueGrantChain(grantChainID grantChainID
 //
 // Note that cpuTimeTokenGranter does not handle replenishing the buckets.
 type cpuTimeTokenGranter struct {
-	numTiers  int
-	requester []requester
-	mu        struct {
+	numTiers int
+	// useIndependentBudgets controls the token deduction strategy:
+	//   false (legacy): every request deducts from ALL tiers' buckets,
+	//     creating a priority hierarchy where higher tiers eat into lower
+	//     tiers' budgets.
+	//   true (resource groups): each request only deducts from its own
+	//     tier's buckets, giving each group an independent CPU budget.
+	//     Work-conserving behavior is achieved through the canBurst bucket
+	//     which has higher capacity for MaxCPU=true groups.
+	useIndependentBudgets bool
+	requester             []requester
+	mu                    struct {
 		syncutil.Mutex
-		// Invariant #1: For any two buckets A & B, if A has a lower ordinal
-		// resourceTier, then A must have more tokens than B.
-		// Invariant #2: For any two buckets A & B, if A & B have the same
-		// resourceTier, and if A has a lower ordinal burstQualification,
-		// then A must have more tokens than B.
-		//
-		// Since admission deducts from all buckets, these invariants are true,
-		// so long as token bucket replenishing respects it also.
+		// When useIndependentBudgets is false:
+		//   Invariant #1: For any two buckets A & B, if A has a lower ordinal
+		//   resourceTier, then A must have more tokens than B.
+		//   Invariant #2: For any two buckets A & B with same resourceTier,
+		//   if A has lower ordinal burstQualification, A has more tokens.
+		// When useIndependentBudgets is true:
+		//   Each tier's buckets are independent. No cross-tier invariants.
 		buckets    [][numBurstQualifications]tokenBucket
 		tokensUsed int64
 		// perTierTokensUsed tracks token consumption per resource tier
@@ -121,10 +129,11 @@ type cpuTimeTokenGranter struct {
 
 // newCPUTimeTokenGranter creates a cpuTimeTokenGranter with the specified
 // number of resource tiers.
-func newCPUTimeTokenGranter(numTiers int) *cpuTimeTokenGranter {
+func newCPUTimeTokenGranter(numTiers int, useIndependentBudgets bool) *cpuTimeTokenGranter {
 	stg := &cpuTimeTokenGranter{
-		numTiers:  numTiers,
-		requester: make([]requester, numTiers),
+		numTiers:              numTiers,
+		useIndependentBudgets: useIndependentBudgets,
+		requester:             make([]requester, numTiers),
 	}
 	stg.mu.buckets = make([][numBurstQualifications]tokenBucket, numTiers)
 	stg.mu.perTierTokensUsed = make([]int64, numTiers)
@@ -176,38 +185,71 @@ func (stg *cpuTimeTokenGranter) tryGet(
 	if stg.mu.buckets[tier][qual].tokens <= 0 {
 		return false
 	}
-	stg.tookWithoutPermissionLocked(count)
+	if stg.useIndependentBudgets {
+		stg.tookFromTierLocked(tier, count)
+	} else {
+		stg.tookFromAllLocked(count)
+	}
 	if int(tier) < len(stg.mu.perTierTokensUsed) {
 		stg.mu.perTierTokensUsed[tier] += count
 	}
 	return true
 }
 
-// returnGrant is the helper for implementing granter.returnGrant.
-func (stg *cpuTimeTokenGranter) returnGrant(count int64) {
+// returnGrantForTier is the tier-aware version of returnGrant.
+func (stg *cpuTimeTokenGranter) returnGrantForTier(tier resourceTier, count int64) {
 	stg.mu.Lock()
 	defer stg.mu.Unlock()
-	stg.tookWithoutPermissionLocked(-count)
+	if stg.useIndependentBudgets {
+		stg.tookFromTierLocked(tier, -count)
+	} else {
+		stg.tookFromAllLocked(-count)
+	}
 	// count must be positive. Thus above always adds tokens to the buckets.
-	// Thus returnGrant should always attempt to grant admission to waiting
-	// requests.
 	stg.grantUntilNoWaitingRequestsLocked()
 }
 
-// tookWithoutPermission is the helper for implementing
-// granter.tookWithoutPermission.
-func (stg *cpuTimeTokenGranter) tookWithoutPermission(count int64) {
+// tookWithoutPermissionForTier is the tier-aware version of
+// tookWithoutPermission.
+func (stg *cpuTimeTokenGranter) tookWithoutPermissionForTier(
+	tier resourceTier, count int64,
+) {
 	stg.mu.Lock()
 	defer stg.mu.Unlock()
-	stg.tookWithoutPermissionLocked(count)
+	if stg.useIndependentBudgets {
+		stg.tookFromTierLocked(tier, count)
+	} else {
+		stg.tookFromAllLocked(count)
+	}
 }
 
 func (stg *cpuTimeTokenGranter) tookWithoutPermissionLocked(count int64) {
+	if stg.useIndependentBudgets {
+		// In independent mode, tookWithoutPermission is called without
+		// knowing which tier. We can't deduct properly, so this is only
+		// used for the legacy path.
+		stg.tookFromAllLocked(count)
+	} else {
+		stg.tookFromAllLocked(count)
+	}
+}
+
+// tookFromAllLocked deducts count from ALL tiers' buckets (legacy behavior).
+func (stg *cpuTimeTokenGranter) tookFromAllLocked(count int64) {
 	stg.mu.tokensUsed += count
 	for tier := range stg.mu.buckets {
 		for qual := range stg.mu.buckets[tier] {
 			stg.mu.buckets[tier][qual].tokens -= count
 		}
+	}
+}
+
+// tookFromTierLocked deducts count only from the specified tier's buckets
+// (resource group mode). This gives each group an independent CPU budget.
+func (stg *cpuTimeTokenGranter) tookFromTierLocked(tier resourceTier, count int64) {
+	stg.mu.tokensUsed += count
+	for qual := range stg.mu.buckets[tier] {
+		stg.mu.buckets[tier][qual].tokens -= count
 	}
 }
 
@@ -234,23 +276,26 @@ func (stg *cpuTimeTokenGranter) tryGrantLocked() bool {
 			continue
 		}
 		if stg.mu.buckets[tier][qual].tokens <= 0 {
-			// tryGrantLocked does not need to continue here, since there
-			// are no more requests to grant. The detailed reason for this
-			// is:
-			//
-			// - stg.requester is ordered by resourceTier.
-			// - Given two buckets A & B, if A is for a lower ordinal
-			//   resourceTier, more tokens will be in bucket A than bucket
-			//   B (see cpuTimeTokenGranter for more on this invariant).
-			// - Thus, if no tokens in A, there are no tokens in B.
+			if stg.useIndependentBudgets {
+				// In independent mode, each tier has its own budget.
+				// This tier is exhausted, but others may still have
+				// tokens. Continue checking.
+				continue
+			}
+			// In legacy mode, tiers share a priority hierarchy.
+			// If a higher-priority tier is exhausted, all lower
+			// tiers are too.
 			return false
 		}
 		tokens := stg.requester[tier].granted(noGrantChain)
 		if tokens == 0 {
-			// Did not accept grant.
 			continue
 		}
-		stg.tookWithoutPermissionLocked(tokens)
+		if stg.useIndependentBudgets {
+			stg.tookFromTierLocked(resourceTier(tier), tokens)
+		} else {
+			stg.tookFromAllLocked(tokens)
+		}
 		return true
 	}
 	return false

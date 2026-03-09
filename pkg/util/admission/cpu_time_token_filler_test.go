@@ -130,7 +130,7 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	granter := newCPUTimeTokenGranter(int(numDefaultResourceTiers))
+	granter := newCPUTimeTokenGranter(int(numDefaultResourceTiers), false)
 	tier0Granter := &cpuTimeTokenChildGranter{
 		tier:   testTier0,
 		parent: granter,

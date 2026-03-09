@@ -193,7 +193,7 @@ func makeCPUTimeTokenGrantCoordinator(
 		rgRegistry = opts.ResourceGroupRegistry
 	}
 
-	granter := newCPUTimeTokenGranter(numTiers)
+	granter := newCPUTimeTokenGranter(numTiers, rgRegistry != nil /* useIndependentBudgets */)
 	childGranters := make([]cpuTimeTokenChildGranter, numTiers)
 	for tier := 0; tier < numTiers; tier++ {
 		childGranters[tier] = cpuTimeTokenChildGranter{

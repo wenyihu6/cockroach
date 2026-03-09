@@ -49,10 +49,6 @@ type ResourceGroupConfig struct {
 	MaxCPU bool
 }
 
-// maxCPUBurstFraction is the maximum fraction of CPU that a group with
-// MaxCPU=false can use, even when there is spare capacity.
-const maxCPUBurstFraction = 0.75
-
 // ResourceGroupRegistry manages the set of configured resource groups.
 // It is safe for concurrent use.
 //
@@ -151,15 +147,25 @@ func (r *ResourceGroupRegistry) Snapshot() (groups []ResourceGroupConfig, totalW
 }
 
 // ComputeTargetUtilizations computes per-group target CPU utilizations for
-// each burst qualification. The target for a group is proportional to its
-// weight, scaled by its MaxCPU setting.
+// each burst qualification.
 //
 // For a group with weight W and total weight T:
 //   - noBurst target = baseNoBurstTarget * (W / T)
-//   - canBurst target = noBurst target + burstDelta
+//     This is the group's minimum guaranteed CPU share.
+//   - canBurst target depends on MaxCPU:
+//   - MaxCPU=true:  baseNoBurstTarget + burstDelta (full node target)
+//     — allows bursting to use idle capacity from other groups.
+//   - MaxCPU=false: same as noBurst (no bursting beyond minimum share)
 //
-// For groups with MaxCPU=false, the targets are further capped at
-// maxCPUBurstFraction of node CPU.
+// Example: 3 groups (online=160, batch=20, support=20), totalWeight=200,
+// baseNoBurstTarget=0.8:
+//
+//	online (MaxCPU=true):  noBurst=0.64, canBurst=0.85
+//	batch  (MaxCPU=false): noBurst=0.08, canBurst=0.08
+//	support(MaxCPU=false): noBurst=0.08, canBurst=0.08
+//
+// This ensures online_rg can burst to use idle CPU, while batch_rg and
+// support_rg are capped at their proportional share.
 func (r *ResourceGroupRegistry) ComputeTargetUtilizations(
 	baseNoBurstTarget float64, burstDelta float64,
 ) []targetUtilizationPair {
@@ -174,10 +180,16 @@ func (r *ResourceGroupRegistry) ComputeTargetUtilizations(
 	for i, g := range r.mu.groups {
 		weightFrac := float64(g.WeightCPU) / totalWeight
 		noBurstTarget := baseNoBurstTarget * weightFrac
-		canBurstTarget := noBurstTarget + burstDelta*weightFrac
-		if !g.MaxCPU {
-			noBurstTarget = min(noBurstTarget, maxCPUBurstFraction*weightFrac)
-			canBurstTarget = min(canBurstTarget, maxCPUBurstFraction*weightFrac)
+		var canBurstTarget float64
+		if g.MaxCPU {
+			// MaxCPU=true: can burst up to the full node target utilization.
+			// This enables work-conserving behavior — the group can use
+			// idle capacity from other groups.
+			canBurstTarget = baseNoBurstTarget + burstDelta
+		} else {
+			// MaxCPU=false: no bursting. The canBurst bucket has the same
+			// rate as noBurst, so the group is capped at its minimum share.
+			canBurstTarget = noBurstTarget
 		}
 		result[i] = targetUtilizationPair{
 			noBurst:  noBurstTarget,
