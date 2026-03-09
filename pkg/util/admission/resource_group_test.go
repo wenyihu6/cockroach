@@ -83,13 +83,13 @@ func TestResourceGroupRegistry(t *testing.T) {
 
 		// Group 0 (default, MaxCPU=true): noBurst = 0.8 * 0.5 = 0.4
 		require.InDelta(t, 0.4, targets[0].noBurst, 0.001)
-		// canBurst = 0.8 + 0.05 = 0.85 (full node target, since MaxCPU=true)
-		require.InDelta(t, 0.85, targets[0].canBurst, 0.001)
+		// canBurst = 1.0 (100% of node CPU, since MaxCPU=true)
+		require.InDelta(t, 1.0, targets[0].canBurst, 0.001)
 
 		// Group 1 (analytics, MaxCPU=false): noBurst = 0.8 * 0.5 = 0.4
 		require.InDelta(t, 0.4, targets[1].noBurst, 0.001)
-		// canBurst = same as noBurst (MaxCPU=false, no bursting)
-		require.InDelta(t, 0.4, targets[1].canBurst, 0.001)
+		// canBurst = 0.75 (75% of node CPU, MaxCPU=false)
+		require.InDelta(t, 0.75, targets[1].canBurst, 0.001)
 	})
 
 	t.Run("compute_target_utilizations_requirements_example", func(t *testing.T) {
@@ -107,17 +107,17 @@ func TestResourceGroupRegistry(t *testing.T) {
 
 		// online_rg: weight=160/200=80%, noBurst = 0.8*0.8 = 0.64
 		require.InDelta(t, 0.64, targets[0].noBurst, 0.001)
-		// canBurst = 0.85 (full node, MaxCPU=true)
-		require.InDelta(t, 0.85, targets[0].canBurst, 0.001)
+		// canBurst = 1.0 (100% of node, MaxCPU=true)
+		require.InDelta(t, 1.0, targets[0].canBurst, 0.001)
 
 		// batch_rg: weight=20/200=10%, noBurst = 0.8*0.1 = 0.08
 		require.InDelta(t, 0.08, targets[1].noBurst, 0.001)
-		// canBurst = 0.08 (same as noBurst, MaxCPU=false)
-		require.InDelta(t, 0.08, targets[1].canBurst, 0.001)
+		// canBurst = 0.75 (75% of node, MaxCPU=false)
+		require.InDelta(t, 0.75, targets[1].canBurst, 0.001)
 
 		// support_rg: same as batch_rg
 		require.InDelta(t, 0.08, targets[2].noBurst, 0.001)
-		require.InDelta(t, 0.08, targets[2].canBurst, 0.001)
+		require.InDelta(t, 0.75, targets[2].canBurst, 0.001)
 	})
 }
 

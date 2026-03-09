@@ -82,16 +82,16 @@ func TestResourceGroupEndToEnd(t *testing.T) {
 	require.Equal(t, 3, len(targets))
 	// Group 0 (MaxCPU=true): noBurst = 0.8 * 0.5 = 0.4
 	require.InDelta(t, 0.4, targets[0].noBurst, 0.001)
-	// canBurst = 0.85 (full node, MaxCPU=true)
-	require.InDelta(t, 0.85, targets[0].canBurst, 0.001)
+	// canBurst = 1.0 (100% of node, MaxCPU=true)
+	require.InDelta(t, 1.0, targets[0].canBurst, 0.001)
 	// Group 1 (MaxCPU=true, weight=75/200): noBurst = 0.8 * 0.375 = 0.3
 	require.InDelta(t, 0.3, targets[1].noBurst, 0.001)
-	// canBurst = 0.85 (full node, MaxCPU=true)
-	require.InDelta(t, 0.85, targets[1].canBurst, 0.001)
+	// canBurst = 1.0 (100% of node, MaxCPU=true)
+	require.InDelta(t, 1.0, targets[1].canBurst, 0.001)
 	// Group 2 (MaxCPU=false, weight=25/200=0.125): noBurst = 0.8*0.125 = 0.1
 	require.InDelta(t, 0.1, targets[2].noBurst, 0.001)
-	// canBurst = 0.1 (same as noBurst, MaxCPU=false)
-	require.InDelta(t, 0.1, targets[2].canBurst, 0.001)
+	// canBurst = 0.75 (75% of node, MaxCPU=false)
+	require.InDelta(t, 0.75, targets[2].canBurst, 0.001)
 }
 
 // TestResourceGroupFallbackToSlots verifies that when CPU time token AC

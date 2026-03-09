@@ -49,6 +49,11 @@ type ResourceGroupConfig struct {
 	MaxCPU bool
 }
 
+// maxCPUBurstFraction is the maximum fraction of CPU that a group with
+// MaxCPU=false can burst to, even when there is spare capacity from
+// idle groups.
+const maxCPUBurstFraction = 0.75
+
 // ResourceGroupRegistry manages the set of configured resource groups.
 // It is safe for concurrent use.
 //
@@ -182,14 +187,16 @@ func (r *ResourceGroupRegistry) ComputeTargetUtilizations(
 		noBurstTarget := baseNoBurstTarget * weightFrac
 		var canBurstTarget float64
 		if g.MaxCPU {
-			// MaxCPU=true: can burst up to the full node target utilization.
-			// This enables work-conserving behavior — the group can use
-			// idle capacity from other groups.
-			canBurstTarget = baseNoBurstTarget + burstDelta
+			// MaxCPU=true: can burst up to 100% of node CPU. This enables
+			// full work-conserving behavior — the group can use all idle
+			// capacity from other groups.
+			canBurstTarget = 1.0
 		} else {
-			// MaxCPU=false: no bursting. The canBurst bucket has the same
-			// rate as noBurst, so the group is capped at its minimum share.
-			canBurstTarget = noBurstTarget
+			// MaxCPU=false: can burst up to 75% of node CPU. This allows
+			// the group to use idle capacity from other groups, but caps
+			// it below 100% to prevent non-MaxCPU groups from monopolizing
+			// the node.
+			canBurstTarget = maxCPUBurstFraction
 		}
 		result[i] = targetUtilizationPair{
 			noBurst:  noBurstTarget,
