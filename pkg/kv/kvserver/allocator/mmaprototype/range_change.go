@@ -259,3 +259,23 @@ func (rc *ExternalRangeChange) LeaseTransferFrom() roachpb.StoreID {
 	}
 	panic("unreachable")
 }
+
+// ImplicitLeaseTransfer returns the source and target store IDs of an implicit
+// lease transfer embedded within a change replicas operation (e.g. when the
+// leaseholder is being removed and a new voter becomes the leaseholder). Returns
+// zero values if no implicit lease transfer is present. 0 is not a valid
+// StoreID.
+func (rc *ExternalRangeChange) ImplicitLeaseTransfer() (from, to roachpb.StoreID) {
+	for _, c := range rc.Changes {
+		if c.Prev.IsLeaseholder {
+			from = c.Target.StoreID
+		}
+		if c.Next.IsLeaseholder {
+			to = c.Target.StoreID
+		}
+	}
+	if from == 0 || to == 0 || from == to {
+		return 0, 0
+	}
+	return from, to
+}

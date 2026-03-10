@@ -178,7 +178,9 @@ func (as *AllocatorSync) NonMMAPreTransferLease(
 // NonMMAPreChangeReplicas is called by the replicate queue (of localStoreID)
 // to register a change replicas operation. SyncChangeID is returned to the
 // caller. It is an identifier that can be used to call PostApply to apply the
-// change to the store pool upon success.
+// change to the store pool upon success. lhBeingRemoved should be true when
+// the leaseholder store is among the voter removals (see
+// AllocationChangeReplicasOp.LHBeingRemoved).
 func (as *AllocatorSync) NonMMAPreChangeReplicas(
 	ctx context.Context,
 	localStoreID roachpb.StoreID,
@@ -187,25 +189,31 @@ func (as *AllocatorSync) NonMMAPreChangeReplicas(
 	amp mmaprototype.AmpVector,
 	changes kvpb.ReplicationChanges,
 	leaseholderStoreID roachpb.StoreID,
+	lhBeingRemoved bool,
 ) SyncChangeID {
 	var isMMARegistered bool
 	var mmaChange mmaprototype.ExternalRangeChange
 	if kvserverbase.LoadBasedRebalancingModeIsMMA(&as.st.SV) {
 		var err error
-		change, err := convertReplicaChangeToMMA(desc, usage, amp, changes, leaseholderStoreID)
+		change, err := convertReplicaChangeToMMA(desc, usage, amp, changes, leaseholderStoreID, lhBeingRemoved)
 		if err != nil {
 			log.KvDistribution.Errorf(ctx, "failed to convert replica change to mma: %v", err)
 		} else {
 			mmaChange, isMMARegistered = as.mmaAllocator.RegisterExternalChange(ctx, localStoreID, change)
 		}
 	}
+	op := changeReplicasOp{chgs: changes}
+	if lhBeingRemoved {
+		if additions := changes.VoterAdditions(); len(additions) > 0 {
+			op.implicitLeaseTransferFrom = leaseholderStoreID
+			op.implicitLeaseTransferTo = additions[0].StoreID
+		}
+	}
 	trackedChange := trackedAllocatorChange{
-		isMMARegistered: isMMARegistered,
-		mmaChange:       mmaChange,
-		usage:           usage,
-		changeReplicasOp: &changeReplicasOp{
-			chgs: changes,
-		},
+		isMMARegistered:  isMMARegistered,
+		mmaChange:        mmaChange,
+		usage:            usage,
+		changeReplicasOp: &op,
 	}
 	for _, chg := range changes {
 		log.KvDistribution.VEventf(ctx, 2, "non-mma: adding s%s with change=%s", chg.Target.StoreID, chg.ChangeType)
@@ -235,10 +243,14 @@ func (as *AllocatorSync) MMAPreApply(
 		}
 		log.KvDistribution.VEventf(ctx, 2, "mma: adding lease transfer from s%s to s%s", pendingChange.LeaseTransferFrom(), pendingChange.LeaseTransferTarget())
 	case pendingChange.IsChangeReplicas():
+		chgs := pendingChange.ReplicationChanges()
+		ltFrom, ltTo := pendingChange.ImplicitLeaseTransfer()
 		trackedChange.changeReplicasOp = &changeReplicasOp{
-			chgs: pendingChange.ReplicationChanges(),
+			chgs:                      chgs,
+			implicitLeaseTransferFrom: ltFrom,
+			implicitLeaseTransferTo:   ltTo,
 		}
-		for _, chg := range pendingChange.ReplicationChanges() {
+		for _, chg := range chgs {
 			log.KvDistribution.VEventf(ctx, 2, "mma: adding s%s with change=%s", chg.Target.StoreID, chg.ChangeType)
 		}
 	default:
@@ -276,6 +288,10 @@ func (as *AllocatorSync) PostApply(ctx context.Context, syncChangeID SyncChangeI
 		for _, chg := range trackedChange.changeReplicasOp.chgs {
 			as.sp.UpdateLocalStoreAfterRebalance(
 				chg.Target.StoreID, trackedChange.usage, chg.ChangeType)
+		}
+		if op := trackedChange.changeReplicasOp; op.implicitLeaseTransferFrom != 0 {
+			as.sp.UpdateLocalStoresAfterLeaseTransfer(
+				op.implicitLeaseTransferFrom, op.implicitLeaseTransferTo, trackedChange.usage)
 		}
 	}
 }

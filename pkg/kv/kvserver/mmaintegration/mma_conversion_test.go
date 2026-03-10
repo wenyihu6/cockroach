@@ -100,14 +100,21 @@ func TestConvertReplicaChangeToMMA(t *testing.T) {
 					}
 					changes = append(changes, chg)
 				}
+				var lhRemoved bool
+				for _, r := range changes.VoterRemovals() {
+					if r.StoreID == leaseholderStoreID {
+						lhRemoved = true
+						break
+					}
+				}
 				if expectPanic {
 					require.Panics(t,
 						func() {
-							_, _ = convertReplicaChangeToMMA(&desc, rangeUsageInfo, mmaprototype.IdentityAmpVector(), changes, leaseholderStoreID)
+							_, _ = convertReplicaChangeToMMA(&desc, rangeUsageInfo, mmaprototype.IdentityAmpVector(), changes, leaseholderStoreID, lhRemoved)
 						})
 					return "panicked as expected"
 				} else {
-					mmaChanges, err := convertReplicaChangeToMMA(&desc, rangeUsageInfo, mmaprototype.IdentityAmpVector(), changes, leaseholderStoreID)
+					mmaChanges, err := convertReplicaChangeToMMA(&desc, rangeUsageInfo, mmaprototype.IdentityAmpVector(), changes, leaseholderStoreID, lhRemoved)
 					if err != nil {
 						return fmt.Sprintf("error: %s", err.Error())
 					}

@@ -66,12 +66,12 @@ func convertReplicaChangeToMMA(
 	amp mmaprototype.AmpVector,
 	changes kvpb.ReplicationChanges,
 	leaseholderStoreID roachpb.StoreID,
+	lhBeingRemoved bool,
 ) (mmaprototype.PendingRangeChange, error) {
 	rLoad := mmaRangeLoad(usage, amp)
 	replicaChanges := make([]mmaprototype.ReplicaChange, 0, len(changes))
 	replicaSet := desc.Replicas()
 
-	var lhBeingRemoved bool
 	// A VOTER => NON_VOTER change or vice versa is represented as a removal and
 	// addition in changes, and we need to convert it to a single
 	// mmaprototype.ReplicaChange. So we gather the changes into a map keyed by
@@ -99,9 +99,6 @@ func convertReplicaChangeToMMA(
 			}
 			replDesc := replDescriptors[0]
 			isLeaseholder := replDesc.StoreID == leaseholderStoreID
-			if isLeaseholder && !lhBeingRemoved {
-				lhBeingRemoved = true
-			}
 			removeChange := change{
 				typ: mmaprototype.RemoveReplica,
 				prev: mmaprototype.ReplicaState{

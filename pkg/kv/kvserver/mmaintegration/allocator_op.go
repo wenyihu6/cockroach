@@ -40,4 +40,10 @@ type changeReplicasOp struct {
 	// chgs is the replication changes that are applied to the range. len(chgs)
 	// may be = [1,4].
 	chgs kvpb.ReplicationChanges
+	// implicitLeaseTransferFrom and implicitLeaseTransferTo are set when the
+	// replica changes involve removing the current leaseholder, which triggers
+	// an implicit lease transfer to the first incoming voter (matching
+	// Replica.maybeTransferLeaseDuringLeaveJoint). Both are zero when the
+	// leaseholder is not being removed.
+	implicitLeaseTransferFrom, implicitLeaseTransferTo roachpb.StoreID
 }

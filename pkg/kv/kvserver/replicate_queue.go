@@ -912,6 +912,7 @@ func (rq *replicateQueue) applyChange(
 			op.AllocatorPriority,
 			op.Reason,
 			op.Details,
+			op.LHBeingRemoved(),
 		)
 	default:
 		panic(fmt.Sprintf("Unknown operation %+v, unable to apply replicate queue change", op))
@@ -1189,6 +1190,7 @@ func (rq *replicateQueue) changeReplicas(
 	allocatorPriority float64,
 	reason kvserverpb.RangeLogEventReason,
 	details string,
+	lhBeingRemoved bool,
 ) error {
 	// Inform allocator sync that the change has been applied which applies
 	// changes to store pool and inform mma.
@@ -1200,6 +1202,7 @@ func (rq *replicateQueue) changeReplicas(
 		(*mmaStore)(rq.store).amplificationFactors(),
 		chgs,
 		repl.StoreID(),
+		lhBeingRemoved,
 	)
 	// NB: this calls the impl rather than ChangeReplicas because
 	// the latter traps tests that try to call it while the replication
