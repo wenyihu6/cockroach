@@ -70,6 +70,93 @@ directly with a single `requester`
 `targetUtilizations`) collapsed from `[numResourceTiers][numBurstQualifications]`
 to `[numBurstQualifications]`
 
+### Tradeoffs: What the Tier System Provided
+
+The Serverless 2-queue, 4-bucket design gave the system tenant four
+distinct advantages. Understanding how each is replaced (and what is
+lost) is important context for the 1-queue design.
+
+**1. `tryGrantLocked` tier ordering.** The granter iterates requesters
+by tier — system first. System work gets every grant opportunity as
+long as it has waiting work; app work only gets granted when system
+has nothing waiting.
+
+*RM replacement*: In a single WorkQueue, the tenant heap ordering
+controls who gets granted first. A FULLY_UTILIZE group with
+`burstLimitFrac >= 1.0` is always `canBurst`, so it sorts before
+`noBurst` groups. Within the same burst qualification, `used/weight`
+determines priority. This is effectively equivalent when FULLY_UTILIZE
+groups are `canBurst` and heavy non-FULLY_UTILIZE groups are `noBurst`.
+
+**2. Graduated admission via separate granter buckets per tier.**
+Deduct-all means all work deducts from all 4 buckets. The invariant
+(`systemCB >= systemNB >= appCB >= appNB`) creates graduated admission
+levels — as total load increases, buckets go negative from bottom up:
+
+```
+Starting:      systemCB=6  systemNB=5  appCB=2  appNB=1
+
+After 1 token:  5, 4, 1, 0    → app noBurst BLOCKED
+After 2 tokens: 4, 3, 0, -1   → ALL app BLOCKED
+After 5 tokens: 1, 0, -3, -4  → system noBurst BLOCKED
+After 6 tokens: 0, -1, -4, -5 → ALL work BLOCKED
+```
+
+There is a window (between "all app blocked" and "system blocked")
+where system work flows but app work is rejected.
+
+*RM replacement*: With 2 buckets, you might expect this window to
+disappear — when the noBurst bucket goes negative, all noBurst work
+is blocked regardless of resource group. However, **per-group BQL
+preserves this differentiation**. FULLY_UTILIZE groups have
+`burstLimitFrac >= 1.0`, so they are always `canBurst` and always
+check the canBurst bucket. Non-FULLY_UTILIZE groups that exceed their
+CPU_MIN lose burst qualification and check the noBurst bucket. The
+graduated admission still works:
+
+```
+canBurst bucket (100%):  8 tokens
+noBurst bucket (75%):    6 tokens
+
+Heavy non-FULLY_UTILIZE work drains 7 tokens:
+  canBurst: 1   ← still positive → FULLY_UTILIZE keeps going
+  noBurst: -1   ← negative → heavy non-FULLY_UTILIZE BLOCKED
+```
+
+The 4-bucket design had 4 admission levels; the 2-bucket design has
+2, but the important differentiation (FULLY_UTILIZE keeps going when
+others are blocked) is preserved.
+
+**3. Different utilization targets per tier.** System had a higher
+target (e.g., 95%) than app (80%), so system buckets refilled faster
+and had more tokens.
+
+*RM replacement*: A single noBurst target (75%) and canBurst target
+(100%) for all work. FULLY_UTILIZE groups don't need a higher refill
+rate because they always check the canBurst bucket (which is refilled
+at the 100% target). Non-FULLY_UTILIZE groups are limited to the 75%
+bucket when heavy. The per-group differentiation comes from burst
+qualification, not from refill rate differences.
+
+**4. Separate WorkQueues.** System and app tenants never compete in
+the same heap. A heavy app tenant cannot push a system tenant down
+in priority because they are in different queues.
+
+*RM replacement*: All tenants share one heap. A FULLY_UTILIZE group
+stays `canBurst` and sorts before heavy non-FULLY_UTILIZE groups.
+The only case where a non-FULLY_UTILIZE tenant sorts above a
+FULLY_UTILIZE tenant is when the non-FULLY_UTILIZE tenant is light
+enough to be `canBurst` — this is fine because it's light and won't
+consume much. Within the same burst qualification, `used/weight`
+determines order.
+
+**Summary**: The 1-queue design replaces tier-based **isolation** with
+ordering-based **priority**. The key enabling mechanism is per-group
+BQL: FULLY_UTILIZE groups are always `canBurst` and therefore always
+access the higher bucket and sort first in the heap. This is
+explicitly what the design doc describes in its "Internal Design
+Details" section.
+
 ### Cluster Settings
 
 Two per-tier settings replaced with one:
@@ -94,9 +181,10 @@ Each resource group maps to a tenant in the WorkQueue with two properties:
 - **Weight** (`uint32`): Equal to CPU_MIN. Controls proportional fair
 sharing via `used/weight` in the tenant heap.
 - **BurstLimitFrac** (`float64`): Controls burst qualification.
-- `>= 1.0`: FULLY_UTILIZE — always qualifies for canBurst
-- `< 1.0`: Qualifies for canBurst only when burst bucket tokens
-exceed `burstLimitFrac × capacity`
+  - `>= 1.0`: FULLY_UTILIZE — always qualifies for canBurst
+  - `< 1.0`: Scales the burst bucket's refill rate and capacity.
+    The tenant qualifies for canBurst when `tokens > 90% of
+    (scaled) capacity`. See "How Burst Qualification Works" below.
 
 Configuration API:
 
@@ -120,55 +208,101 @@ For the prototype, two resource groups are hardcoded at init:
 ### How Fair Sharing Works
 
 The `tenantHeap` orders tenants by:
-1. **Burst qualification** (canBurst before noBurst)
+1. **Burst qualification** (`canBurst` before `noBurst`)
 2. **`used/weight`** (lowest ratio first)
+3. Ties broken by higher weight, then lower tenant ID
 
-When `granted()` is called, the tenant at the top of the heap (lowest
-burst qual, then lowest used/weight) gets the next grant. Over time,
-all tenants converge toward CPU consumption proportional to their
-weights.
+When `granted()` is called, the tenant at the top of the heap gets the
+next grant. Over time, all tenants converge toward CPU consumption
+proportional to their weights.
+
+Note that `used` and `weight` are in different units: `used` is CPU
+nanoseconds consumed (reset every ~1s), while `weight` is derived from
+`CPU_MIN` (a static configuration). The ratio `used/weight` doesn't
+need them in the same units — it answers "how much CPU has this tenant
+consumed per unit of its configured share?" A tenant with weight=80
+needs 8x the usage of a weight=10 tenant before they're considered
+equal.
+
+**Weight=0 (best-effort groups)**: `used/weight` would divide by zero.
+A floor of `weight = max(CPU_MIN, 1)` is needed. Alternatively,
+best-effort groups could be treated as a third burst qualification
+tier (`canBurst > noBurst > bestEffort`) that only gets CPU when no
+other group has waiting work.
 
 Example with 3 resource groups:
 
 ```
-CREATE RESOURCE GROUP online_rg Weight_CPU=160 FULLY_UTILIZE
-CREATE RESOURCE GROUP batch_rg Weight_CPU=20
-CREATE RESOURCE GROUP support_rg Weight_CPU=20
+CREATE RESOURCE GROUP online_rg CPU_MIN=80 FULLY_UTILIZE
+CREATE RESOURCE GROUP batch_rg CPU_MIN=10
+CREATE RESOURCE GROUP support_rg CPU_MIN=10
 
-Total weight = 200
-online_rg share = 160/200 = 80%
-batch_rg share  = 20/200  = 10%
-support_rg share = 20/200 = 10%
+Weights: online=80, batch=10, support=10 (total=100)
+online share = 80/100 = 80%
+batch share  = 10/100 = 10%
+support share = 10/100 = 10%
 ```
+
+**Interaction between burst qualification and weight**: Burst
+qualification is the primary sort key, so a `canBurst` tenant with
+weight=1 still sorts before a `noBurst` tenant with weight=100. This
+is intentional — `canBurst` tenants have access to the higher (100%)
+granter bucket, so they must go first to avoid leaving capacity on
+the table. If a `noBurst` tenant went first and the noBurst bucket
+happened to be empty, the grant would fail even though the canBurst
+bucket has tokens.
+
+**Why burst qualification can't be replaced by `used/weight` alone**:
+`tenant.used` is reset to 0 every ~1s by `gcTenantsResetUsedAndUpdate
+Estimators`. Right after a reset, all tenants have `used=0`, so
+`used/weight` is tied — a previously heavy tenant looks equal to a
+light one. The burst bucket carries state across resets (it refills
+and drains gradually), so it correctly maintains the heavy tenant as
+`noBurst` even immediately after `used` is reset.
 
 ### How Burst Qualification Works
 
 Each tenant has a `cpuTimeBurstBucket` — a small per-tenant token bucket
-that tracks whether the tenant is a light or heavy CPU user.
+that tracks whether the tenant is a light or heavy CPU user. The burst
+bucket is a cheap rate meter: instead of tracking "how much CPU did this
+tenant use over the last N seconds" with timestamps and windows, it uses
+a single counter that refills at a fixed rate and drains with actual
+usage. If the counter is high, usage has been below the refill rate
+(light tenant). If low, usage has exceeded it (heavy tenant).
 
 **Refill**: Every 1ms, each tenant's burst bucket is refilled at a rate
-proportional to its `burstLimitFrac`:
+proportional to its `burstLimitFrac`. The capacity is also scaled:
 
 ```
-scaledRefill = canBurstAllocation × burstLimitFrac
+scaledRefill   = canBurstAllocation × burstLimitFrac
+scaledCapacity = canBurstRate × burstLimitFrac
 ```
 
 For a tenant with burstLimitFrac=0.1 (CPU_MIN=10%) on an 8-vCPU machine:
 ```
-canBurstRate = 1.0 × 8e9 = 8e9 tokens/sec
-scaledRefill = 8e9 / 1000 × 0.1 = 800K tokens per tick
+canBurstRate    = 1.0 × 8e9 = 8e9 tokens/sec
+scaledRefill    = 8e9 / 1000 × 0.1 = 800K tokens per tick
+scaledCapacity  = 8e9 × 0.1 = 800M tokens
 ```
+
+Capacity = 1 second of refill (same convention as the granter buckets).
+This means the bucket represents ~1 second of "budget" — it fills in
+~1s when idle and drains in ~1s when over-consuming.
 
 **Drain**: When the tenant's work is admitted, tokens are deducted from
 its burst bucket proportional to the CPU estimate.
 
-**Break-even**: The tenant's burst bucket drains when its CPU consumption
-exceeds its refill rate:
+**Steady-state behavior**: In steady state, the bucket is binary:
+- If `usage < refill_rate`: bucket fills to capacity (capped), stays at
+  100% full. Tenant is `canBurst`.
+- If `usage > refill_rate`: bucket drains to floor (`-capacity/4`).
+  Tenant is `noBurst`.
+- There is no steady state where the bucket sits at an intermediate
+  level. It either fills to the cap or drains to the floor.
+
+**Break-even**: A tenant loses burst when usage exceeds the refill rate:
 
 ```
-drain_per_tick = CPU_usage% × cpuCapacity / 1000
-refill_per_tick = canBurstRate / 1000 × burstLimitFrac
-
 Break-even when drain = refill:
   CPU_usage% × cpuCapacity = canBurstRate × burstLimitFrac
   CPU_usage% = burstLimitFrac × (canBurstRate / cpuCapacity)
@@ -194,12 +328,22 @@ func (m *cpuTimeBurstBucket) burstQualification() burstQualification {
 }
 ```
 
-Note: the threshold is `>90% of capacity` (same as the original master
-code), NOT `>burstLimitFrac × capacity`. The per-tenant break-even point
-is controlled by the **scaled capacity and refill rate**, not by the
-threshold check. Using `burstLimitFrac × capacity` would double-apply
-the scaling (since capacity is already scaled by `burstLimitFrac` in
-`refillBurstBuckets`), making it too easy for small groups to qualify.
+**Why 90%, not 100%?** The threshold is `>90% of capacity` rather than
+`>= capacity` to provide a buffer against transient usage spikes.
+Refill happens every 1ms, but deductions happen at admission time
+(asynchronous). Between two refill ticks, several requests could be
+admitted, each deducting from the bucket. If the threshold were 100%,
+any single admission would instantly drop the tenant to `noBurst`,
+even if the tenant is well under its CPU_MIN over longer timescales.
+The 10% buffer (10% of capacity) absorbs these per-request jitters
+without changing the steady-state consumption threshold.
+
+**Why not multiply 90% × burstLimitFrac?** The per-tenant break-even
+point is controlled by the **scaled capacity and refill rate**, not by
+the threshold check. The capacity is already scaled by `burstLimitFrac`
+in `refillBurstBuckets`. Using `burstLimitFrac × capacity` in the
+threshold would double-apply the scaling, making it too easy for small
+groups to qualify.
 
 ### Design Doc Scenarios
 
@@ -218,9 +362,10 @@ Node=65%+10%+10%=85%.
 
 **Scenario 3**: OPG=5%, BPG=50%, SCG=70%. Sum=125%.
 
-OPG uses 5%, always canBurst. BPG/SCG are noBurst (exceed 10%).
-noBurst bucket = 75%. OPG drains 5% from it, leaving 70%.
-BPG/SCG fair-share 70% by weight (20:20) = 35% each. Node=75%.
+OPG uses 5%, always canBurst (FULLY_UTILIZE). BPG/SCG are noBurst
+(exceed 10% CPU_MIN). noBurst bucket = 75%. OPG drains 5% from it
+via deduct-all, leaving 70% for noBurst work. BPG/SCG fair-share
+70% by weight (10:10) = 35% each. Node=75%.
 
 ### Granter Bucket Mechanics
 
