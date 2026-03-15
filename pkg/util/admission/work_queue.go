@@ -313,6 +313,11 @@ type WorkQueue struct {
 		// overrideAllToBypassAdmission, when true, causes all work to bypass
 		// admission control. Used by CPU time token AC.
 		overrideAllToBypassAdmission bool
+		// burstLimits maps tenant ID to a burstLimitFrac value. Tenants
+		// not in this map use the default burst qualification behavior.
+		// A value >= 1.0 means always canBurst (FULLY_UTILIZE).
+		// Only used if mode == usesCPUTimeTokens.
+		burstLimits map[uint64]float64
 	}
 	logThreshold log.EveryN
 	metrics      *WorkQueueMetrics
@@ -697,7 +702,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// global estimator that sees workload across all tenants.
 		tenant = newTenantInfo(tenantID, q.getTenantWeightLocked(tenantID),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
-			q.perTenantAggMetrics)
+			q.getBurstLimitFracLocked(tenantID), q.perTenantAggMetrics)
 		q.mu.tenants[tenantID] = tenant
 	}
 	// If mode == usesCPUTimeTokens, WorkQueue does CPU time token estimation.
@@ -831,7 +836,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		if !ok {
 			tenant = newTenantInfo(tenantID, q.getTenantWeightLocked(tenantID),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
-				q.perTenantAggMetrics)
+				q.getBurstLimitFracLocked(tenantID), q.perTenantAggMetrics)
 			q.mu.tenants[tenantID] = tenant
 		}
 		q.adjustTenantUsedLocked(tenant, -info.RequestedCount)
@@ -1440,6 +1445,35 @@ func (q *WorkQueue) SetTenantWeights(tenantWeights map[uint64]uint32) {
 	}
 }
 
+// SetBurstLimits sets per-tenant burst limit fractions. A value >= 1.0
+// means the tenant always qualifies for burst (FULLY_UTILIZE). A value
+// in (0, 1) scales the burst bucket capacity for that tenant. Tenants
+// not in the map use the default burst qualification behavior.
+func (q *WorkQueue) SetBurstLimits(limits map[uint64]float64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.mu.burstLimits = limits
+	// Update existing tenants' burst buckets.
+	for id, tenant := range q.mu.tenants {
+		frac := q.getBurstLimitFracLocked(id)
+		if tenant.cpuTimeBurstBucket.burstLimitFrac != frac {
+			tenant.cpuTimeBurstBucket.burstLimitFrac = frac
+			if isInTenantHeap(tenant) {
+				q.mu.tenantHeap.fix(tenant)
+			}
+		}
+	}
+}
+
+// getBurstLimitFracLocked returns the burstLimitFrac for a tenant.
+// Returns 0 if no burst limit is configured for this tenant.
+func (q *WorkQueue) getBurstLimitFracLocked(tenantID uint64) float64 {
+	if q.mu.burstLimits == nil {
+		return 0
+	}
+	return q.mu.burstLimits[tenantID]
+}
+
 // close tells the gc goroutine to stop.
 func (q *WorkQueue) close() {
 	close(q.stopCh)
@@ -1678,6 +1712,7 @@ func newTenantInfo(
 	mode workQueueMode,
 	cpuTimeTokenEstimate int64,
 	burstBucketCapacity int64,
+	burstLimitFrac float64,
 	aggMetrics *tenantAggMetrics,
 ) *tenantInfo {
 	ti := tenantInfoPool.Get().(*tenantInfo)
@@ -1696,7 +1731,7 @@ func newTenantInfo(
 	// always returns noBurst. This effectively disables the
 	// burstQualification functionality.
 	ti.cpuTimeBurstBucket.init(
-		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */)
+		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */, burstLimitFrac)
 	if aggMetrics != nil {
 		tid := strconv.FormatUint(id, 10)
 		ti.perTenantMetrics.admittedCount = aggMetrics.admittedCount.AddChild(tid)

@@ -7,7 +7,6 @@ package admission
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
@@ -53,19 +52,14 @@ type CPUGrantCoordinators struct {
 // GetKVWorkQueue returns a WorkQueue to use for KVWork. If
 // admission.cpu_time_tokens.enabled is true, it returns a WorkQueue that
 // implements CPU time token AC. Else it returns a WorkQueue that does
-// slots-based AC. If CPU time token AC, there is one WorkQueue for system
-// tenant work and another for app tenant work. The system tenant WorkQueue
-// is backed by a granter that allows greater resource usage than the app
-// tenant WorkQueue. This is a prioritization scheme. For details regarding
-// the granters, see cpu_time_token_granter.go.
-func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
+// slots-based AC. With CPU time token AC, there is a single WorkQueue
+// shared by all tenants, with per-tenant burst qualification and weighted
+// fair sharing.
+func (coord *CPUGrantCoordinators) GetKVWorkQueue(_ bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
 	}
-	if isSystemTenant {
-		return coord.cpuTimeCoord.getWorkQueue(systemTenant)
-	}
-	return coord.cpuTimeCoord.getWorkQueue(appTenant)
+	return coord.cpuTimeCoord.getWorkQueue()
 }
 
 // GetSQLWorkQueue returns a WorkQueue for SQLKVResponseWork or
@@ -73,7 +67,7 @@ func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueu
 // it panics.
 func (coord *CPUGrantCoordinators) GetSQLWorkQueue(workKind WorkKind) *WorkQueue {
 	if workKind != SQLKVResponseWork && workKind != SQLSQLResponseWork {
-		panic(fmt.Sprintf("workKind %q not supported by GetSQLWorkQueue", workKind))
+		panic("workKind not supported by GetSQLWorkQueue")
 	}
 	return coord.slotsCoord.queues[workKind].(*WorkQueue)
 }
@@ -99,9 +93,15 @@ func (cg *CPUGrantCoordinators) Close() {
 	cg.cpuTimeCoord.close()
 }
 
+// SetBurstLimits sets per-tenant burst limit fractions on the CPU time
+// token WorkQueue.
+func (coord *CPUGrantCoordinators) SetBurstLimits(limits map[uint64]float64) {
+	coord.cpuTimeCoord.getWorkQueue().SetBurstLimits(limits)
+}
+
 type cpuTimeTokenGrantCoordinator struct {
 	filler *cpuTimeTokenFiller
-	queues [numResourceTiers]requesterClose
+	queue  requesterClose
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -115,13 +115,6 @@ func makeCPUTimeTokenGrantCoordinator(
 	registry.AddMetricStruct(metrics)
 	timeSource := timeutil.DefaultTimeSource{}
 	granter := newCPUTimeTokenGranter(metrics, timeSource)
-	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
-		childGranters[tier] = cpuTimeTokenChildGranter{
-			tier:   tier,
-			parent: granter,
-		}
-	}
 	filler := &cpuTimeTokenFiller{
 		timeSource: timeSource,
 		closeCh:    make(chan struct{}),
@@ -140,30 +133,23 @@ func makeCPUTimeTokenGrantCoordinator(
 	allocator.model = model
 	filler.allocator = allocator
 
-	var requesters [numResourceTiers]requester
-	wqMetrics := makeWorkQueueMetrics("cpu", registry)
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
-		opts := makeWorkQueueOptions(KVWork)
-		opts.mode = usesCPUTimeTokens
-		opts.perTenantAggMetrics = &tenantAggMetrics{
-			admittedCount:  metrics.AdmittedCountPerTenant[tier],
-			waitTimeNanos:  metrics.WaitTimeNanosPerTenant[tier],
-			tokensUsed:     metrics.TokensUsedPerTenant[tier],
-			tokensReturned: metrics.TokensReturnedPerTenant[tier],
-		}
-		requesters[tier] = makeWorkQueue(
-			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, opts)
-		granter.requester[tier] = requesters[tier]
-		// This type assertion is always valid, since makeWorkQueue always
-		// returns a *WorkQueue.
-		allocator.queues[tier] = requesters[tier].(*WorkQueue)
+	wqOpts := makeWorkQueueOptions(KVWork)
+	wqOpts.mode = usesCPUTimeTokens
+	wqOpts.perTenantAggMetrics = &tenantAggMetrics{
+		admittedCount:  metrics.AdmittedCountPerTenant,
+		waitTimeNanos:  metrics.WaitTimeNanosPerTenant,
+		tokensUsed:     metrics.TokensUsedPerTenant,
+		tokensReturned: metrics.TokensReturnedPerTenant,
 	}
+	wqMetrics := makeWorkQueueMetrics("cpu", registry)
+	wq := makeWorkQueue(
+		ambientCtx, KVWork, granter, settings, wqMetrics, wqOpts)
+	granter.requester = wq
+	allocator.queue = wq.(*WorkQueue)
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
 		filler: filler,
-	}
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
-		coordinator.queues[tier] = requesters[tier]
+		queue:  wq,
 	}
 
 	// The filler ticking appears to have a slight negative impact on perf.
@@ -190,19 +176,15 @@ func makeCPUTimeTokenGrantCoordinator(
 	return coordinator
 }
 
-func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue(tier resourceTier) *WorkQueue {
-	return coord.queues[tier].(*WorkQueue)
+func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue() *WorkQueue {
+	return coord.queue.(*WorkQueue)
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) setTenantWeights(weights map[uint64]uint32) {
-	for tier := range coord.queues {
-		coord.queues[tier].(*WorkQueue).SetTenantWeights(weights)
-	}
+	coord.queue.(*WorkQueue).SetTenantWeights(weights)
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) close() {
-	for tier := range coord.queues {
-		coord.queues[tier].close()
-	}
+	coord.queue.close()
 	coord.filler.close()
 }

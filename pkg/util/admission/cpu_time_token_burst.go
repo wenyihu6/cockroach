@@ -40,14 +40,30 @@ type cpuTimeBurstBucket struct {
 	// burstQualification to always return noBurst. This effectively
 	// disables the burstQualification functionality.
 	disabled bool
+	// burstLimitFrac controls per-tenant burst qualification behavior.
+	// A value >= 1.0 means the tenant always qualifies for burst
+	// (FULLY_UTILIZE resource groups). A value in (0, 1) scales the
+	// burst bucket capacity and refill rate by this fraction, making
+	// it harder to qualify. The default value of 0 means no override
+	// is applied (uses the standard 90% threshold).
+	burstLimitFrac float64
 }
 
-func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool) {
+func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool, burstLimitFrac float64) {
 	// The bucket of a new tenant is inited full. This implies that
 	// a tenant can burst when its work first appears on a KV node.
 	// After <= 1s, the bucket state should track the usage of the
 	// tenant accurately.
-	*m = cpuTimeBurstBucket{tokens: capacity, capacity: capacity, disabled: disabled}
+	scaledCapacity := capacity
+	if burstLimitFrac > 0 && burstLimitFrac < 1.0 {
+		scaledCapacity = int64(float64(capacity) * burstLimitFrac)
+	}
+	*m = cpuTimeBurstBucket{
+		tokens:         scaledCapacity,
+		capacity:       scaledCapacity,
+		disabled:       disabled,
+		burstLimitFrac: burstLimitFrac,
+	}
 }
 
 // burstQualification returns whether this tenant qualifies for burst
@@ -55,6 +71,13 @@ func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool) {
 func (m *cpuTimeBurstBucket) burstQualification() burstQualification {
 	if m.disabled {
 		return noBurst
+	}
+	// FULLY_UTILIZE resource groups (burstLimitFrac >= 1.0) always
+	// qualify for burst. This is the primary mechanism by which
+	// FULLY_UTILIZE groups get priority — they always check the
+	// canBurst granter bucket.
+	if m.burstLimitFrac >= 1.0 {
+		return canBurst
 	}
 	// Note that at CRDB startup time, the capacity that is passed into
 	// cpuTimeBurstBucket.init will be zero, until 1ms passes, and the
@@ -86,6 +109,14 @@ func (m *cpuTimeBurstBucket) adjust(delta int64) {
 // time rather than being disqualified from bursting for arbitrarily long periods
 // of time.
 func (m *cpuTimeBurstBucket) refill(toAdd int64, capacity int64) {
+	// Scale capacity and refill amount by burstLimitFrac for non-FULLY_UTILIZE
+	// groups. A burstLimitFrac of 0.5 means the tenant's burst bucket is half
+	// as large and refills half as fast, making it harder to stay above the
+	// 90% threshold and qualify for burst.
+	if m.burstLimitFrac > 0 && m.burstLimitFrac < 1.0 {
+		capacity = int64(float64(capacity) * m.burstLimitFrac)
+		toAdd = int64(float64(toAdd) * m.burstLimitFrac)
+	}
 	m.capacity = capacity
 	m.adjust(toAdd)
 	m.tokens = max(m.tokens, -m.capacity/4)
@@ -101,6 +132,6 @@ func (m *cpuTimeBurstBucket) SafeFormat(s redact.SafePrinter, _ rune) {
 	if m.capacity > 0 {
 		fullness = float64(m.tokens) / float64(m.capacity) * 100
 	}
-	s.Printf("fullness=%.1f%% tokens=%d capacity=%d qual=%s",
-		fullness, m.tokens, m.capacity, m.burstQualification())
+	s.Printf("fullness=%.1f%% tokens=%d capacity=%d qual=%s burstLimitFrac=%.2f",
+		fullness, m.tokens, m.capacity, m.burstQualification(), m.burstLimitFrac)
 }

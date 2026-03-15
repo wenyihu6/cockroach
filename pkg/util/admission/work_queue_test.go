@@ -432,10 +432,10 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				opts.mode = usesCPUTimeTokens
 				cpuMetrics := makeCPUTimeTokenMetrics()
 				opts.perTenantAggMetrics = &tenantAggMetrics{
-					admittedCount:  cpuMetrics.AdmittedCountPerTenant[systemTenant],
-					waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[systemTenant],
-					tokensUsed:     cpuMetrics.TokensUsedPerTenant[systemTenant],
-					tokensReturned: cpuMetrics.TokensReturnedPerTenant[systemTenant],
+					admittedCount:  cpuMetrics.AdmittedCountPerTenant,
+					waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant,
+					tokensUsed:     cpuMetrics.TokensUsedPerTenant,
+					tokensReturned: cpuMetrics.TokensReturnedPerTenant,
 				}
 				q = makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
 					workKind, tg, st, metrics, opts).(*WorkQueue)
@@ -590,10 +590,10 @@ func TestCPUTimeTokenEstimation(t *testing.T) {
 	opts.mode = usesCPUTimeTokens
 	cpuMetrics := makeCPUTimeTokenMetrics()
 	opts.perTenantAggMetrics = &tenantAggMetrics{
-		admittedCount:  cpuMetrics.AdmittedCountPerTenant[systemTenant],
-		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[systemTenant],
-		tokensUsed:     cpuMetrics.TokensUsedPerTenant[systemTenant],
-		tokensReturned: cpuMetrics.TokensReturnedPerTenant[systemTenant],
+		admittedCount:  cpuMetrics.AdmittedCountPerTenant,
+		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant,
+		tokensUsed:     cpuMetrics.TokensUsedPerTenant,
+		tokensReturned: cpuMetrics.TokensReturnedPerTenant,
 	}
 	timeSource = timeutil.NewManualTime(initialTime)
 	opts.timeSource = timeSource
