@@ -99,6 +99,30 @@ func (coord *CPUGrantCoordinators) SetBurstLimits(limits map[uint64]float64) {
 	coord.cpuTimeCoord.getWorkQueue().SetBurstLimits(limits)
 }
 
+// ResourceGroupConfig holds per-resource-group configuration.
+type ResourceGroupConfig struct {
+	Weight         uint32
+	BurstLimitFrac float64
+}
+
+// SetResourceGroupConfig sets per-resource-group weights and burst limits.
+// Each resource group appears as a tenant with weight = CPU_MIN. The
+// BurstLimitFrac controls burst qualification:
+//   - >= 1.0: FULLY_UTILIZE (always canBurst)
+//   - < 1.0: canBurst only while usage < burst limit fraction of CPU
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(
+	config map[uint64]ResourceGroupConfig,
+) {
+	weights := make(map[uint64]uint32, len(config))
+	burstLimits := make(map[uint64]float64, len(config))
+	for id, cfg := range config {
+		weights[id] = cfg.Weight
+		burstLimits[id] = cfg.BurstLimitFrac
+	}
+	coord.SetTenantWeights(weights)
+	coord.cpuTimeCoord.getWorkQueue().SetBurstLimits(burstLimits)
+}
+
 type cpuTimeTokenGrantCoordinator struct {
 	filler *cpuTimeTokenFiller
 	queue  requesterClose
@@ -151,6 +175,25 @@ func makeCPUTimeTokenGrantCoordinator(
 		filler: filler,
 		queue:  wq,
 	}
+
+	// Hardcode 2 resource groups for the prototype:
+	//   - System tenant (ID=1): FULLY_UTILIZE, weight=9
+	//   - App tenants (default): non-FULLY_UTILIZE, weight=1
+	//
+	// System tenant gets burstLimitFrac=1.0 (always canBurst, access to
+	// 100% CPU bucket). App tenants default to burstLimitFrac=0.25 via
+	// defaultBurstLimitFrac, meaning they qualify for burst only when
+	// using < 25% of node CPU.
+	//
+	// In production, this will be driven by SQL DDL:
+	//   CREATE RESOURCE GROUP ... CPU_MIN=<pct> [FULLY_UTILIZE]
+	realWQ := wq.(*WorkQueue)
+	realWQ.SetTenantWeights(map[uint64]uint32{
+		1: 9, // system tenant gets 9x weight
+	})
+	realWQ.SetBurstLimits(map[uint64]float64{
+		1: 1.0, // system tenant: FULLY_UTILIZE (always canBurst)
+	})
 
 	// The filler ticking appears to have a slight negative impact on perf.
 	// For now, we accept this, since CPU time token AC will be off by

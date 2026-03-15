@@ -28,11 +28,11 @@ import "github.com/cockroachdb/redact"
 //   - A tenant qualifies for burst (canBurst) when bucket is > 90% full.
 //   - The bucket can go negative (down to -capacity/4) to allow recovery.
 //
-// The bucket capacity is derived from the noBurst refill rate in
-// cpuTimeTokenAllocator (capacity = noBurst_refill_rate / 4).
-// With cluster settings at their default values, this implies that
-// an application tenant can burst, if they are using roughly less
-// than 20% of the CPU on a CRDB node (0.8 * 0.25 = 0.2).
+// The bucket capacity and refill rate are derived from the canBurst
+// (100% CPU) rate, scaled per-tenant by burstLimitFrac (= CPU_MIN
+// fraction) in refillBurstBuckets. A tenant with CPU_MIN=10% gets
+// 10% of the canBurst rate, so its burst bucket breaks even at
+// exactly 10% CPU usage.
 type cpuTimeBurstBucket struct {
 	tokens   int64
 	capacity int64
@@ -42,10 +42,10 @@ type cpuTimeBurstBucket struct {
 	disabled bool
 	// burstLimitFrac controls per-tenant burst qualification behavior.
 	// A value >= 1.0 means the tenant always qualifies for burst
-	// (FULLY_UTILIZE resource groups). A value in (0, 1) scales the
-	// burst bucket capacity and refill rate by this fraction, making
-	// it harder to qualify. The default value of 0 means no override
-	// is applied (uses the standard 90% threshold).
+	// (FULLY_UTILIZE resource groups). A value in (0, 1) means the
+	// tenant's burst bucket capacity and refill rate are scaled by
+	// this fraction in refillBurstBuckets, making it harder to qualify.
+	// The default (from defaultBurstLimitFrac) is 0.25.
 	burstLimitFrac float64
 }
 
@@ -54,13 +54,12 @@ func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool, burstLimitFrac 
 	// a tenant can burst when its work first appears on a KV node.
 	// After <= 1s, the bucket state should track the usage of the
 	// tenant accurately.
-	scaledCapacity := capacity
-	if burstLimitFrac > 0 && burstLimitFrac < 1.0 {
-		scaledCapacity = int64(float64(capacity) * burstLimitFrac)
-	}
+	//
+	// The caller is responsible for scaling capacity by burstLimitFrac
+	// before calling init. See newTenantInfo.
 	*m = cpuTimeBurstBucket{
-		tokens:         scaledCapacity,
-		capacity:       scaledCapacity,
+		tokens:         capacity,
+		capacity:       capacity,
 		disabled:       disabled,
 		burstLimitFrac: burstLimitFrac,
 	}
@@ -109,14 +108,8 @@ func (m *cpuTimeBurstBucket) adjust(delta int64) {
 // time rather than being disqualified from bursting for arbitrarily long periods
 // of time.
 func (m *cpuTimeBurstBucket) refill(toAdd int64, capacity int64) {
-	// Scale capacity and refill amount by burstLimitFrac for non-FULLY_UTILIZE
-	// groups. A burstLimitFrac of 0.5 means the tenant's burst bucket is half
-	// as large and refills half as fast, making it harder to stay above the
-	// 90% threshold and qualify for burst.
-	if m.burstLimitFrac > 0 && m.burstLimitFrac < 1.0 {
-		capacity = int64(float64(capacity) * m.burstLimitFrac)
-		toAdd = int64(float64(toAdd) * m.burstLimitFrac)
-	}
+	// The caller is responsible for scaling toAdd and capacity by
+	// burstLimitFrac before calling refill. See refillBurstBuckets.
 	m.capacity = capacity
 	m.adjust(toAdd)
 	m.tokens = max(m.tokens, -m.capacity/4)

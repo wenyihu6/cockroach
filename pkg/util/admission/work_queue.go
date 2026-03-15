@@ -1246,17 +1246,27 @@ func (q *WorkQueue) adjustTenantUsedLocked(tenant *tenantInfo, delta int64) {
 }
 
 // refillBurstBuckets adds tokens to all tenant burst buckets and updates
-// their capacity. This is called by cpuTimeTokenAllocator periodically (every
-// 1ms). If a tenant's burst qualification changes as a result of the refill,
+// their capacity. This is called by cpuTimeTokenAllocator periodically
+// (every 1ms). canBurstToAdd and canBurstCapacity are the canBurst
+// (100% CPU) allocation and rate. These are scaled per-tenant by
+// burstLimitFrac (= CPU_MIN fraction), so a tenant with CPU_MIN=10%
+// gets 10% of the canBurst refill rate. This ensures each tenant's
+// burst bucket breaks even at exactly their CPU_MIN percentage of
+// node CPU.
+//
+// If a tenant's burst qualification changes as a result of the refill,
 // the tenant's position in the tenantHeap is updated to maintain correct
 // priority ordering.
-func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
+func (q *WorkQueue) refillBurstBuckets(canBurstToAdd int64, canBurstCapacity int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.mu.burstBucketCapacity = capacity
-	for _, tenant := range q.mu.tenants {
+	q.mu.burstBucketCapacity = canBurstCapacity
+	for id, tenant := range q.mu.tenants {
+		burstLimitFrac := q.getBurstLimitFracLocked(id)
+		scaledAdd := int64(float64(canBurstToAdd) * burstLimitFrac)
+		scaledCapacity := int64(float64(canBurstCapacity) * burstLimitFrac)
 		prevBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
-		tenant.cpuTimeBurstBucket.refill(toAdd, capacity)
+		tenant.cpuTimeBurstBucket.refill(scaledAdd, scaledCapacity)
 		curBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
 		if prevBurstQual != curBurstQual && isInTenantHeap(tenant) {
 			q.mu.tenantHeap.fix(tenant)
@@ -1465,13 +1475,24 @@ func (q *WorkQueue) SetBurstLimits(limits map[uint64]float64) {
 	}
 }
 
-// getBurstLimitFracLocked returns the burstLimitFrac for a tenant.
-// Returns 0 if no burst limit is configured for this tenant.
+// defaultBurstLimitFrac is the burst limit fraction for tenants not
+// explicitly configured via SetBurstLimits. A value of 0.25 means
+// unconfigured tenants qualify for burst only when using < 25% of node
+// CPU — i.e., they are non-FULLY_UTILIZE by default. FULLY_UTILIZE
+// groups must be explicitly configured with burstLimitFrac >= 1.0.
+const defaultBurstLimitFrac = 0.25
+
+// getBurstLimitFracLocked returns the burst limit fraction for the given
+// tenant. If no override exists, returns defaultBurstLimitFrac.
+//
+// REQUIRES: q.mu is held.
 func (q *WorkQueue) getBurstLimitFracLocked(tenantID uint64) float64 {
-	if q.mu.burstLimits == nil {
-		return 0
+	if q.mu.burstLimits != nil {
+		if frac, ok := q.mu.burstLimits[tenantID]; ok {
+			return frac
+		}
 	}
-	return q.mu.burstLimits[tenantID]
+	return defaultBurstLimitFrac
 }
 
 // close tells the gc goroutine to stop.
@@ -1730,8 +1751,9 @@ func newTenantInfo(
 	// If mode != usesCPUTimeTokens, cpuTimeBurstBucket.burstQualification
 	// always returns noBurst. This effectively disables the
 	// burstQualification functionality.
+	scaledCapacity := int64(float64(burstBucketCapacity) * burstLimitFrac)
 	ti.cpuTimeBurstBucket.init(
-		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */, burstLimitFrac)
+		scaledCapacity, mode != usesCPUTimeTokens /* disable */, burstLimitFrac)
 	if aggMetrics != nil {
 		tid := strconv.FormatUint(id, 10)
 		ti.perTenantMetrics.admittedCount = aggMetrics.admittedCount.AddChild(tid)
