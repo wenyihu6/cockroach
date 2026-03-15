@@ -85,8 +85,38 @@ has nothing waiting.
 controls who gets granted first. A FULLY_UTILIZE group with
 `burstLimitFrac >= 1.0` is always `canBurst`, so it sorts before
 `noBurst` groups. Within the same burst qualification, `used/weight`
-determines priority. This is effectively equivalent when FULLY_UTILIZE
-groups are `canBurst` and heavy non-FULLY_UTILIZE groups are `noBurst`.
+determines priority.
+
+*What's different*: The old tier ordering was unconditional — system
+always got the next grant regardless of how much CPU it had consumed.
+The new heap ordering is conditional: it depends on burst qualification
+and `used/weight`. A FULLY_UTILIZE group that has consumed a lot of
+CPU (high `used`) can be sorted behind a light non-FULLY_UTILIZE group
+that happens to be `canBurst`. Example on an 8-vCPU node:
+
+```
+Groups: online_rg (FULLY_UTILIZE, weight=80), support_rg (weight=10)
+
+Both are canBurst (support_rg is light, under its CPU_MIN).
+online_rg: used=4e9 (0.5s of CPU), weight=80 → used/weight = 50M
+support_rg: used=0,  weight=10               → used/weight = 0
+
+Heap order: support_rg first (lower used/weight).
+
+Old design: system always won regardless of used.
+New design: support_rg gets the next grant.
+```
+
+This is intentional — support_rg is light, so granting to it is
+harmless and gives it better latency. But FULLY_UTILIZE groups no
+longer have *unconditional* priority; they have priority that depends
+on relative consumption.
+
+The gap is most visible right after `used` resets (every ~1s). At that
+moment all tenants have `used/weight = 0`, so if multiple tenants are
+`canBurst`, tie-breaking goes to higher weight then lower tenant ID.
+A non-FULLY_UTILIZE tenant with higher weight or lower ID gets granted
+first. This gap lasts until `used` diverges (typically a few grants).
 
 **2. Graduated admission via separate granter buckets per tier.**
 Deduct-all means all work deducts from all 4 buckets. The invariant
@@ -105,14 +135,10 @@ After 6 tokens: 0, -1, -4, -5 → ALL work BLOCKED
 There is a window (between "all app blocked" and "system blocked")
 where system work flows but app work is rejected.
 
-*RM replacement*: With 2 buckets, you might expect this window to
-disappear — when the noBurst bucket goes negative, all noBurst work
-is blocked regardless of resource group. However, **per-group BQL
-preserves this differentiation**. FULLY_UTILIZE groups have
-`burstLimitFrac >= 1.0`, so they are always `canBurst` and always
-check the canBurst bucket. Non-FULLY_UTILIZE groups that exceed their
-CPU_MIN lose burst qualification and check the noBurst bucket. The
-graduated admission still works:
+*RM replacement*: With 2 buckets, FULLY_UTILIZE groups always check
+the canBurst bucket, and heavy non-FULLY_UTILIZE groups check the
+noBurst bucket. The key differentiation (FULLY_UTILIZE keeps going
+when others are blocked) is preserved:
 
 ```
 canBurst bucket (100%):  8 tokens
@@ -123,9 +149,33 @@ Heavy non-FULLY_UTILIZE work drains 7 tokens:
   noBurst: -1   ← negative → heavy non-FULLY_UTILIZE BLOCKED
 ```
 
-The 4-bucket design had 4 admission levels; the 2-bucket design has
-2, but the important differentiation (FULLY_UTILIZE keeps going when
-others are blocked) is preserved.
+*What's different*: We go from 4 admission levels to 2. All heavy
+non-FULLY_UTILIZE groups share the same noBurst bucket and block at
+the same time — there is no bucket-level differentiation between them.
+Example with 3 non-FULLY_UTILIZE groups:
+
+```
+Groups: batch_rg (weight=10), support_rg (weight=10), analytics_rg (weight=5)
+All three are heavy (exceed CPU_MIN) → all noBurst.
+
+noBurst bucket goes negative.
+Result: ALL THREE are blocked simultaneously.
+
+Old design with 3 tiers would have blocked them one at a time
+(lowest tier first), creating windows where higher-tier work
+continued while lower-tier work was rejected.
+```
+
+When noBurst is exhausted, the only thing differentiating these groups
+is their position in the tenant heap (`used/weight`). When noBurst
+refills, the group with the lowest `used/weight` gets the next grant.
+But there is no window where one non-FULLY_UTILIZE group continues
+while another is rejected — they all gate on the same bucket.
+
+This is sufficient when the key distinction is FULLY_UTILIZE vs.
+non-FULLY_UTILIZE. But if you need more than 2 priority tiers with
+hard admission boundaries (not just heap ordering), the 2-bucket
+design cannot express that without adding more buckets.
 
 **3. Different utilization targets per tier.** System had a higher
 target (e.g., 95%) than app (80%), so system buckets refilled faster
@@ -135,27 +185,74 @@ and had more tokens.
 (100%) for all work. FULLY_UTILIZE groups don't need a higher refill
 rate because they always check the canBurst bucket (which is refilled
 at the 100% target). Non-FULLY_UTILIZE groups are limited to the 75%
-bucket when heavy. The per-group differentiation comes from burst
-qualification, not from refill rate differences.
+bucket when heavy.
+
+*What's different*: There is one pair of utilization targets shared
+by all groups. You cannot give one group a higher refill rate than
+another. Example:
+
+```
+Old design:
+  system target: 95%  → system buckets refill at 95% of CPU capacity
+  app target:    80%  → app buckets refill at 80% of CPU capacity
+  Operator can raise system to 98% without touching app.
+
+New design:
+  noBurst target:  75%  → noBurst bucket refills at 75%
+  canBurst target: 100% → canBurst bucket refills at 100%
+  These are global. All groups share them.
+```
+
+If an operator wanted a specific non-FULLY_UTILIZE group to run at
+90% utilization while others stay at 75%, there's no knob for that.
+The per-group control is `burstLimitFrac`, which controls *whether*
+a group accesses the 100% bucket, not *how fast* either bucket
+refills. The refill rate is the same for everyone.
+
+In practice this hasn't been needed — the Serverless per-tier targets
+were fixed constants (not operator-tuned), and the RM design doc
+doesn't call for per-group utilization targets. But it is a
+capability that existed before and doesn't exist now.
 
 **4. Separate WorkQueues.** System and app tenants never compete in
 the same heap. A heavy app tenant cannot push a system tenant down
 in priority because they are in different queues.
 
 *RM replacement*: All tenants share one heap. A FULLY_UTILIZE group
-stays `canBurst` and sorts before heavy non-FULLY_UTILIZE groups.
-The only case where a non-FULLY_UTILIZE tenant sorts above a
-FULLY_UTILIZE tenant is when the non-FULLY_UTILIZE tenant is light
-enough to be `canBurst` — this is fine because it's light and won't
-consume much. Within the same burst qualification, `used/weight`
-determines order.
+stays `canBurst` and sorts before heavy non-FULLY_UTILIZE groups
+(different burst qualification). Within the same burst qualification,
+`used/weight` determines order.
+
+*What's different*: With separate queues, a bug in heap ordering or
+burst qualification only affected one tier. With a single shared heap,
+any such bug affects all resource groups. Example:
+
+```
+Old design:
+  Bug in tenant heap comparison → only app tenants are misordered.
+  System tenant is in a separate queue, unaffected.
+
+New design:
+  Same bug → all resource groups are misordered, including
+  FULLY_UTILIZE groups.
+```
+
+This is a standard isolation-vs-simplicity tradeoff. The mitigation
+is that the single queue is simpler (fewer code paths, fewer edge
+cases), which reduces the likelihood of bugs in the first place.
+Additionally, a shared heap means more eyeballs on one code path
+rather than two rarely-exercised paths.
 
 **Summary**: The 1-queue design replaces tier-based **isolation** with
 ordering-based **priority**. The key enabling mechanism is per-group
 BQL: FULLY_UTILIZE groups are always `canBurst` and therefore always
-access the higher bucket and sort first in the heap. This is
-explicitly what the design doc describes in its "Internal Design
-Details" section.
+access the higher bucket and sort first in the heap. The real costs
+are: (1) no unconditional absolute priority for FULLY_UTILIZE groups,
+(2) fewer graduated admission levels (2 vs 4), (3) no per-group
+utilization tuning, and (4) shared-queue blast radius. These are
+acceptable because the RM design doc explicitly calls for a 1-queue
+design where burst qualification and `used/weight` provide the
+necessary differentiation.
 
 ### Cluster Settings
 
