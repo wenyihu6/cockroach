@@ -212,9 +212,8 @@ type txnKVFetcher struct {
 	// If set, we will use the production value for kvBatchSize.
 	forceProductionKVBatchSize bool
 
-	// For request and response admission control.
+	// For request admission control.
 	requestAdmissionHeader kvpb.AdmissionHeader
-	responseAdmissionQ     *admission.WorkQueue
 	admissionPacer         *admission.Pacer
 	// workloadID is the statement fingerprint ID or job ID for ASH sampling.
 	workloadID uint64
@@ -390,7 +389,6 @@ type newTxnKVFetcherArgs struct {
 
 	admission struct { // groups AC-related fields
 		requestHeader  kvpb.AdmissionHeader
-		responseQ      *admission.WorkQueue
 		pacerFactory   admission.PacerFactory
 		settingsValues *settings.Values
 	}
@@ -416,7 +414,6 @@ func newTxnKVFetcherInternal(args newTxnKVFetcherArgs) *txnKVFetcher {
 		acc:                        args.acc,
 		forceProductionKVBatchSize: args.forceProductionKVBatchSize,
 		requestAdmissionHeader:     args.admission.requestHeader,
-		responseAdmissionQ:         args.admission.responseQ,
 		workloadID:                 args.workloadID,
 	}
 
@@ -434,7 +431,6 @@ func newTxnKVFetcherInternal(args newTxnKVFetcherArgs) *txnKVFetcher {
 func (f *txnKVFetcher) setTxnAndSendFn(txn *kv.Txn, sendFn sendFunc) {
 	f.sendFn = sendFn
 	f.requestAdmissionHeader = txn.AdmissionHeader()
-	f.responseAdmissionQ = txn.DB().SQLKVResponseAdmissionQ
 
 	f.admissionPacer.Close()
 	f.maybeInitAdmissionPacer(txn.AdmissionHeader(), txn.DB().AdmissionPacerFactory, txn.DB().SettingsValues())
@@ -792,17 +788,10 @@ func (f *txnKVFetcher) maybeAdmitBatchResponse(ctx context.Context, br *kvpb.Bat
 		if _, err := f.admissionPacer.Pace(ctx); err != nil {
 			return err
 		}
-	} else if f.responseAdmissionQ != nil {
-		responseAdmission := admission.WorkInfo{
-			TenantID:   roachpb.SystemTenantID,
-			Priority:   admissionpb.WorkPriority(f.requestAdmissionHeader.Priority),
-			CreateTime: f.requestAdmissionHeader.CreateTime,
-			WorkloadID: f.workloadID,
-		}
-		if _, err := f.responseAdmissionQ.Admit(ctx, responseAdmission); err != nil {
-			return err
-		}
 	}
+	// CPU admission for SQL KV response processing is now handled by the
+	// SQLCPUHandle's MeasureAndAdmit, called via the CancelChecker in the
+	// operator that consumes this fetcher's output.
 
 	return nil
 }

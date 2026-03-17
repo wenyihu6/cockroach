@@ -7,7 +7,6 @@ package admission
 
 import (
 	"context"
-	"fmt"
 	"sync"
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
@@ -66,16 +65,6 @@ func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueu
 		return coord.cpuTimeCoord.getWorkQueue(systemTenant)
 	}
 	return coord.cpuTimeCoord.getWorkQueue(appTenant)
-}
-
-// GetSQLWorkQueue returns a WorkQueue for SQLKVResponseWork or
-// SQLSQLResponseWork. If any other queue is requested from this function,
-// it panics.
-func (coord *CPUGrantCoordinators) GetSQLWorkQueue(workKind WorkKind) *WorkQueue {
-	if workKind != SQLKVResponseWork && workKind != SQLSQLResponseWork {
-		panic(fmt.Sprintf("workKind %q not supported by GetSQLWorkQueue", workKind))
-	}
-	return coord.slotsCoord.queues[workKind].(*WorkQueue)
 }
 
 // SetTenantWeights sets the weight of tenants, using the provided tenant ID

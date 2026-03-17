@@ -526,7 +526,6 @@ func (rf *Fetcher) Init(ctx context.Context, args FetcherInitArgs) error {
 		if args.Txn != nil {
 			fetcherArgs.sendFn = makeSendFunc(args.Txn, args.Spec.External, &batchRequestsIssued, &kvCPUTime)
 			fetcherArgs.admission.requestHeader = args.Txn.AdmissionHeader()
-			fetcherArgs.admission.responseQ = args.Txn.DB().SQLKVResponseAdmissionQ
 			fetcherArgs.admission.pacerFactory = args.Txn.DB().AdmissionPacerFactory
 			fetcherArgs.admission.settingsValues = args.Txn.DB().SettingsValues()
 		}

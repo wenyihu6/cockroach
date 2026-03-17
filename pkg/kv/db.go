@@ -271,14 +271,7 @@ type DB struct {
 	// crs is the sender used for non-transactional requests.
 	crs CrossRangeTxnWrapperSender
 
-	// SQLKVResponseAdmissionQ is for use by SQL clients of the DB, and is
-	// placed here simply for plumbing convenience, as there is a diversity of
-	// SQL code that all uses kv.DB.
-	//
-	// TODO(sumeer,irfansharif): Find a home for these in the SQL layer.
-	// Especially SettingsValue.
-	SQLKVResponseAdmissionQ *admission.WorkQueue
-	AdmissionPacerFactory   admission.PacerFactory
+	AdmissionPacerFactory admission.PacerFactory
 
 	SQLCPUProvider admission.SQLCPUProvider
 }

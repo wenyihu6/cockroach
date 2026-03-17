@@ -11,7 +11,6 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/kv"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvpb"
-	"github.com/cockroachdb/cockroach/pkg/roachpb"
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/sql/catalog"
 	"github.com/cockroachdb/cockroach/pkg/sql/mutations"
@@ -19,7 +18,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sem/eval"
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/util/admission"
-	"github.com/cockroachdb/cockroach/pkg/util/admission/admissionpb"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
@@ -205,20 +203,12 @@ func (tb *tableWriterBase) finalize(ctx context.Context) (err error) {
 }
 
 func (tb *tableWriterBase) tryDoResponseAdmission(ctx context.Context) error {
-	// Do admission control for response processing. This is the shared write
-	// path for most SQL mutations.
-	responseAdmissionQ := tb.txn.DB().SQLKVResponseAdmissionQ
-	if responseAdmissionQ != nil {
-		requestAdmissionHeader := tb.txn.AdmissionHeader()
-		responseAdmission := admission.WorkInfo{
-			TenantID:   roachpb.SystemTenantID,
-			Priority:   admissionpb.WorkPriority(requestAdmissionHeader.Priority),
-			CreateTime: requestAdmissionHeader.CreateTime,
-			WorkloadID: tb.workloadID,
-		}
-		if _, err := responseAdmissionQ.Admit(ctx, responseAdmission); err != nil {
-			return err
-		}
+	// CPU admission for response processing is handled by the SQLCPUHandle's
+	// MeasureAndAdmit. The calling goroutine (main conn executor) is already
+	// registered with the SQLCPUHandle by MakeCPUHandle.
+	if cpuHandle := admission.SQLCPUHandleFromContext(ctx); cpuHandle != nil {
+		gh := cpuHandle.RegisterGoroutine()
+		return gh.MeasureAndAdmit(ctx)
 	}
 	return nil
 }

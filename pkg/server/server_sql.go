@@ -250,9 +250,6 @@ type sqlServerOptionalKVArgs struct {
 	externalStorage        cloud.ExternalStorageFactory
 	externalStorageFromURI cloud.ExternalStorageFromURIFactory
 
-	// The admission queue to use for SQLSQLResponseWork.
-	sqlSQLResponseAdmissionQ *admission.WorkQueue
-
 	// Used when creating and deleting tenant records.
 	spanConfigKVAccessor spanconfig.KVAccessor
 	// kvStores is used by crdb_internal builtins to access the stores on this
@@ -861,18 +858,17 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 		ExternalStorage:        cfg.externalStorage,
 		ExternalStorageFromURI: cfg.externalStorageFromURI,
 
-		DistSender:               cfg.distSender,
-		RangeCache:               cfg.distSender.RangeDescriptorCache(),
-		SQLSQLResponseAdmissionQ: cfg.sqlSQLResponseAdmissionQ,
-		CollectionFactory:        collectionFactory,
-		ExternalIORecorder:       cfg.costController,
-		TenantCostController:     cfg.costController,
-		RangeStatsFetcher:        rangeStatsFetcher,
-		AdmissionPacerFactory:    cfg.admissionPacerFactory,
-		SQLCPUProvider:           cfg.sqlCPUProvider,
-		ExecutorConfig:           execCfg,
-		RootSQLMemoryPoolSize:    cfg.MemoryPoolSize,
-		VecIndexManager:          vecIndexManager,
+		DistSender:            cfg.distSender,
+		RangeCache:            cfg.distSender.RangeDescriptorCache(),
+		CollectionFactory:     collectionFactory,
+		ExternalIORecorder:    cfg.costController,
+		TenantCostController:  cfg.costController,
+		RangeStatsFetcher:     rangeStatsFetcher,
+		AdmissionPacerFactory: cfg.admissionPacerFactory,
+		SQLCPUProvider:        cfg.sqlCPUProvider,
+		ExecutorConfig:        execCfg,
+		RootSQLMemoryPoolSize: cfg.MemoryPoolSize,
+		VecIndexManager:       vecIndexManager,
 	}
 	cfg.TempStorageConfig.Mon.SetMetrics(distSQLMetrics.CurDiskBytesCount, distSQLMetrics.MaxDiskBytesHist)
 	if codec.ForSystemTenant() {

@@ -26,7 +26,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/admission"
-	"github.com/cockroachdb/cockroach/pkg/util/admission/admissionpb"
 	"github.com/cockroachdb/cockroach/pkg/util/bitmap"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
@@ -447,7 +446,6 @@ func NewStreamer(
 		sendFn:                 sendFn,
 		lockWaitPolicy:         lockWaitPolicy,
 		requestAdmissionHeader: txn.AdmissionHeader(),
-		responseAdmissionQ:     txn.DB().SQLKVResponseAdmissionQ,
 		workloadID:             workloadID,
 	}
 	s.coordinator.asyncSem = quotapool.NewIntPool(
@@ -917,9 +915,8 @@ type workerCoordinator struct {
 
 	asyncSem *quotapool.IntPool
 
-	// For request and response admission control.
+	// For request admission control.
 	requestAdmissionHeader kvpb.AdmissionHeader
-	responseAdmissionQ     *admission.WorkQueue
 	// workloadID is the identifier for the workload that triggered this
 	// request (e.g. statement fingerprint ID) for ASH sampling.
 	workloadID uint64
@@ -1556,20 +1553,9 @@ func (w *workerCoordinator) performRequestAsync(
 			}
 		}
 
-		// Do admission control after we've finalized the memory accounting.
-		if br != nil && w.responseAdmissionQ != nil {
-			responseAdmission := admission.WorkInfo{
-				TenantID:   roachpb.SystemTenantID,
-				Priority:   admissionpb.WorkPriority(w.requestAdmissionHeader.Priority),
-				CreateTime: w.requestAdmissionHeader.CreateTime,
-				WorkloadID: w.workloadID,
-			}
-			if _, err = w.responseAdmissionQ.Admit(ctx, responseAdmission); err != nil {
-				log.VEventf(ctx, 2, "dropping response: admission control: %v", err)
-				w.s.results.setError(err)
-				return
-			}
-		}
+		// CPU admission for response processing is handled by the
+		// SQLCPUHandle's MeasureAndAdmit via the registered
+		// GoroutineCPUHandle.
 
 		// Finally, process the results and add the ResumeSpans to be
 		// processed as well.
@@ -1601,6 +1587,10 @@ func (w *workerCoordinator) performRequestAsync(
 	}
 	go func(ctx context.Context) {
 		defer hdl.Activate(ctx).Release(ctx)
+		if cpuHandle := admission.SQLCPUHandleFromContext(ctx); cpuHandle != nil {
+			gh := cpuHandle.RegisterGoroutine()
+			defer gh.Close(ctx)
+		}
 		work(ctx)
 	}(ctx)
 }

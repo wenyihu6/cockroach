@@ -507,7 +507,6 @@ func (s *vectorizedFlowCreator) makeGetStatsFnForOutbox(
 type runFn func(_ context.Context, flowCtxCancel context.CancelFunc)
 
 type admissionOptions struct {
-	admissionQ    *admission.WorkQueue
 	admissionInfo admission.WorkInfo
 }
 
@@ -555,7 +554,7 @@ func (vectorizedRemoteComponentCreator) newInbox(
 ) (*colrpc.Inbox, error) {
 	return colrpc.NewInboxWithAdmissionControl(
 		allocator, typs, streamID, flowCtxDone,
-		admissionOpts.admissionQ, admissionOpts.admissionInfo,
+		admissionOpts.admissionInfo,
 	)
 }
 
@@ -930,7 +929,6 @@ func (s *vectorizedFlowCreator) setupInput(
 				inputStream.StreamID,
 				s.f.GetCtxDone(),
 				admissionOptions{
-					admissionQ:    flowCtx.Cfg.SQLSQLResponseAdmissionQ,
 					admissionInfo: s.f.GetAdmissionInfo(),
 				})
 

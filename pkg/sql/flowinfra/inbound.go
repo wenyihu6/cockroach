@@ -15,7 +15,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgcode"
 	"github.com/cockroachdb/cockroach/pkg/sql/pgwire/pgerror"
 	"github.com/cockroachdb/cockroach/pkg/sql/types"
-	"github.com/cockroachdb/cockroach/pkg/util/admission"
 	"github.com/cockroachdb/cockroach/pkg/util/cancelchecker"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
 	"github.com/cockroachdb/errors"
@@ -132,6 +131,10 @@ func processInboundStreamHelper(
 	f.GetWaitGroup().Add(1)
 	go func() {
 		defer f.GetWaitGroup().Done()
+		if cpuHandle := f.GetCPUHandle(); cpuHandle != nil {
+			gh := cpuHandle.RegisterGoroutine()
+			defer gh.Close(ctx)
+		}
 		admissionInfo := f.GetAdmissionInfo()
 		for {
 			recvCleanup := ash.SetWorkState(
@@ -216,15 +219,9 @@ func processProducerMessage(
 			consumerClosed: false,
 		}
 	}
-	var admissionQ *admission.WorkQueue
-	if flowBase.Cfg != nil {
-		admissionQ = flowBase.Cfg.SQLSQLResponseAdmissionQ
-	}
-	if admissionQ != nil {
-		if _, err := admissionQ.Admit(ctx, flowBase.admissionInfo); err != nil {
-			return processMessageResult{err: err, consumerClosed: false}
-		}
-	}
+	// CPU admission for SQL response processing is now handled by the
+	// SQLCPUHandle's MeasureAndAdmit, called from the reader goroutine's
+	// registered GoroutineCPUHandle (via CancelChecker or explicitly).
 	for {
 		row, meta, err := sd.GetRow(nil /* rowBuf */)
 		if err != nil {

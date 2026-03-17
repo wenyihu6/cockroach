@@ -95,7 +95,6 @@ type Inbox struct {
 	// only the Next/DrainMeta goroutine may access it.
 	stream flowStreamServer
 
-	admissionQ    *admission.WorkQueue
 	admissionInfo admission.WorkInfo
 
 	// statsAtomics are the execution statistics that need to be atomically
@@ -152,21 +151,20 @@ func NewInboxWithFlowCtxDone(
 	return i, nil
 }
 
-// NewInboxWithAdmissionControl creates a new Inbox that does admission
-// control on responses received from DistSQL.
+// NewInboxWithAdmissionControl creates a new Inbox with admission control
+// metadata (used for ASH reporting). CPU admission for SQL response
+// processing is handled by the SQLCPUHandle's MeasureAndAdmit.
 func NewInboxWithAdmissionControl(
 	allocator *colmem.Allocator,
 	typs []*types.T,
 	streamID execinfrapb.StreamID,
 	flowCtxDone <-chan struct{},
-	admissionQ *admission.WorkQueue,
 	admissionInfo admission.WorkInfo,
 ) (*Inbox, error) {
 	i, err := NewInboxWithFlowCtxDone(allocator, typs, streamID, flowCtxDone)
 	if err != nil {
 		return nil, err
 	}
-	i.admissionQ = admissionQ
 	i.admissionInfo = admissionInfo
 	return i, err
 }
@@ -403,15 +401,9 @@ func (i *Inbox) Next() (coldata.Batch, *execinfrapb.ProducerMetadata) {
 		// Update the allocator since we're holding onto the serialized bytes
 		// for now.
 		i.allocator.AdjustMemoryUsageAfterAllocation(numSerializedBytes)
-		// Do admission control after memory accounting for the serialized bytes
-		// and before deserialization.
-		if i.admissionQ != nil {
-			if _, err := i.admissionQ.Admit(i.Ctx, i.admissionInfo); err != nil {
-				// err includes the case of context cancellation while waiting for
-				// admission.
-				colexecerror.ExpectedError(err)
-			}
-		}
+		// CPU admission for SQL response processing is now handled by the
+		// SQLCPUHandle's MeasureAndAdmit, called via the CancelChecker
+		// in the operator that consumes this inbox's output.
 		batch := i.deserializer.Deserialize(m.Data.RawBytes)
 		// Eagerly throw away the RawBytes memory.
 		m.Data.RawBytes = nil

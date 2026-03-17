@@ -90,9 +90,7 @@ var SQLSQLResponseAdmissionControlEnabled = settings.RegisterBoolSetting(
 	settings.WithPublic)
 
 var admissionControlEnabledSettings = [numWorkKinds]*settings.BoolSetting{
-	KVWork:             KVAdmissionControlEnabled,
-	SQLKVResponseWork:  SQLKVResponseAdmissionControlEnabled,
-	SQLSQLResponseWork: SQLSQLResponseAdmissionControlEnabled,
+	KVWork: KVAdmissionControlEnabled,
 }
 
 // KVTenantWeightsEnabled controls whether tenant weights are enabled for KV
@@ -369,8 +367,6 @@ func makeWorkQueueOptions(workKind WorkKind) workQueueOptions {
 		// queues, which use tokens -- the caller overrides the mode value
 		// in that case.
 		return workQueueOptions{mode: usesSlots, tiedToRange: true}
-	case SQLKVResponseWork, SQLSQLResponseWork:
-		return workQueueOptions{mode: usesTokens, tiedToRange: false}
 	default:
 		panic(errors.AssertionFailedf("unexpected workKind %d", workKind))
 	}

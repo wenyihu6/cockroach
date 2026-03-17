@@ -253,6 +253,11 @@ type FlowBase struct {
 	spec *execinfrapb.FlowSpec
 
 	admissionInfo admission.WorkInfo
+
+	// cpuHandle is the SQLCPUHandle for this flow, extracted from the context
+	// during StartInternal. It is stored here so that inbound stream handlers
+	// (which run with a different context) can access it.
+	cpuHandle *admission.SQLCPUHandle
 }
 
 func (f *FlowBase) getStatus() flowStatus {
@@ -450,6 +455,11 @@ func (f *FlowBase) GetLocalVectorSources() map[int32]any {
 	return f.localVectorSources
 }
 
+// GetCPUHandle returns the SQLCPUHandle for this flow, if any.
+func (f *FlowBase) GetCPUHandle() *admission.SQLCPUHandle {
+	return f.cpuHandle
+}
+
 // GetAdmissionInfo returns the information to use for admission control on
 // responses received from a remote flow.
 func (f *FlowBase) GetAdmissionInfo() admission.WorkInfo {
@@ -467,6 +477,7 @@ func (f *FlowBase) StartInternal(
 	)
 
 	cpuHandle := admission.SQLCPUHandleFromContext(ctx)
+	f.cpuHandle = cpuHandle
 	// Only register the flow if it is a part of the distributed plan. This is
 	// needed to satisfy two different use cases:
 	// 1. there are inbound stream connections that need to look up this flow in

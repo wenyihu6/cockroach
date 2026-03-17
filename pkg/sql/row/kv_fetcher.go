@@ -121,7 +121,6 @@ func newTxnKVFetcher(
 		workloadID:                 workloadID,
 	}
 	fetcherArgs.admission.requestHeader = txn.AdmissionHeader()
-	fetcherArgs.admission.responseQ = txn.DB().SQLKVResponseAdmissionQ
 	fetcherArgs.admission.pacerFactory = txn.DB().AdmissionPacerFactory
 	fetcherArgs.admission.settingsValues = txn.DB().SettingsValues()
 

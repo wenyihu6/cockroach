@@ -80,8 +80,7 @@
 // Load observation and slot count or token burst adjustment: Dynamic
 // adjustment is performed by kvSlotAdjuster for KVWork slots. This is because
 // KVWork is expected to usually be CPU bound (due to good caching), and
-// unlike SQLKVResponseWork and SQLSQLResponseWork (which are even more CPU
-// bound), we have a completion indicator -- so we can expect to have a
+// we have a completion indicator -- so we can expect to have a
 // somewhat stable KVWork slot count even if the work sizes are extremely
 // heterogeneous.
 //
@@ -244,8 +243,7 @@ type granter interface {
 	// a slot/tokens. This provides a natural throttling that reduces grant
 	// bursts by taking into immediate account the capability of the goroutine
 	// scheduler to schedule such work. Grant chains are only used for the CPU
-	// resource in the hybrid slot/token scheme, where slots are used for KVWork
-	// and tokens for SQLKVResponseWork and SQLSQLResponseWork.
+	// resource, where slots are used for KVWork.
 	//
 	// In an experiment, using such grant chains reduced burstiness of grants by
 	// 5x and shifted ~2s of latency (at p99) from the scheduler into admission
@@ -473,72 +471,14 @@ type grantChainID uint64
 // control.
 type WorkKind int8
 
-// The list of WorkKinds are ordered from lower level to higher level, and
-// also serves as a hard-wired ordering from most important to least important
-// (for details on how this ordering is enacted, see the GrantCoordinator
-// code).
-//
-// KVWork, SQLKVResponseWork, SQLSQLResponseWork can all be CPU bound. These
-// are prioritized in the order
-//
-//	KVWork > SQLKVResponseWork > SQLSQLResponseWork
-//
-// The high prioritization of KVWork reduces the likelihood that non-SQL KV
-// work will be starved. SQLKVResponseWork is prioritized over
-// SQLSQLResponseWork since the former includes leaf DistSQL processing and we
-// would like to release memory used up in RPC responses at lower layers of
-// RPC tree. We expect that if SQLSQLResponseWork is delayed, it will
-// eventually reduce new work being issued, which is a desirable form of
-// natural backpressure.
-//
-// Consider the example of a less important long-running single statement OLAP
-// query competing with more important small OLTP queries in a single node
-// setting. Say the OLAP query starts first and uses up all the KVWork slots,
-// and the OLTP queries queue up for the KVWork slots. As the OLAP query
-// KVWork completes, it will queue up for SQLKVResponseWork, which will not
-// start because the OLTP queries are using up all available KVWork slots. As
-// this OLTP KVWork completes, their SQLKVResponseWork will queue up. The
-// WorkQueue for SQLKVResponseWork, when granting tokens, will first admit
-// those for the more important OLTP queries. This will prevent or slow down
-// admission of further work by the OLAP query.
-//
-// In an ideal world with the only shared resource (across WorkKinds) being
-// CPU, and control over the CPU scheduler, we could pool all work, regardless
-// of WorkKind into a single queue, and would not need to rely on this
-// indirect backpressure and hard-wired ordering. However, we do not have
-// control over the CPU scheduler, so we cannot preempt work with widely
-// different cpu consumption. Additionally, (non-preemptible) memory is also a
-// shared resource, and we wouldn't want to have partially done KVWork not
-// finish, due to preemption in the CPU scheduler, since it can be holding
-// significant amounts of memory (e.g. in scans).
-//
-// The aforementioned prioritization also enables us to get instantaneous
-// feedback on CPU resource overload. This instantaneous feedback for a grant
-// chain (mentioned earlier) happens in two ways:
-//   - the chain requires the grantee's goroutine to run.
-//   - the cpuOverloadIndicator (see later), specifically the implementation
-//     provided by kvSlotAdjuster, provides instantaneous feedback (which is
-//     viable only because KVWork is the highest priority).
-//
-// This strict prioritization across WorkKinds can cause "priority inversion":
-// lower importance KVWork, or later started KVWork, happens before
-// user-facing SQLKVResponseWork. This is because the backpressure, described
-// in the example above, does not apply to work generated from within the KV
-// layer. See https://github.com/cockroachdb/cockroach/issues/85471 for
-// details.
+// KVWork is the only WorkKind that goes through GrantCoordinator-based
+// admission. SQL CPU admission is handled separately via SQLCPUHandle and
+// the CTT (CPU Time Token) system.
 const (
 	// KVWork represents requests submitted to the KV layer, from the same node
 	// or a different node. They may originate from the SQL layer or the KV
 	// layer.
 	KVWork WorkKind = iota
-	// SQLKVResponseWork is response processing in SQL for a KV response from a
-	// local or remote node. This can be either leaf or root DistSQL work, i.e.,
-	// this is inter-layer and not necessarily inter-node.
-	SQLKVResponseWork
-	// SQLSQLResponseWork is response processing in SQL, for DistSQL RPC
-	// responses. This is root work happening in response to leaf SQL work,
-	// i.e., it is inter-node.
-	SQLSQLResponseWork
 	numWorkKinds
 )
 
@@ -550,10 +490,6 @@ func (wk WorkKind) String() string {
 	switch wk {
 	case KVWork:
 		return "kv"
-	case SQLKVResponseWork:
-		return "sql-kv-response"
-	case SQLSQLResponseWork:
-		return "sql-sql-response"
 	default:
 		panic(errors.AssertionFailedf("unknown WorkKind"))
 	}

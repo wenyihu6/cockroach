@@ -108,8 +108,6 @@ var _ CPULoadListener = &GrantCoordinator{}
 type Options struct {
 	MinCPUSlots                   int
 	MaxCPUSlots                   int
-	SQLKVResponseBurstTokens      int64
-	SQLSQLResponseBurstTokens     int64
 	CPUMetricsProvider            CPUMetricsProvider
 	TestingDisableSkipEnforcement bool
 	// Only non-nil for tests.
@@ -124,10 +122,8 @@ func (*Options) ModuleTestingKnobs() {}
 
 // DefaultOptions are the default settings for various admission control knobs.
 var DefaultOptions = Options{
-	MinCPUSlots:               1,
-	MaxCPUSlots:               100000, /* TODO(sumeer): add cluster setting */
-	SQLKVResponseBurstTokens:  100000, /* TODO(sumeer): add cluster setting */
-	SQLSQLResponseBurstTokens: 100000, /* TODO(sumeer): add cluster setting */
+	MinCPUSlots: 1,
+	MaxCPUSlots: 100000, /* TODO(sumeer): add cluster setting */
 }
 
 // Override applies values from "override" to the receiver that differ from Go
@@ -138,12 +134,6 @@ func (o *Options) Override(override *Options) {
 	}
 	if override.MaxCPUSlots != 0 {
 		o.MaxCPUSlots = override.MaxCPUSlots
-	}
-	if override.SQLKVResponseBurstTokens != 0 {
-		o.SQLKVResponseBurstTokens = override.SQLKVResponseBurstTokens
-	}
-	if override.SQLSQLResponseBurstTokens != 0 {
-		o.SQLSQLResponseBurstTokens = override.SQLSQLResponseBurstTokens
 	}
 	if override.TestingDisableSkipEnforcement {
 		o.TestingDisableSkipEnforcement = true
@@ -186,25 +176,6 @@ func NewGrantCoordinators(
 
 	slotsCoord := makeRegularGrantCoordinator(ambientCtx, opts, st, metrics, registry, knobs)
 	cpuTimeTokenCoord := makeCPUTimeTokenGrantCoordinator(ambientCtx, opts, st, registry, knobs)
-
-	// CPU time token AC currently only supports Serverless. In Serverless,
-	// SQL pods do not run admission control, and the vast majority of work
-	// on a KV pod is KVWork. So, for now, we allow all SQLKVResponseWork &
-	// SQLSQLResponseWork to bypass AC.
-	if !knobs.DisableCPUTimeTokenSQLBypass {
-		sqlKVWorkQueue := slotsCoord.GetWorkQueue(SQLKVResponseWork)
-		sqlSQLWorkQueue := slotsCoord.GetWorkQueue(SQLSQLResponseWork)
-		setLatestOverride := func() {
-			override := cpuTimeTokenACIsEnabled(&st.SV)
-			sqlKVWorkQueue.SetOverrideAllToBypassAdmission(override)
-			sqlSQLWorkQueue.SetOverrideAllToBypassAdmission(override)
-		}
-		cpuTimeTokenACEnabled.SetOnChange(&st.SV, func(ctx context.Context) {
-			setLatestOverride()
-		})
-		// Initialize.
-		setLatestOverride()
-	}
 
 	return GrantCoordinators{
 		Stores: makeStoresGrantCoordinators(ambientCtx, opts, st, onLogEntryAdmitted, knobs),
@@ -270,36 +241,6 @@ func makeRegularGrantCoordinator(
 	kvg.requester = req
 	coord.granters[KVWork] = kvg
 
-	tg := &tokenGranter{
-		coord:                coord,
-		workKind:             SQLKVResponseWork,
-		availableBurstTokens: opts.SQLKVResponseBurstTokens,
-		maxBurstTokens:       opts.SQLKVResponseBurstTokens,
-		cpuOverload:          kvSlotAdjuster,
-	}
-	wqMetrics = makeWorkQueueMetrics(SQLKVResponseWork.String(), registry)
-	sqlKVOpts := makeWorkQueueOptions(SQLKVResponseWork)
-	sqlKVOpts.knobs = knobs.observeOnlyKnobs()
-	req = makeRequester(ambientCtx, SQLKVResponseWork, tg, st, wqMetrics, sqlKVOpts)
-	coord.queues[SQLKVResponseWork] = req
-	tg.requester = req
-	coord.granters[SQLKVResponseWork] = tg
-
-	tg = &tokenGranter{
-		coord:                coord,
-		workKind:             SQLSQLResponseWork,
-		availableBurstTokens: opts.SQLSQLResponseBurstTokens,
-		maxBurstTokens:       opts.SQLSQLResponseBurstTokens,
-		cpuOverload:          kvSlotAdjuster,
-	}
-	wqMetrics = makeWorkQueueMetrics(SQLSQLResponseWork.String(), registry)
-	sqlSQLOpts := makeWorkQueueOptions(SQLSQLResponseWork)
-	sqlSQLOpts.knobs = knobs.observeOnlyKnobs()
-	req = makeRequester(ambientCtx, SQLSQLResponseWork, tg, st, wqMetrics, sqlSQLOpts)
-	coord.queues[SQLSQLResponseWork] = req
-	tg.requester = req
-	coord.granters[SQLSQLResponseWork] = tg
-
 	return coord
 }
 
@@ -315,10 +256,7 @@ func (coord *GrantCoordinator) GetWorkQueue(workKind WorkKind) *WorkQueue {
 }
 
 // CPULoad implements CPULoadListener and is called periodically (see
-// CPULoadListener for details). The same frequency is used for refilling the
-// burst tokens since synchronizing the two means that the refilled burst can
-// take into account the latest schedulers stats (indirectly, via the
-// implementation of cpuOverloadIndicator).
+// CPULoadListener for details).
 func (coord *GrantCoordinator) CPULoad(runnable int, procs int, samplePeriod time.Duration) {
 	ctx := coord.ambientCtx.AnnotateCtx(context.Background())
 
@@ -346,8 +284,6 @@ func (coord *GrantCoordinator) CPULoad(runnable int, procs int, samplePeriod tim
 	// can't adjust slots or refill tokens fast enough. So we explicitly tell
 	// the granters to not do token or slot enforcement.
 	skipEnforcement := samplePeriod > time.Millisecond || !goschedstats.Supported
-	coord.granters[SQLKVResponseWork].(*tokenGranter).refillBurstTokens(skipEnforcement)
-	coord.granters[SQLSQLResponseWork].(*tokenGranter).refillBurstTokens(skipEnforcement)
 	if coord.testingDisableSkipEnforcement {
 		// This testing option only applies to KV work.
 		skipEnforcement = false
@@ -572,9 +508,7 @@ func (coord *GrantCoordinator) SafeFormat(s redact.SafePrinter, _ rune) {
 		coord.mu.grantChainID, coord.mu.grantChainActive, coord.mu.grantChainIndex,
 	)
 
-	spaceStr := redact.RedactableString(" ")
-	newlineStr := redact.RedactableString("\n")
-	curSep := spaceStr
+	curSep := redact.RedactableString(" ")
 	for i := range coord.granters {
 		kind := WorkKind(i)
 		switch kind {
@@ -584,16 +518,6 @@ func (coord *GrantCoordinator) SafeFormat(s redact.SafePrinter, _ rune) {
 				s.Printf("%s%s: used: %d, total: %d", curSep, kind, g.usedSlots, g.totalSlots)
 			default:
 				s.Printf("unknown granter")
-			}
-		case SQLKVResponseWork, SQLSQLResponseWork:
-			if coord.granters[i] != nil {
-				g := coord.granters[i].(*tokenGranter)
-				s.Printf("%s%s: avail: %d", curSep, kind, g.availableBurstTokens)
-				if kind == SQLKVResponseWork {
-					curSep = newlineStr
-				} else {
-					curSep = spaceStr
-				}
 			}
 		}
 	}

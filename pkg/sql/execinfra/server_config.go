@@ -185,10 +185,6 @@ type ServerConfig struct {
 	// the need to introduce dependency on the sql package.
 	IndexUsageStatsController eval.IndexUsageStatsController
 
-	// SQLSQLResponseAdmissionQ is the admission queue to use for
-	// SQLSQLResponseWork.
-	SQLSQLResponseAdmissionQ *admission.WorkQueue
-
 	// CollectionFactory is used to construct descs.Collections.
 	CollectionFactory *descs.CollectionFactory
 
