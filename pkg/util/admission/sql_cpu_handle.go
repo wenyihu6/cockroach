@@ -73,13 +73,35 @@ var goroutineCPUHandlePool = sync.Pool{
 	},
 }
 
+// tokenBudgetChunkNanos is the amount of CPU time tokens (in nanoseconds)
+// requested from the granter when the local budget is depleted. Set to 1ms,
+// matching the filler goroutine's tick rate. This balances between
+// responsiveness (not over-allocating) and efficiency (not hitting the granter
+// on every MeasureAndAdmit call).
+const tokenBudgetChunkNanos = int64(time.Millisecond)
+
 // SQLCPUHandle manages CPU accounting and admission for SQL work across
-// multiple goroutines.
-//
-// TODO(sumeer): fill in more details.
+// multiple goroutines. It uses a "lease model" for CPU time tokens: an
+// initial budget of tokens is obtained from the granter, goroutines deduct
+// measured CPU from this shared budget, and when the budget is depleted,
+// more tokens are requested (blocking if the system is overloaded). At
+// Close, any unused budget is returned to the granter.
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
+
+	// granter is the CTT granter for requesting CPU time tokens. Nil when
+	// CTT is disabled or unavailable (e.g., shared-process tenants).
+	granter *cpuTimeTokenGranter
+	// tier is the resource tier for this handle's token bucket lookups.
+	tier resourceTier
+	// budget tracks the remaining pre-allocated CPU time tokens in
+	// nanoseconds. Multiple goroutines deduct from this atomically. When
+	// negative, a goroutine must call requestMoreTokens to refill.
+	budget atomic.Int64
+	// refillMu serializes token refill requests so only one goroutine at
+	// a time calls into the granter.
+	refillMu syncutil.Mutex
 
 	mu struct {
 		syncutil.Mutex
@@ -138,13 +160,53 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 	return gh
 }
 
-// Close is called when no more reporting is needed. It pools
-// GoroutineCPUHandles that have been closed. GoroutineCPUHandles that are not
-// yet closed are left for GC.
+// requestMoreTokens blocks until more CPU tokens are available from the
+// granter. It serializes refill requests via refillMu so only one goroutine
+// at a time interacts with the granter. After acquiring refillMu, the budget
+// is rechecked in case another goroutine already refilled it.
+func (h *SQLCPUHandle) requestMoreTokens(ctx context.Context) error {
+	h.refillMu.Lock()
+	defer h.refillMu.Unlock()
+
+	// Another goroutine may have already refilled the budget.
+	if h.budget.Load() >= 0 {
+		return nil
+	}
+
+	// Fast path: try to get tokens without waiting.
+	if h.granter.tryGet(h.tier, noBurst, tokenBudgetChunkNanos) {
+		h.budget.Add(tokenBudgetChunkNanos)
+		return nil
+	}
+
+	// Slow path: wait for the filler to replenish the token buckets.
+	if h.granter.waitForTokens(ctx, h.tier, noBurst, tokenBudgetChunkNanos) {
+		h.budget.Add(tokenBudgetChunkNanos)
+		return nil
+	}
+	return ctx.Err()
+}
+
+// Close is called when no more reporting is needed. It returns any unused
+// token budget to the granter and pools GoroutineCPUHandles that have been
+// closed. GoroutineCPUHandles that are not yet closed are left for GC.
 func (h *SQLCPUHandle) Close() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.mu.closed = true
+
+	if h.granter != nil {
+		remaining := h.budget.Load()
+		if remaining > 0 {
+			h.granter.returnGrant(remaining)
+		} else if remaining < 0 {
+			// We used more CPU than we had tokens for (the last
+			// MeasureAndAdmit with noWait=true may have gone over budget).
+			// Report the overage so the granter's buckets stay accurate.
+			h.granter.tookWithoutPermission(-remaining)
+		}
+	}
+
 	for i, gh := range h.mu.gHandles {
 		if gh.closed.Load() {
 			gh.reset()
@@ -211,8 +273,6 @@ func (h *GoroutineCPUHandle) Close(ctx context.Context) {
 // CPU time spent in the goroutine and decide whether more CPU needs to be
 // allocated. If more CPU is needed, it can block in acquiring CPU tokens.
 // Returns a non-nil error iff the context is canceled while waiting.
-//
-// TODO(sumeer): implement the measurement and admission logic.
 func (h *GoroutineCPUHandle) MeasureAndAdmit(ctx context.Context) error {
 	return h.measureAndAdmit(ctx, false /* noWait */)
 }
@@ -230,13 +290,15 @@ func (h *GoroutineCPUHandle) measureAndAdmit(ctx context.Context, noWait bool) e
 	if diff <= 0 {
 		return nil
 	}
-	// TODO(sumeer): adding this diff to an atomic in SQLCPUHandle may be too
-	// much overhead. An alternative would be implement an atomic here, and
-	// only update the SQLCPUHandle when enough has accumulated. The reason
-	// we would need an atomic here is that when SQLCPUHandle is closed, it
-	// needs to reach in and grab whatever CPU has not yet been reported.
 	h.cpuAccounted += diff
 	h.h.reportCPU(diff)
+
+	if h.h.granter != nil {
+		h.h.budget.Add(-diff.Nanoseconds())
+		if !noWait && h.h.budget.Load() < 0 {
+			return h.h.requestMoreTokens(ctx)
+		}
+	}
 	return nil
 }
 
@@ -260,6 +322,9 @@ func (h *GoroutineCPUHandle) UnpauseMeasuring() {
 }
 
 type sqlCPUProviderImpl struct {
+	// cpuCoords provides access to the CTT granter and settings. Nil when
+	// CTT is unavailable (e.g., shared-process tenants or tests).
+	cpuCoords *CPUGrantCoordinators
 	// cumulativeGatewayCPUNanos tracks the cumulative CPU time in nanoseconds
 	// accounted for SQL work executed at gateway nodes. This value is
 	// monotonically increasing and is updated atomically as CPU time is
@@ -277,13 +342,27 @@ func (p *sqlCPUProviderImpl) GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCP
 }
 
 func (p *sqlCPUProviderImpl) GetHandle(workInfo SQLWorkInfo) *SQLCPUHandle {
-	// TODO(sumeer): implement.
-	return newSQLCPUAdmissionHandle(workInfo, p)
+	h := newSQLCPUAdmissionHandle(workInfo, p)
+	if p.cpuCoords != nil && cpuTimeTokenACIsEnabled(&p.cpuCoords.st.SV) {
+		granter := p.cpuCoords.cpuTimeCoord.granter
+		tier := appTenant
+		if workInfo.TenantID.IsSystem() {
+			tier = systemTenant
+		}
+		h.granter = granter
+		h.tier = tier
+		// Allocate an initial token budget. If the bucket is exhausted, the
+		// handle starts with zero budget and the first MeasureAndAdmit call
+		// will block to acquire tokens.
+		if granter.tryGet(tier, noBurst, tokenBudgetChunkNanos) {
+			h.budget.Store(tokenBudgetChunkNanos)
+		}
+	}
+	return h
 }
 
-// NewSQLCPUProvider creates a new SQLCPUProvider.
-//
-// TODO(sumeer): real implementation.
-func NewSQLCPUProvider() SQLCPUProvider {
-	return &sqlCPUProviderImpl{}
+// NewSQLCPUProvider creates a new SQLCPUProvider. If cpuCoords is non-nil,
+// SQLCPUHandles will use the CTT granter for CPU admission control.
+func NewSQLCPUProvider(cpuCoords *CPUGrantCoordinators) SQLCPUProvider {
+	return &sqlCPUProviderImpl{cpuCoords: cpuCoords}
 }

@@ -6,9 +6,11 @@
 package admission
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/util/metric"
@@ -136,7 +138,11 @@ type cpuTimeTokenGranter struct {
 	requester  [numResourceTiers]requester
 	metrics    *cpuTimeTokenMetrics
 	timeSource timeutil.TimeSource
-	mu         struct {
+	// tokenAvailCond is broadcast whenever tokens are added to the buckets
+	// via refill. SQLCPUHandles waiting for tokens (in requestMoreTokens)
+	// wait on this condition variable.
+	tokenAvailCond *sync.Cond
+	mu             struct {
 		syncutil.Mutex
 		// Invariant #1: For any two buckets A & B, if A has a lower ordinal resourceTier,
 		// then A must have more tokens than B.
@@ -155,6 +161,7 @@ func newCPUTimeTokenGranter(
 	metrics *cpuTimeTokenMetrics, timeSource timeutil.TimeSource,
 ) *cpuTimeTokenGranter {
 	g := &cpuTimeTokenGranter{metrics: metrics, timeSource: timeSource}
+	g.tokenAvailCond = sync.NewCond(&g.mu)
 	// Buckets start at 0 tokens (exhausted) before the first refill, so
 	// initialize exhaustedStart and wire the per-bucket counters.
 	now := timeSource.Now()
@@ -240,6 +247,28 @@ func (stg *cpuTimeTokenGranter) SafeFormat(s redact.SafePrinter, _ rune) {
 	}
 	tw.Render()
 	s.SafeString(redact.SafeString(buf.String()))
+}
+
+// waitForTokens blocks until the specified bucket has positive tokens, then
+// deducts count from all buckets. Returns true if tokens were acquired, false
+// if the context was canceled while waiting. The filler goroutine broadcasts
+// tokenAvailCond every ~1ms, so context cancellation is detected within that
+// interval.
+func (stg *cpuTimeTokenGranter) waitForTokens(
+	ctx context.Context, tier resourceTier, qual burstQualification, count int64,
+) bool {
+	stg.mu.Lock()
+	defer stg.mu.Unlock()
+	for {
+		if ctx.Err() != nil {
+			return false
+		}
+		if stg.mu.buckets[tier][qual].tokens > 0 {
+			stg.tookWithoutPermissionLocked(count)
+			return true
+		}
+		stg.tokenAvailCond.Wait()
+	}
 }
 
 // tryGet is the helper for implementing granter.tryGet.
@@ -384,5 +413,7 @@ func (stg *cpuTimeTokenGranter) refill(
 	// Grant if tokens are added to any of the buckets.
 	if shouldGrant {
 		stg.grantUntilNoWaitingRequestsLocked()
+		// Wake up any SQLCPUHandles waiting for tokens.
+		stg.tokenAvailCond.Broadcast()
 	}
 }

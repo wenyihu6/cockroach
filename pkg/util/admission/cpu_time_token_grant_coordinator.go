@@ -89,8 +89,9 @@ func (cg *CPUGrantCoordinators) Close() {
 }
 
 type cpuTimeTokenGrantCoordinator struct {
-	filler *cpuTimeTokenFiller
-	queues [numResourceTiers]requesterClose
+	granter *cpuTimeTokenGranter
+	filler  *cpuTimeTokenFiller
+	queues  [numResourceTiers]requesterClose
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -149,7 +150,8 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
-		filler: filler,
+		granter: granter,
+		filler:  filler,
 	}
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		coordinator.queues[tier] = requesters[tier]
