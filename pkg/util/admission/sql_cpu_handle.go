@@ -22,16 +22,11 @@ import (
 // SQLWorkInfo captures identifying information about SQL work for CPU
 // accounting and admission.
 //
-// Note that the response admission call sites previously constructed
-// admission.WorkInfo directly, which included WorkloadID (statement fingerprint
-// ID for ASH sampling). SQLWorkInfo does not yet include WorkloadID — this is a
-// known gap. Additionally, the TenantID here is set via Codec.TenantID (see
-// MakeCPUHandle in flow.go), whereas the previous call sites hardcoded
+// Note that the TenantID here is set via Codec.TenantID (see MakeCPUHandle
+// in flow.go), whereas the response admission call sites previously hardcoded
 // roachpb.SystemTenantID. The Codec.TenantID value is correct for
 // shared-process multi-tenancy and is equivalent to SystemTenantID in
 // single-tenant clusters.
-//
-// TODO(wenyihu): add WorkloadID to SQLWorkInfo.
 type SQLWorkInfo struct {
 	// AtGateway is true if the work is being executed at a gateway node.
 	AtGateway bool
@@ -46,6 +41,8 @@ type SQLWorkInfo struct {
 	// work within a (WorkloadID, Priority) pair -- earlier CreateTime is given
 	// preference.
 	CreateTime int64
+	// WorkloadID is the statement fingerprint ID, used for ASH sampling.
+	WorkloadID uint64
 }
 
 // SQLCPUProvider is used to get a SQLCPUHandle that is used for CPU
@@ -165,6 +162,7 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 			TenantID:   h.workInfo.TenantID,
 			Priority:   h.workInfo.Priority,
 			CreateTime: h.workInfo.CreateTime,
+			WorkloadID: h.workInfo.WorkloadID,
 		}
 		if _, err := q.Admit(ctx, workInfo); err != nil {
 			return err

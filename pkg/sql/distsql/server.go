@@ -412,7 +412,8 @@ func (ds *ServerImpl) setupFlow(
 			var err error
 			// Remote flow (for flows at the gateway, the initialization happens in connExecutor).
 			ctx, cpuHandle, mainGoroutineCPUHandle, err = flowinfra.MakeCPUHandle(
-				ctx, ds.SQLCPUProvider, evalCtx.Codec.TenantID, evalCtx.Txn, false /* atGateway */)
+				ctx, ds.SQLCPUProvider, evalCtx.Codec.TenantID, evalCtx.Txn,
+				false /* atGateway */, evalCtx.WorkloadID)
 			if err != nil {
 				return nil, nil, nil, err
 			}
