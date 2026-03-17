@@ -795,40 +795,10 @@ closed epoch: 0 tenantHeap len: 0
 # resource availability in the granter. That is, we should see
 # tookWithoutPermission calls, instead of tryGet calls. Override
 # all functionality is used by CPU time token AC.
-init sql-kv override-all-to-bypass
+init override-all-to-bypass
 ----
 
 admit id=1 tenant=53 priority=0 create-time-millis=1 bypass=false
 ----
 tookWithoutPermission 1
-id 1: admit succeeded
-
-init sql-sql override-all-to-bypass
-----
-
-admit id=1 tenant=53 priority=0 create-time-millis=1 bypass=false
-----
-tookWithoutPermission 1
-id 1: admit succeeded
-
-init sql-kv
-----
-
-set-try-get-return-value v=true
-----
-
-admit id=1 tenant=53 priority=0 create-time-millis=1 bypass=false
-----
-tryGet: returning true
-id 1: admit succeeded
-
-init sql-sql
-----
-
-set-try-get-return-value v=true
-----
-
-admit id=1 tenant=53 priority=0 create-time-millis=1 bypass=false
-----
-tryGet: returning true
 id 1: admit succeeded

@@ -32,8 +32,7 @@ import (
 // its constituents, without real requesters (WorkQueues). It has the
 // following commands:
 //
-// init-grant-coordinator min-cpu=<int> max-cpu=<int> sql-kv-tokens=<int>
-// sql-sql-tokens=<int>
+// init-grant-coordinator min-cpu=<int> max-cpu=<int>
 // set-has-waiting-requests work=<kind> v=<true|false>
 // set-return-value-from-granted work=<kind> v=<int>
 // try-get work=<kind> [v=<int>]
@@ -74,11 +73,6 @@ func TestCPUGranterBasic(t *testing.T) {
 			var opts Options
 			d.ScanArgs(t, "min-cpu", &opts.MinCPUSlots)
 			d.ScanArgs(t, "max-cpu", &opts.MaxCPUSlots)
-			var burstTokens int
-			d.ScanArgs(t, "sql-kv-tokens", &burstTokens)
-			opts.SQLKVResponseBurstTokens = int64(burstTokens)
-			d.ScanArgs(t, "sql-sql-tokens", &burstTokens)
-			opts.SQLSQLResponseBurstTokens = int64(burstTokens)
 			opts.makeRequesterFunc = func(
 				_ log.AmbientContext, workKind WorkKind, granter granter, _ *cluster.Settings,
 				metrics *WorkQueueMetrics, opts workQueueOptions) requester {
@@ -93,8 +87,7 @@ func TestCPUGranterBasic(t *testing.T) {
 				return req
 			}
 			delayForGrantChainTermination = 0
-			knobs := &TestingKnobs{DisableCPUTimeTokenSQLBypass: true}
-			coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, knobs)
+			coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, nil)
 			defer coords.Close()
 			coord = coords.RegularCPU.slotsCoord
 			return flushAndReset()
@@ -461,8 +454,7 @@ func TestStoreCoordinators(t *testing.T) {
 			return str
 		},
 	}
-	knobs := &TestingKnobs{DisableCPUTimeTokenSQLBypass: true}
-	coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, knobs)
+	coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, nil)
 	// There is only 1 KVWork requester at this point in initialization, for the
 	// Regular GrantCoordinator.
 	require.Equal(t, 1, len(requesters))
@@ -590,10 +582,6 @@ func scanCPUWorkKind(t *testing.T, d *datadriven.TestData) WorkKind {
 	switch kindStr {
 	case "kv":
 		return KVWork
-	case "sql-kv-response":
-		return SQLKVResponseWork
-	case "sql-sql-response":
-		return SQLSQLResponseWork
 	}
 	panic("unknown WorkKind")
 }

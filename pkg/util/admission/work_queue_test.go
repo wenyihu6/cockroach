@@ -205,11 +205,6 @@ func TestWorkQueueBasic(t *testing.T) {
 				tg = &testGranter{buf: &buf}
 				st = cluster.MakeTestingClusterSettings()
 				workKind := KVWork
-				if d.HasArg("sql-kv") {
-					workKind = SQLKVResponseWork
-				} else if d.HasArg("sql-sql") {
-					workKind = SQLSQLResponseWork
-				}
 				opts := makeWorkQueueOptions(workKind)
 				timeSource = timeutil.NewManualTime(initialTime)
 				opts.timeSource = timeSource
@@ -727,8 +722,8 @@ func TestWorkQueueTokenResetRace(t *testing.T) {
 	st := cluster.MakeTestingClusterSettings()
 	registry := metric.NewRegistry()
 	metrics := makeWorkQueueMetrics("", registry)
-	q := makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()), SQLKVResponseWork, tg,
-		st, metrics, makeWorkQueueOptions(SQLKVResponseWork)).(*WorkQueue)
+	q := makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()), KVWork, tg,
+		st, metrics, makeWorkQueueOptions(KVWork)).(*WorkQueue)
 	tg.r = q
 	createTime := int64(0)
 	stopCh := make(chan struct{})

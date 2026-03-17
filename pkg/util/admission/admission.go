@@ -64,9 +64,8 @@
 //   the admission order within a WorkKind based on tenant fairness,
 //   importance of work etc.
 // - granter: the counterpart to requester which grants admission tokens or
-//   slots. The implementations are slotGranter, tokenGranter,
-//   kvStoreTokenGranter. The implementation of requester interacts with the
-//   granter interface.
+//   slots. The implementations are slotGranter and kvStoreTokenGranter.
+//   The implementation of requester interacts with the granter interface.
 // - granterWithLockedCalls: this is an extension of granter that is used
 //   as part of the implementation of GrantCoordinator. This arrangement
 //   is partly to centralize locking in the GrantCoordinator (except for
@@ -432,11 +431,11 @@ type SchedulerLatencyListener = schedulerlatency.LatencyObserver
 // a slot can also be viewed as a limit on concurrency of ongoing work. The
 // token terminology is inspired by token buckets. In this case the token is
 // handed out for admission but it is not returned (unlike a slot). Unlike a
-// token bucket, which shapes the rate, the current implementation (see
-// tokenGranter) limits burstiness and does not do rate shaping -- this is
-// because it is hard to predict what rate is appropriate given the difference
-// in sizes of the work. This lack of rate shaping may change in the future
-// and is not a limitation of the interfaces. Similarly, there is no rate
+// token bucket, which shapes the rate, token-based implementations may limit
+// burstiness without rate shaping -- this is because it is hard to predict
+// what rate is appropriate given the difference in sizes of the work. This
+// lack of rate shaping may change in the future and is not a limitation of
+// the interfaces. Similarly, there is no rate
 // shaping applied when granting slots and that may also change in the future.
 // The main difference between a slot and a token is that a slot is used when
 // we can know when the work is complete. Having this extra completion

@@ -175,8 +175,8 @@ func TestWorkloadIDPropagation(t *testing.T) {
 	// regardless of the fetcher, but the admission WorkInfo is only populated
 	// if the fetcher/streamer received workloadID through its init args.
 	t.Run("response_admission", func(t *testing.T) {
-		// Row fetcher path: a basic scan goes through
-		// txnKVFetcher.responseAdmissionQ.Admit() with WorkInfo.WorkloadID.
+		// Row fetcher path: a basic scan goes through admission with
+		// WorkInfo.WorkloadID.
 		t.Run("row_fetcher", func(t *testing.T) {
 			clearAdmissionIDs()
 			runner.Exec(t, "SELECT * FROM t WHERE v > 0")
@@ -185,8 +185,8 @@ func TestWorkloadIDPropagation(t *testing.T) {
 				"SELECT * FROM t WHERE v", captured)
 		})
 
-		// Streamer path: a lookup join goes through the KV streamer's
-		// responseAdmissionQ.Admit() with WorkInfo.WorkloadID.
+		// Streamer path: a lookup join goes through admission with
+		// WorkInfo.WorkloadID.
 		t.Run("streamer", func(t *testing.T) {
 			runner.Exec(t, "CREATE TABLE IF NOT EXISTS t2 (id INT PRIMARY KEY, data INT)")
 			runner.Exec(t, "INSERT INTO t2 VALUES (10, 100), (20, 200), (30, 300)")
