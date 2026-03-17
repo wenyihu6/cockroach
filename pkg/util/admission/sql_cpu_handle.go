@@ -12,11 +12,25 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
+	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/util/admission/admissionpb"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxutil"
 	"github.com/cockroachdb/cockroach/pkg/util/grunning"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
 	"github.com/petermattis/goid"
+)
+
+// SQLCPUBasedResponseAdmissionEnabled controls whether SQL response admission
+// is handled through CPU time token (CTT) based admission instead of the
+// legacy slot-based response admission queues. When enabled,
+// MeasureAndAdmitResponse only performs CPU measurement and skips the call to
+// WorkQueue.Admit.
+var SQLCPUBasedResponseAdmissionEnabled = settings.RegisterBoolSetting(
+	settings.ApplicationLevel,
+	"admission.sql_cpu_based_response_admission.enabled",
+	"if true, SQL response admission is handled through CPU time measurement "+
+		"instead of the legacy response admission queues",
+	false,
 )
 
 // SQLWorkInfo captures identifying information about SQL work for CPU
@@ -152,12 +166,16 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 // this method retrieves the existing handle. The queue parameter determines
 // which response admission queue to use (SQLKVResponseAdmissionQ or
 // SQLSQLResponseAdmissionQ). If q is nil, only CPU measurement is performed.
+//
+// When SQLCPUBasedResponseAdmissionEnabled is true, only CPU measurement is
+// performed and the legacy response admission queue is skipped — admission is
+// handled through CPU time tokens instead.
 func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue) error {
 	gh := h.RegisterGoroutine()
 	if err := gh.MeasureAndAdmit(ctx); err != nil {
 		return err
 	}
-	if q != nil {
+	if q != nil && !h.cttBasedSQLEnabled() {
 		workInfo := WorkInfo{
 			TenantID:   h.workInfo.TenantID,
 			Priority:   h.workInfo.Priority,
@@ -169,6 +187,12 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 		}
 	}
 	return nil
+}
+
+// cttBasedSQLEnabled returns true if CTT-based SQL response admission is
+// enabled. Returns false if settings are unavailable (e.g. external tenants).
+func (h *SQLCPUHandle) cttBasedSQLEnabled() bool {
+	return h.p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(h.p.sv)
 }
 
 // Close is called when no more reporting is needed. It pools
@@ -293,6 +317,9 @@ func (h *GoroutineCPUHandle) UnpauseMeasuring() {
 }
 
 type sqlCPUProviderImpl struct {
+	// sv provides access to cluster settings. May be nil for external tenants
+	// that do not have KV-level admission infrastructure.
+	sv *settings.Values
 	// cumulativeGatewayCPUNanos tracks the cumulative CPU time in nanoseconds
 	// accounted for SQL work executed at gateway nodes. This value is
 	// monotonically increasing and is updated atomically as CPU time is
@@ -314,9 +341,11 @@ func (p *sqlCPUProviderImpl) GetHandle(workInfo SQLWorkInfo) *SQLCPUHandle {
 	return newSQLCPUAdmissionHandle(workInfo, p)
 }
 
-// NewSQLCPUProvider creates a new SQLCPUProvider.
+// NewSQLCPUProvider creates a new SQLCPUProvider. The sv parameter provides
+// access to cluster settings and may be nil for external tenants that do not
+// have KV-level admission infrastructure.
 //
 // TODO(sumeer): real implementation.
-func NewSQLCPUProvider() SQLCPUProvider {
-	return &sqlCPUProviderImpl{}
+func NewSQLCPUProvider(sv *settings.Values) SQLCPUProvider {
+	return &sqlCPUProviderImpl{sv: sv}
 }
