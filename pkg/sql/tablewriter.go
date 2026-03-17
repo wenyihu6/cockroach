@@ -204,8 +204,9 @@ func (tb *tableWriterBase) finalize(ctx context.Context) (err error) {
 
 func (tb *tableWriterBase) tryDoResponseAdmission(ctx context.Context) error {
 	// CPU admission for response processing is handled by the SQLCPUHandle's
-	// MeasureAndAdmit. The calling goroutine (main conn executor) is already
-	// registered with the SQLCPUHandle by MakeCPUHandle.
+	// MeasureAndAdmit. This replaces the old per-response SQLKVResponseWork
+	// admission via responseAdmissionQ. The calling goroutine (main conn
+	// executor) is already registered with the SQLCPUHandle.
 	if cpuHandle := admission.SQLCPUHandleFromContext(ctx); cpuHandle != nil {
 		gh := cpuHandle.RegisterGoroutine()
 		return gh.MeasureAndAdmit(ctx)

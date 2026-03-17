@@ -401,9 +401,10 @@ func (i *Inbox) Next() (coldata.Batch, *execinfrapb.ProducerMetadata) {
 		// Update the allocator since we're holding onto the serialized bytes
 		// for now.
 		i.allocator.AdjustMemoryUsageAfterAllocation(numSerializedBytes)
-		// CPU admission for SQL response processing is now handled by the
+		// CPU admission for SQL response processing is handled by the
 		// SQLCPUHandle's MeasureAndAdmit, called via the CancelChecker
-		// in the operator that consumes this inbox's output.
+		// in the operator that consumes this inbox's output. This replaces
+		// the old per-message SQLSQLResponseWork admission via admissionQ.
 		batch := i.deserializer.Deserialize(m.Data.RawBytes)
 		// Eagerly throw away the RawBytes memory.
 		m.Data.RawBytes = nil

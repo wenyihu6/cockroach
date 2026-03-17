@@ -789,9 +789,10 @@ func (f *txnKVFetcher) maybeAdmitBatchResponse(ctx context.Context, br *kvpb.Bat
 			return err
 		}
 	}
-	// CPU admission for SQL KV response processing is now handled by the
+	// CPU admission for SQL KV response processing is handled by the
 	// SQLCPUHandle's MeasureAndAdmit, called via the CancelChecker in the
-	// operator that consumes this fetcher's output.
+	// operator that consumes this fetcher's output. This replaces the old
+	// per-response SQLKVResponseWork admission that used responseAdmissionQ.
 
 	return nil
 }

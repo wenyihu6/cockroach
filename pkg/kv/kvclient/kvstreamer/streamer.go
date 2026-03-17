@@ -1553,10 +1553,6 @@ func (w *workerCoordinator) performRequestAsync(
 			}
 		}
 
-		// CPU admission for response processing is handled by the
-		// SQLCPUHandle's MeasureAndAdmit via the registered
-		// GoroutineCPUHandle.
-
 		// Finally, process the results and add the ResumeSpans to be
 		// processed as well.
 		log.VEventf(ctx, 2,
@@ -1587,6 +1583,10 @@ func (w *workerCoordinator) performRequestAsync(
 	}
 	go func(ctx context.Context) {
 		defer hdl.Activate(ctx).Release(ctx)
+		// Register this goroutine for CPU accounting and admission.
+		// This replaces the old per-response SQLKVResponseWork admission
+		// that was done after memory accounting above. MeasureAndAdmit is
+		// called periodically via the CancelChecker.
 		if cpuHandle := admission.SQLCPUHandleFromContext(ctx); cpuHandle != nil {
 			gh := cpuHandle.RegisterGoroutine()
 			defer gh.Close(ctx)

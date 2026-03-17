@@ -131,6 +131,10 @@ func processInboundStreamHelper(
 	f.GetWaitGroup().Add(1)
 	go func() {
 		defer f.GetWaitGroup().Done()
+		// Register this goroutine for CPU accounting and admission.
+		// This replaces the old per-message SQLSQLResponseWork admission
+		// that was done in processProducerMessage. MeasureAndAdmit is
+		// called periodically via the CancelChecker.
 		if cpuHandle := f.GetCPUHandle(); cpuHandle != nil {
 			gh := cpuHandle.RegisterGoroutine()
 			defer gh.Close(ctx)
@@ -219,9 +223,6 @@ func processProducerMessage(
 			consumerClosed: false,
 		}
 	}
-	// CPU admission for SQL response processing is now handled by the
-	// SQLCPUHandle's MeasureAndAdmit, called from the reader goroutine's
-	// registered GoroutineCPUHandle (via CancelChecker or explicitly).
 	for {
 		row, meta, err := sd.GetRow(nil /* rowBuf */)
 		if err != nil {
