@@ -225,12 +225,12 @@ func processProducerMessage(
 	}
 	// Note: this goroutine is registered for SQL CPU accounting via
 	// RegisterGoroutine in processInboundStreamHelper.
-	var admissionQ *admission.WorkQueue
-	if flowBase.Cfg != nil {
-		admissionQ = flowBase.Cfg.SQLSQLResponseAdmissionQ
-	}
-	if admissionQ != nil {
-		if _, err := admissionQ.Admit(ctx, flowBase.admissionInfo); err != nil {
+	if cpuHandle := flowBase.GetCPUHandle(); cpuHandle != nil {
+		var admissionQ *admission.WorkQueue
+		if flowBase.Cfg != nil {
+			admissionQ = flowBase.Cfg.SQLSQLResponseAdmissionQ
+		}
+		if err := cpuHandle.MeasureAndAdmitResponse(ctx, admissionQ); err != nil {
 			return processMessageResult{err: err, consumerClosed: false}
 		}
 	}

@@ -26,7 +26,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql/sessiondata"
 	"github.com/cockroachdb/cockroach/pkg/util"
 	"github.com/cockroachdb/cockroach/pkg/util/admission"
-	"github.com/cockroachdb/cockroach/pkg/util/admission/admissionpb"
 	"github.com/cockroachdb/cockroach/pkg/util/bitmap"
 	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
@@ -1559,17 +1558,13 @@ func (w *workerCoordinator) performRequestAsync(
 		// Do admission control after we've finalized the memory accounting.
 		// Note: this goroutine is registered for SQL CPU accounting via
 		// RegisterGoroutine in performRequestAsync.
-		if br != nil && w.responseAdmissionQ != nil {
-			responseAdmission := admission.WorkInfo{
-				TenantID:   roachpb.SystemTenantID,
-				Priority:   admissionpb.WorkPriority(w.requestAdmissionHeader.Priority),
-				CreateTime: w.requestAdmissionHeader.CreateTime,
-				WorkloadID: w.workloadID,
-			}
-			if _, err = w.responseAdmissionQ.Admit(ctx, responseAdmission); err != nil {
-				log.VEventf(ctx, 2, "dropping response: admission control: %v", err)
-				w.s.results.setError(err)
-				return
+		if br != nil {
+			if cpuHandle := admission.SQLCPUHandleFromContext(ctx); cpuHandle != nil {
+				if err = cpuHandle.MeasureAndAdmitResponse(ctx, w.responseAdmissionQ); err != nil {
+					log.VEventf(ctx, 2, "dropping response: cpu admission: %v", err)
+					w.s.results.setError(err)
+					return
+				}
 			}
 		}
 

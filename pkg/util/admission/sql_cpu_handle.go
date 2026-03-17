@@ -21,6 +21,17 @@ import (
 
 // SQLWorkInfo captures identifying information about SQL work for CPU
 // accounting and admission.
+//
+// Note that the response admission call sites previously constructed
+// admission.WorkInfo directly, which included WorkloadID (statement fingerprint
+// ID for ASH sampling). SQLWorkInfo does not yet include WorkloadID — this is a
+// known gap. Additionally, the TenantID here is set via Codec.TenantID (see
+// MakeCPUHandle in flow.go), whereas the previous call sites hardcoded
+// roachpb.SystemTenantID. The Codec.TenantID value is correct for
+// shared-process multi-tenancy and is equivalent to SystemTenantID in
+// single-tenant clusters.
+//
+// TODO(wenyihu): add WorkloadID to SQLWorkInfo.
 type SQLWorkInfo struct {
 	// AtGateway is true if the work is being executed at a gateway node.
 	AtGateway bool
@@ -136,6 +147,30 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 	h.mu.gHandles = append(h.mu.gHandles, gh)
 
 	return gh
+}
+
+// MeasureAndAdmitResponse measures CPU time for the calling goroutine and
+// performs response admission on the given queue. The calling goroutine must
+// already be registered via RegisterGoroutine (called at goroutine start);
+// this method retrieves the existing handle. The queue parameter determines
+// which response admission queue to use (SQLKVResponseAdmissionQ or
+// SQLSQLResponseAdmissionQ). If q is nil, only CPU measurement is performed.
+func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue) error {
+	gh := h.RegisterGoroutine()
+	if err := gh.MeasureAndAdmit(ctx); err != nil {
+		return err
+	}
+	if q != nil {
+		workInfo := WorkInfo{
+			TenantID:   h.workInfo.TenantID,
+			Priority:   h.workInfo.Priority,
+			CreateTime: h.workInfo.CreateTime,
+		}
+		if _, err := q.Admit(ctx, workInfo); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Close is called when no more reporting is needed. It pools

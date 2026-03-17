@@ -407,8 +407,8 @@ func (i *Inbox) Next() (coldata.Batch, *execinfrapb.ProducerMetadata) {
 		// and before deserialization. Note: this goroutine (the operator chain
 		// goroutine) is registered for SQL CPU accounting via RegisterGoroutine
 		// in FlowBase.StartInternal or accumulateAsyncComponent.
-		if i.admissionQ != nil {
-			if _, err := i.admissionQ.Admit(i.Ctx, i.admissionInfo); err != nil {
+		if cpuHandle := admission.SQLCPUHandleFromContext(i.Ctx); cpuHandle != nil {
+			if err := cpuHandle.MeasureAndAdmitResponse(i.Ctx, i.admissionQ); err != nil {
 				// err includes the case of context cancellation while waiting for
 				// admission.
 				colexecerror.ExpectedError(err)
