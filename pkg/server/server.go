@@ -594,7 +594,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		admissionKnobs,
 	)
 	db.AdmissionPacerFactory = gcoords.ElasticCPU
-	sqlCPUProvider := admission.NewSQLCPUProvider()
+	sqlCPUProvider := admission.NewSQLCPUProvider(gcoords.RegularCPU)
 	db.SQLCPUProvider = sqlCPUProvider
 	goschedstats.RegisterSettings(st)
 	if goschedstats.Supported {

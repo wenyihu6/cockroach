@@ -74,12 +74,21 @@ var goroutineCPUHandlePool = sync.Pool{
 }
 
 // SQLCPUHandle manages CPU accounting and admission for SQL work across
-// multiple goroutines.
-//
-// TODO(sumeer): fill in more details.
+// multiple goroutines. When CTT is enabled, each MeasureAndAdmit call
+// goes through WorkQueue.Admit() for blocking when overloaded, and
+// WorkQueue.AdmittedWorkDone() to correct the estimator-based token
+// deduction to match actual measured CPU.
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
+
+	// wq is the CTT WorkQueue for this handle's resource tier. Used for
+	// blocking admission via Admit(). Nil when CTT is disabled.
+	wq *WorkQueue
+	// granter is the CTT granter, used for non-blocking token deduction
+	// in the noWait path (e.g., during GoroutineCPUHandle.Close). Nil
+	// when CTT is disabled.
+	granter *cpuTimeTokenGranter
 
 	mu struct {
 		syncutil.Mutex
@@ -211,8 +220,6 @@ func (h *GoroutineCPUHandle) Close(ctx context.Context) {
 // CPU time spent in the goroutine and decide whether more CPU needs to be
 // allocated. If more CPU is needed, it can block in acquiring CPU tokens.
 // Returns a non-nil error iff the context is canceled while waiting.
-//
-// TODO(sumeer): implement the measurement and admission logic.
 func (h *GoroutineCPUHandle) MeasureAndAdmit(ctx context.Context) error {
 	return h.measureAndAdmit(ctx, false /* noWait */)
 }
@@ -230,13 +237,31 @@ func (h *GoroutineCPUHandle) measureAndAdmit(ctx context.Context, noWait bool) e
 	if diff <= 0 {
 		return nil
 	}
-	// TODO(sumeer): adding this diff to an atomic in SQLCPUHandle may be too
-	// much overhead. An alternative would be implement an atomic here, and
-	// only update the SQLCPUHandle when enough has accumulated. The reason
-	// we would need an atomic here is that when SQLCPUHandle is closed, it
-	// needs to reach in and grab whatever CPU has not yet been reported.
 	h.cpuAccounted += diff
 	h.h.reportCPU(diff)
+
+	if h.h.wq != nil {
+		if noWait {
+			// Non-blocking deduction: report actual CPU used directly to the
+			// granter without going through the WorkQueue admission path.
+			h.h.granter.tookWithoutPermission(diff.Nanoseconds())
+		} else {
+			// Blocking admission: Admit() deducts estimated tokens (via the
+			// estimator) and blocks if the bucket is negative. Then
+			// AdmittedWorkDone corrects the estimate to match actual CPU.
+			resp, err := h.h.wq.Admit(ctx, WorkInfo{
+				TenantID:   h.h.workInfo.TenantID,
+				Priority:   h.h.workInfo.Priority,
+				CreateTime: h.h.workInfo.CreateTime,
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Enabled {
+				h.h.wq.AdmittedWorkDone(resp, diff)
+			}
+		}
+	}
 	return nil
 }
 
@@ -260,6 +285,9 @@ func (h *GoroutineCPUHandle) UnpauseMeasuring() {
 }
 
 type sqlCPUProviderImpl struct {
+	// cpuCoords provides access to the CTT granter and WorkQueues. Nil when
+	// CTT is unavailable (e.g., shared-process tenants or tests).
+	cpuCoords *CPUGrantCoordinators
 	// cumulativeGatewayCPUNanos tracks the cumulative CPU time in nanoseconds
 	// accounted for SQL work executed at gateway nodes. This value is
 	// monotonically increasing and is updated atomically as CPU time is
@@ -277,13 +305,20 @@ func (p *sqlCPUProviderImpl) GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCP
 }
 
 func (p *sqlCPUProviderImpl) GetHandle(workInfo SQLWorkInfo) *SQLCPUHandle {
-	// TODO(sumeer): implement.
-	return newSQLCPUAdmissionHandle(workInfo, p)
+	h := newSQLCPUAdmissionHandle(workInfo, p)
+	if p.cpuCoords != nil && cpuTimeTokenACIsEnabled(&p.cpuCoords.st.SV) {
+		tier := appTenant
+		if workInfo.TenantID.IsSystem() {
+			tier = systemTenant
+		}
+		h.wq = p.cpuCoords.cpuTimeCoord.getWorkQueue(tier)
+		h.granter = p.cpuCoords.cpuTimeCoord.granter
+	}
+	return h
 }
 
-// NewSQLCPUProvider creates a new SQLCPUProvider.
-//
-// TODO(sumeer): real implementation.
-func NewSQLCPUProvider() SQLCPUProvider {
-	return &sqlCPUProviderImpl{}
+// NewSQLCPUProvider creates a new SQLCPUProvider. If cpuCoords is non-nil,
+// SQLCPUHandles will use WorkQueue.Admit() for CPU admission control.
+func NewSQLCPUProvider(cpuCoords *CPUGrantCoordinators) SQLCPUProvider {
+	return &sqlCPUProviderImpl{cpuCoords: cpuCoords}
 }
