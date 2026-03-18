@@ -102,7 +102,9 @@ var goroutineCPUHandlePool = sync.Pool{
 // exhausted, settleAndAdmit settles the previous interval and requests a
 // new chunk, blocking if tokens are unavailable. Reservation size adapts
 // to the handle's CPU consumption rate via EWMA (mirroring KV's per-tenant
-// cpuTimeTokenEstimator pattern). Close performs final settlement.
+// cpuTimeTokenEstimator pattern). On Close, the EWMA is saved to the
+// provider so future handles of the same type (gateway vs flow) start
+// with a warm estimate instead of the cold initialReservationNanos.
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
@@ -323,7 +325,8 @@ func (h *SQLCPUHandle) cttBasedSQLEnabled() bool {
 }
 
 // Close is called when no more reporting is needed. It performs final
-// settlement of any outstanding CTT admission and pools
+// settlement of any outstanding CTT admission, saves the handle's
+// EWMA to the provider for cross-handle learning, and pools
 // GoroutineCPUHandles that have been closed.
 func (h *SQLCPUHandle) Close() {
 	h.mu.Lock()
@@ -346,6 +349,16 @@ func (h *SQLCPUHandle) Close() {
 		remaining := h.reservedTokenNanos.Swap(0)
 		actualUsed := time.Duration(h.totalReserved - remaining)
 		h.q.AdmittedWorkDone(resp, actualUsed)
+	}
+
+	// Save the EWMA to the provider so future handles of the same type
+	// start with a warm estimate.
+	if h.ewmaCPUNanos > 0 {
+		if h.workInfo.AtGateway {
+			h.p.gatewayEWMANanos.Store(int64(h.ewmaCPUNanos))
+		} else {
+			h.p.flowEWMANanos.Store(int64(h.ewmaCPUNanos))
+		}
 	}
 }
 
@@ -472,6 +485,13 @@ type sqlCPUProviderImpl struct {
 	// increasing and is updated atomically as CPU time is reported via
 	// SQLCPUHandle.reportCPU.
 	cumulativeDistSQLCPUNanos atomic.Int64
+	// gatewayEWMANanos and flowEWMANanos store the last observed EWMA (in
+	// nanos) from gateway and remote-flow handles respectively. New handles
+	// are seeded from these values so they start with a reasonable
+	// reservation size instead of the fixed initialReservationNanos.
+	// Updated atomically on SQLCPUHandle.Close.
+	gatewayEWMANanos atomic.Int64
+	flowEWMANanos    atomic.Int64
 }
 
 // getCTTQueue returns the CTT WorkQueue for the given tenant. Returns nil
@@ -488,8 +508,15 @@ func (p *sqlCPUProviderImpl) GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCP
 }
 
 func (p *sqlCPUProviderImpl) GetHandle(workInfo SQLWorkInfo) *SQLCPUHandle {
-	// TODO(sumeer): implement.
-	return newSQLCPUAdmissionHandle(workInfo, p)
+	h := newSQLCPUAdmissionHandle(workInfo, p)
+	// Seed the handle's EWMA from the provider's cross-handle history so
+	// it starts with a warm reservation size instead of the cold default.
+	if workInfo.AtGateway {
+		h.ewmaCPUNanos = float64(p.gatewayEWMANanos.Load())
+	} else {
+		h.ewmaCPUNanos = float64(p.flowEWMANanos.Load())
+	}
+	return h
 }
 
 // NewSQLCPUProvider creates a new SQLCPUProvider. The sv parameter provides
