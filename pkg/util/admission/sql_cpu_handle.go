@@ -292,6 +292,12 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 		q.AdmittedWorkDone(prevResp, actualUsed)
 		h.ewmaCPUNanos = ewmaAlpha*float64(actualUsed) +
 			(1-ewmaAlpha)*h.ewmaCPUNanos
+		// Clear the settled response so a failed Admit below won't cause
+		// double-settlement on the next settleAndAdmit call.
+		h.mu.Lock()
+		h.mu.lastAdmitResp = AdmitResponse{}
+		h.mu.Unlock()
+		h.totalReserved = 0
 	}
 
 	// Request new reservation. Blocks if tokens are exhausted.
@@ -316,6 +322,21 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 	// lastAdmitResp is updated.
 	h.reservedTokenNanos.Store(nextSize)
 	return nil
+}
+
+// maybeSettleAndAdmit checks whether CTT-based admission is enabled and, if
+// so, triggers settlement when the token reservation is exhausted. Called
+// from GoroutineCPUHandle.measureAndAdmit to enforce admission at cancel
+// checker checkpoints, not just at response admission boundaries.
+func (h *SQLCPUHandle) maybeSettleAndAdmit(ctx context.Context) error {
+	if !h.cttBasedSQLEnabled() {
+		return nil
+	}
+	cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
+	if cttQueue == nil {
+		return nil
+	}
+	return h.settleAndAdmit(ctx, cttQueue)
 }
 
 // cttBasedSQLEnabled returns true if CTT-based SQL response admission is
@@ -344,11 +365,14 @@ func (h *SQLCPUHandle) Close() {
 	h.mu.Unlock()
 
 	// Final settlement: settle with actual CPU used since last
-	// reservation.
+	// reservation, and update the EWMA so the provider gets an accurate
+	// estimate including this final interval.
 	if resp.Enabled && h.q != nil {
 		remaining := h.reservedTokenNanos.Swap(0)
 		actualUsed := time.Duration(h.totalReserved - remaining)
 		h.q.AdmittedWorkDone(resp, actualUsed)
+		h.ewmaCPUNanos = ewmaAlpha*float64(actualUsed) +
+			(1-ewmaAlpha)*h.ewmaCPUNanos
 	}
 
 	// Save the EWMA to the provider so future handles of the same type
@@ -418,8 +442,6 @@ func (h *GoroutineCPUHandle) Close(ctx context.Context) {
 // CPU time spent in the goroutine and decide whether more CPU needs to be
 // allocated. If more CPU is needed, it can block in acquiring CPU tokens.
 // Returns a non-nil error iff the context is canceled while waiting.
-//
-// TODO(sumeer): implement the measurement and admission logic.
 func (h *GoroutineCPUHandle) MeasureAndAdmit(ctx context.Context) error {
 	return h.measureAndAdmit(ctx, false /* noWait */)
 }
@@ -444,6 +466,13 @@ func (h *GoroutineCPUHandle) measureAndAdmit(ctx context.Context, noWait bool) e
 	// needs to reach in and grab whatever CPU has not yet been reported.
 	h.cpuAccounted += diff
 	h.h.reportCPU(diff)
+	// When tokens are exhausted and we're not in the noWait (Close) path,
+	// trigger settlement to enforce admission control. Without this, the
+	// cancel-checker path would overdraft unboundedly between response
+	// admission points.
+	if !noWait && h.h.reservedTokenNanos.Load() <= 0 {
+		return h.h.maybeSettleAndAdmit(ctx)
+	}
 	return nil
 }
 
