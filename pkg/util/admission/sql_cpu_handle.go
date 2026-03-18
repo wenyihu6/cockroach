@@ -109,6 +109,10 @@ var goroutineCPUHandlePool = sync.Pool{
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
+	// cttEnabled is true if CTT-based SQL response admission was enabled
+	// at handle creation time. Cached to avoid reading the cluster setting
+	// on every MeasureAndAdmitResponse call.
+	cttEnabled bool
 	// q is the CTT WorkQueue. Protected by settleMu; set on first
 	// settleAndAdmit call.
 	q *WorkQueue
