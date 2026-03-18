@@ -148,8 +148,9 @@ type SQLCPUHandle struct {
 
 func newSQLCPUAdmissionHandle(workInfo SQLWorkInfo, p *sqlCPUProviderImpl) *SQLCPUHandle {
 	h := &SQLCPUHandle{
-		workInfo: workInfo,
-		p:        p,
+		workInfo:   workInfo,
+		p:          p,
+		cttEnabled: p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(p.sv),
 	}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
@@ -215,7 +216,7 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 	if err := gh.MeasureAndAdmit(ctx); err != nil {
 		return err
 	}
-	if h.cttBasedSQLEnabled() {
+	if h.cttEnabled {
 		cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
 		if cttQueue != nil {
 			return h.settleAndAdmit(ctx, cttQueue)
@@ -337,7 +338,7 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 // from GoroutineCPUHandle.measureAndAdmit to enforce admission at cancel
 // checker checkpoints, not just at response admission boundaries.
 func (h *SQLCPUHandle) maybeSettleAndAdmit(ctx context.Context) error {
-	if !h.cttBasedSQLEnabled() {
+	if !h.cttEnabled {
 		return nil
 	}
 	cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
@@ -345,12 +346,6 @@ func (h *SQLCPUHandle) maybeSettleAndAdmit(ctx context.Context) error {
 		return nil
 	}
 	return h.settleAndAdmit(ctx, cttQueue)
-}
-
-// cttBasedSQLEnabled returns true if CTT-based SQL response admission is
-// enabled. Returns false if settings are unavailable (e.g. external tenants).
-func (h *SQLCPUHandle) cttBasedSQLEnabled() bool {
-	return h.p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(h.p.sv)
 }
 
 // Close is called when no more reporting is needed. It performs final
