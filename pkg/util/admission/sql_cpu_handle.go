@@ -98,16 +98,16 @@ var goroutineCPUHandlePool = sync.Pool{
 // SQLCPUHandle manages CPU accounting and admission for SQL work across
 // multiple goroutines. When CTT-based SQL admission is enabled, the handle
 // reserves a chunk of CPU tokens from the CTT WorkQueue. Goroutines deduct
-// from the reservation atomically via reportCPU. When the reservation drops
-// below a low water mark, a background goroutine pre-fetches the next chunk.
-// When the reservation is fully exhausted, settleAndAdmit either uses the
-// pre-fetched tokens or blocks on a synchronous Admit. Reservation size
-// adapts to the handle's CPU consumption rate via EWMA. Close performs
-// final settlement.
+// from the reservation atomically via reportCPU. When the reservation is
+// exhausted, settleAndAdmit settles the previous interval and requests a
+// new chunk, blocking if tokens are unavailable. Reservation size adapts
+// to the handle's CPU consumption rate via EWMA (mirroring KV's per-tenant
+// cpuTimeTokenEstimator pattern). Close performs final settlement.
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
-	// q is the CTT WorkQueue, set on first settleAndAdmit call.
+	// q is the CTT WorkQueue. Protected by settleMu; set on first
+	// settleAndAdmit call.
 	q *WorkQueue
 	// reservedTokenNanos is the remaining token reservation in nanos.
 	// Decremented atomically by reportCPU. When <= 0, settleAndAdmit
@@ -126,16 +126,6 @@ type SQLCPUHandle struct {
 	// blocking Admit call.
 	settleMu syncutil.Mutex
 
-	// Background pre-fetch state.
-	// bgCtx is a handle-scoped context, cancelled on Close.
-	bgCtx    context.Context
-	cancelBg context.CancelFunc
-	// refillTriggered is CAS'd to prevent multiple concurrent pre-fetches.
-	refillTriggered atomic.Bool
-	// refillCh receives the result of a background pre-fetch. Protected
-	// by settleMu.
-	refillCh chan refillResult
-
 	mu struct {
 		syncutil.Mutex
 		closed   bool
@@ -149,20 +139,10 @@ type SQLCPUHandle struct {
 	}
 }
 
-// refillResult is the result of a background pre-fetch Admit call.
-type refillResult struct {
-	resp            AdmitResponse
-	reservationSize int64
-	err             error
-}
-
 func newSQLCPUAdmissionHandle(workInfo SQLWorkInfo, p *sqlCPUProviderImpl) *SQLCPUHandle {
-	bgCtx, cancelBg := context.WithCancel(context.Background())
 	h := &SQLCPUHandle{
 		workInfo: workInfo,
 		p:        p,
-		bgCtx:    bgCtx,
-		cancelBg: cancelBg,
 	}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
@@ -253,15 +233,12 @@ const (
 	// initialReservationNanos is the default reservation before the EWMA
 	// has converged.
 	initialReservationNanos = int64(100 * time.Millisecond)
-	// ewmaAlpha is the smoothing factor for the CPU EWMA. Higher values
-	// make the estimate more responsive to recent observations.
-	ewmaAlpha = 0.3
+	// ewmaAlpha is the smoothing factor for the CPU EWMA. Matches the
+	// α=0.5 used by KV's per-tenant cpuTimeTokenEstimator.
+	ewmaAlpha = 0.5
 	// reservationMultiplier provides headroom above the EWMA to absorb
 	// variance in CPU consumption.
 	reservationMultiplier = 2.0
-	// lowWaterMarkFrac is the fraction of the reservation at which a
-	// background pre-fetch is triggered.
-	lowWaterMarkFrac = 0.25
 )
 
 // nextReservationSize computes the next reservation size based on the
@@ -281,20 +258,13 @@ func (h *SQLCPUHandle) nextReservationSize() int64 {
 	return size
 }
 
-// settleAndAdmit checks the token reservation. If tokens remain above the
-// low water mark, it returns immediately. If tokens are below the low
-// water mark but still positive, it triggers a background pre-fetch and
-// returns. If tokens are exhausted, it settles the previous reservation
-// and either uses pre-fetched tokens or does a synchronous Admit.
+// settleAndAdmit checks the token reservation. If tokens remain, it
+// returns immediately. Otherwise, it settles the previous reservation
+// with the WorkQueue and requests a new one, blocking if tokens are
+// exhausted.
 func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
-	h.q = q
 	remaining := h.reservedTokenNanos.Load()
 	if remaining > 0 {
-		// Trigger background pre-fetch if below low water mark.
-		lowWaterMark := int64(float64(h.totalReserved) * lowWaterMarkFrac)
-		if remaining <= lowWaterMark {
-			h.maybeStartBackgroundRefill(q)
-		}
 		return nil
 	}
 
@@ -308,6 +278,9 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 		return nil
 	}
 
+	// Set q under settleMu (first call sets it, subsequent are no-ops).
+	h.q = q
+
 	// Settle the previous reservation.
 	actualUsed := time.Duration(h.totalReserved - remaining)
 	h.mu.Lock()
@@ -319,8 +292,16 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 			(1-ewmaAlpha)*h.ewmaCPUNanos
 	}
 
-	// Acquire new tokens: from background pre-fetch or synchronous Admit.
-	resp, nextSize, err := h.acquireTokens(ctx, q)
+	// Request new reservation. Blocks if tokens are exhausted.
+	nextSize := h.nextReservationSize()
+	workInfo := WorkInfo{
+		TenantID:       h.workInfo.TenantID,
+		Priority:       h.workInfo.Priority,
+		CreateTime:     h.workInfo.CreateTime,
+		WorkloadID:     h.workInfo.WorkloadID,
+		RequestedCount: nextSize,
+	}
+	resp, err := q.Admit(ctx, workInfo)
 	if err != nil {
 		return err
 	}
@@ -335,94 +316,16 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 	return nil
 }
 
-// acquireTokens gets tokens from the background pre-fetch if available,
-// otherwise does a synchronous Admit. Must be called with settleMu held.
-func (h *SQLCPUHandle) acquireTokens(
-	ctx context.Context, q *WorkQueue,
-) (AdmitResponse, int64, error) {
-	// Check if background pre-fetch has tokens ready.
-	if h.refillCh != nil {
-		result := <-h.refillCh
-		h.refillCh = nil
-		h.refillTriggered.Store(false)
-		if result.err != nil {
-			// Pre-fetch failed (e.g. context cancelled). Fall through to
-			// synchronous Admit.
-		} else {
-			return result.resp, result.reservationSize, nil
-		}
-	}
-
-	// Synchronous Admit.
-	nextSize := h.nextReservationSize()
-	workInfo := WorkInfo{
-		TenantID:       h.workInfo.TenantID,
-		Priority:       h.workInfo.Priority,
-		CreateTime:     h.workInfo.CreateTime,
-		WorkloadID:     h.workInfo.WorkloadID,
-		RequestedCount: nextSize,
-	}
-	resp, err := q.Admit(ctx, workInfo)
-	if err != nil {
-		return AdmitResponse{}, 0, err
-	}
-	return resp, nextSize, nil
-}
-
-// maybeStartBackgroundRefill triggers a background goroutine to
-// pre-fetch tokens from the WorkQueue. Uses CAS on refillTriggered to
-// ensure only one pre-fetch is in flight at a time.
-func (h *SQLCPUHandle) maybeStartBackgroundRefill(q *WorkQueue) {
-	if !h.refillTriggered.CompareAndSwap(false, true) {
-		return
-	}
-	nextSize := h.nextReservationSize()
-	ch := make(chan refillResult, 1)
-	h.settleMu.Lock()
-	h.refillCh = ch
-	h.settleMu.Unlock()
-	go func() {
-		workInfo := WorkInfo{
-			TenantID:       h.workInfo.TenantID,
-			Priority:       h.workInfo.Priority,
-			CreateTime:     h.workInfo.CreateTime,
-			WorkloadID:     h.workInfo.WorkloadID,
-			RequestedCount: nextSize,
-		}
-		resp, err := q.Admit(h.bgCtx, workInfo)
-		ch <- refillResult{
-			resp:            resp,
-			reservationSize: nextSize,
-			err:             err,
-		}
-	}()
-}
-
 // cttBasedSQLEnabled returns true if CTT-based SQL response admission is
 // enabled. Returns false if settings are unavailable (e.g. external tenants).
 func (h *SQLCPUHandle) cttBasedSQLEnabled() bool {
 	return h.p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(h.p.sv)
 }
 
-// Close is called when no more reporting is needed. It cancels any
-// background pre-fetch, performs final settlement of outstanding CTT
-// admission, and pools GoroutineCPUHandles that have been closed.
+// Close is called when no more reporting is needed. It performs final
+// settlement of any outstanding CTT admission and pools
+// GoroutineCPUHandles that have been closed.
 func (h *SQLCPUHandle) Close() {
-	// Cancel any background pre-fetch goroutine.
-	h.cancelBg()
-
-	// Drain the refill channel if a background goroutine is in flight.
-	// After cancelBg, the goroutine's Admit will return promptly.
-	h.settleMu.Lock()
-	var bgResult *refillResult
-	if h.refillCh != nil {
-		result := <-h.refillCh
-		bgResult = &result
-		h.refillCh = nil
-		h.refillTriggered.Store(false)
-	}
-	h.settleMu.Unlock()
-
 	h.mu.Lock()
 	h.mu.closed = true
 	resp := h.mu.lastAdmitResp
@@ -437,18 +340,12 @@ func (h *SQLCPUHandle) Close() {
 	h.mu.gHandles = nil
 	h.mu.Unlock()
 
-	// Final settlement for the active reservation.
+	// Final settlement: settle with actual CPU used since last
+	// reservation.
 	if resp.Enabled && h.q != nil {
 		remaining := h.reservedTokenNanos.Swap(0)
 		actualUsed := time.Duration(h.totalReserved - remaining)
 		h.q.AdmittedWorkDone(resp, actualUsed)
-	}
-
-	// If the background pre-fetch succeeded, its Admit deducted tokens
-	// from the pool. Return them since we won't use them.
-	if bgResult != nil && bgResult.err == nil && bgResult.resp.Enabled &&
-		h.q != nil {
-		h.q.AdmittedWorkDone(bgResult.resp, 0 /* cpuTime */)
 	}
 }
 
