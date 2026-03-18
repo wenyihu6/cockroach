@@ -97,17 +97,23 @@ var goroutineCPUHandlePool = sync.Pool{
 
 // SQLCPUHandle manages CPU accounting and admission for SQL work across
 // multiple goroutines. When CTT-based SQL admission is enabled, the handle
-// integrates with the CTT WorkQueue: each MeasureAndAdmitResponse call
-// settles the previous interval's estimate and admits for the next interval.
-// Close performs final settlement.
+// reserves a chunk of CPU tokens from the CTT WorkQueue. Goroutines deduct
+// from the reservation atomically via reportCPU. When the reservation is
+// exhausted, settleAndAdmit replenishes it from the WorkQueue, blocking if
+// tokens are unavailable. Close performs final settlement.
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
 	// q is the CTT WorkQueue, set on first settleAndAdmit call.
 	q *WorkQueue
-	// cpuSinceLastAdmit tracks CPU nanos accumulated since the last Admit
-	// call. Updated atomically by reportCPU from multiple goroutines.
-	cpuSinceLastAdmit atomic.Int64
+	// reservedTokenNanos is the remaining token reservation in nanos.
+	// Decremented atomically by reportCPU. When <= 0, settleAndAdmit
+	// replenishes it from the WorkQueue.
+	reservedTokenNanos atomic.Int64
+	// totalReserved is the size of the current reservation chunk in nanos.
+	// Only accessed by settleAndAdmit and Close (single-threaded via the
+	// checkpoint call pattern).
+	totalReserved int64
 
 	mu struct {
 		syncutil.Mutex
@@ -132,7 +138,7 @@ func newSQLCPUAdmissionHandle(workInfo SQLWorkInfo, p *sqlCPUProviderImpl) *SQLC
 }
 
 // reportCPU atomically adds the CPU time difference to the appropriate
-// cumulative counter and tracks CPU since the last Admit call.
+// cumulative counter and deducts from the token reservation.
 func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
 	nanos := diff.Nanoseconds()
 	if h.workInfo.AtGateway {
@@ -140,7 +146,7 @@ func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
 	} else {
 		h.p.cumulativeDistSQLCPUNanos.Add(nanos)
 	}
-	h.cpuSinceLastAdmit.Add(nanos)
+	h.reservedTokenNanos.Add(-nanos)
 }
 
 // TODO(sumeer): see the comment
@@ -208,34 +214,51 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 	return nil
 }
 
-// settleAndAdmit settles the previous interval's CPU estimate with the
-// WorkQueue and admits for the next interval. It blocks if tokens are
+// reservationNanos is the fixed reservation chunk size. Each time the
+// reservation is exhausted, this many nanos of tokens are requested from
+// the WorkQueue.
+//
+// TODO(wenyi): make this adaptive based on the handle's CPU history.
+const reservationNanos int64 = 100_000_000 // 100ms
+
+// settleAndAdmit checks the token reservation. If tokens remain, it
+// returns immediately. Otherwise, it settles the previous reservation
+// with the WorkQueue and requests a new one. Blocks if tokens are
 // exhausted, providing backpressure on SQL query processing.
 func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 	h.q = q
-	actualCPU := time.Duration(h.cpuSinceLastAdmit.Swap(0))
+	remaining := h.reservedTokenNanos.Load()
+	if remaining > 0 {
+		return nil // Still have tokens — skip WorkQueue interaction.
+	}
+
+	// remaining <= 0: reservation exhausted (possibly overdrawn).
+	actualUsed := time.Duration(h.totalReserved - remaining)
 
 	h.mu.Lock()
 	prevResp := h.mu.lastAdmitResp
 	h.mu.Unlock()
 
-	// Settle previous interval.
+	// Settle previous reservation.
 	if prevResp.Enabled {
-		q.AdmittedWorkDone(prevResp, actualCPU)
+		q.AdmittedWorkDone(prevResp, actualUsed)
 	}
 
-	// Admit for next interval. Blocks if tokens are exhausted.
+	// Request a new reservation. Blocks if tokens are exhausted.
 	workInfo := WorkInfo{
-		TenantID:   h.workInfo.TenantID,
-		Priority:   h.workInfo.Priority,
-		CreateTime: h.workInfo.CreateTime,
-		WorkloadID: h.workInfo.WorkloadID,
+		TenantID:       h.workInfo.TenantID,
+		Priority:       h.workInfo.Priority,
+		CreateTime:     h.workInfo.CreateTime,
+		WorkloadID:     h.workInfo.WorkloadID,
+		RequestedCount: reservationNanos,
 	}
 	resp, err := q.Admit(ctx, workInfo)
 	if err != nil {
 		return err
 	}
 
+	h.totalReserved = reservationNanos
+	h.reservedTokenNanos.Store(reservationNanos)
 	h.mu.Lock()
 	h.mu.lastAdmitResp = resp
 	h.mu.Unlock()
@@ -267,10 +290,11 @@ func (h *SQLCPUHandle) Close() {
 	h.mu.gHandles = nil
 	h.mu.Unlock()
 
-	// Final settlement: return unused tokens.
+	// Final settlement: settle with actual CPU used since last reservation.
 	if resp.Enabled && h.q != nil {
-		actualCPU := time.Duration(h.cpuSinceLastAdmit.Swap(0))
-		h.q.AdmittedWorkDone(resp, actualCPU)
+		remaining := h.reservedTokenNanos.Swap(0)
+		actualUsed := time.Duration(h.totalReserved - remaining)
+		h.q.AdmittedWorkDone(resp, actualUsed)
 	}
 }
 
