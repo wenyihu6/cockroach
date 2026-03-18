@@ -109,12 +109,11 @@ var goroutineCPUHandlePool = sync.Pool{
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
-	// cttEnabled is true if CTT-based SQL response admission was enabled
-	// at handle creation time. Cached to avoid reading the cluster setting
-	// on every MeasureAndAdmitResponse call.
-	cttEnabled bool
-	// q is the CTT WorkQueue. Protected by settleMu; set on first
-	// settleAndAdmit call.
+	// q is the CTT WorkQueue for this handle's tenant, resolved at
+	// construction time. Non-nil only when CTT-based SQL CPU admission
+	// is enabled and the queue infrastructure is available. When non-nil,
+	// MeasureAndAdmitResponse and maybeSettleAndAdmit use CTT admission;
+	// when nil, they fall through to the legacy slot-based queue.
 	q *WorkQueue
 	// reservedTokenNanos is the remaining token reservation in nanos.
 	// Decremented atomically by reportCPU. When <= 0, settleAndAdmit
@@ -147,10 +146,14 @@ type SQLCPUHandle struct {
 }
 
 func newSQLCPUAdmissionHandle(workInfo SQLWorkInfo, p *sqlCPUProviderImpl) *SQLCPUHandle {
+	var cttQueue *WorkQueue
+	if p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(p.sv) {
+		cttQueue = p.getCTTQueue(workInfo.TenantID)
+	}
 	h := &SQLCPUHandle{
-		workInfo:   workInfo,
-		p:          p,
-		cttEnabled: p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(p.sv),
+		workInfo: workInfo,
+		p:        p,
+		q:        cttQueue,
 	}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
@@ -216,11 +219,8 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 	if err := gh.MeasureAndAdmit(ctx); err != nil {
 		return err
 	}
-	if h.cttEnabled {
-		cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
-		if cttQueue != nil {
-			return h.settleAndAdmit(ctx, cttQueue)
-		}
+	if h.q != nil {
+		return h.settleAndAdmit(ctx, h.q)
 	}
 	if q != nil {
 		workInfo := WorkInfo{
@@ -333,19 +333,15 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 	return nil
 }
 
-// maybeSettleAndAdmit checks whether CTT-based admission is enabled and, if
-// so, triggers settlement when the token reservation is exhausted. Called
-// from GoroutineCPUHandle.measureAndAdmit to enforce admission at cancel
-// checker checkpoints, not just at response admission boundaries.
+// maybeSettleAndAdmit triggers CTT-based settlement when the token
+// reservation is exhausted. Called from GoroutineCPUHandle.measureAndAdmit
+// to enforce admission at cancel checker checkpoints, not just at response
+// admission boundaries. No-op when CTT is not active (h.q == nil).
 func (h *SQLCPUHandle) maybeSettleAndAdmit(ctx context.Context) error {
-	if !h.cttEnabled {
+	if h.q == nil {
 		return nil
 	}
-	cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
-	if cttQueue == nil {
-		return nil
-	}
-	return h.settleAndAdmit(ctx, cttQueue)
+	return h.settleAndAdmit(ctx, h.q)
 }
 
 // Close is called when no more reporting is needed. It performs final
