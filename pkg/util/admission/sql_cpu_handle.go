@@ -68,6 +68,34 @@ type SQLCPUProvider interface {
 	GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCPUNanos int64)
 }
 
+// ResponseAdmissionQ wraps a legacy slot-based response admission WorkQueue
+// and becomes a no-op when CTT-based SQL CPU admission is enabled. This
+// encapsulates the legacy/CTT toggle so callers don't need to know which
+// admission path is active.
+type ResponseAdmissionQ struct {
+	q  *WorkQueue
+	sv *settings.Values
+}
+
+// MakeResponseAdmissionQ creates a ResponseAdmissionQ wrapping the given
+// legacy WorkQueue. When CTT-based admission is enabled (via the
+// admission.sql_cpu_based_response_admission.enabled cluster setting),
+// Admit is a no-op.
+func MakeResponseAdmissionQ(q *WorkQueue, sv *settings.Values) ResponseAdmissionQ {
+	return ResponseAdmissionQ{q: q, sv: sv}
+}
+
+// Admit performs legacy slot-based response admission. If CTT-based SQL
+// CPU admission is enabled, or if no WorkQueue was configured, this is
+// a no-op.
+func (rq ResponseAdmissionQ) Admit(ctx context.Context, info WorkInfo) error {
+	if rq.q == nil || (rq.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(rq.sv)) {
+		return nil
+	}
+	_, err := rq.q.Admit(ctx, info)
+	return err
+}
+
 var sqlCPUAdmissionHandleContextKey = ctxutil.RegisterFastValueKey()
 
 // ContextWithSQLCPUHandle returns a Context wrapping the supplied handle, if
@@ -109,10 +137,6 @@ var goroutineCPUHandlePool = sync.Pool{
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
-	// cttEnabled is true if CTT-based SQL response admission was enabled
-	// at handle creation time. Cached to avoid reading the cluster setting
-	// on every MeasureAndAdmitResponse call.
-	cttEnabled bool
 	// q is the CTT WorkQueue. Protected by settleMu; set on first
 	// settleAndAdmit call.
 	q *WorkQueue
@@ -203,11 +227,12 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 // When SQLCPUBasedResponseAdmissionEnabled is true, admission is handled
 // through the CTT WorkQueue: each call settles the previous interval's
 // estimate and admits for the next interval, blocking if tokens are
-// exhausted. The passed queue q is ignored in this path.
+// exhausted.
 //
 // When the setting is false, the legacy slot-based response admission queue
-// (q) is used.
-func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue) error {
+// wrapped by q is used. The ResponseAdmissionQ wrapper encapsulates this
+// toggle, so callers don't need to know which path is active.
+func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q ResponseAdmissionQ) error {
 	if trace.IsEnabled() {
 		defer trace.StartRegion(ctx, "admission.SQLCPUHandle.responseAdmit").End()
 	}
@@ -215,24 +240,16 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 	if err := gh.MeasureAndAdmit(ctx); err != nil {
 		return err
 	}
-	if h.cttBasedSQLEnabled() {
-		cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
-		if cttQueue != nil {
-			return h.settleAndAdmit(ctx, cttQueue)
-		}
+	cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
+	if cttQueue != nil {
+		return h.settleAndAdmit(ctx, cttQueue)
 	}
-	if q != nil {
-		workInfo := WorkInfo{
-			TenantID:   h.workInfo.TenantID,
-			Priority:   h.workInfo.Priority,
-			CreateTime: h.workInfo.CreateTime,
-			WorkloadID: h.workInfo.WorkloadID,
-		}
-		if _, err := q.Admit(ctx, workInfo); err != nil {
-			return err
-		}
-	}
-	return nil
+	return q.Admit(ctx, WorkInfo{
+		TenantID:   h.workInfo.TenantID,
+		Priority:   h.workInfo.Priority,
+		CreateTime: h.workInfo.CreateTime,
+		WorkloadID: h.workInfo.WorkloadID,
+	})
 }
 
 const (
@@ -337,7 +354,7 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 // from GoroutineCPUHandle.measureAndAdmit to enforce admission at cancel
 // checker checkpoints, not just at response admission boundaries.
 func (h *SQLCPUHandle) maybeSettleAndAdmit(ctx context.Context) error {
-	if !h.cttBasedSQLEnabled() {
+	if h.p.sv == nil || !SQLCPUBasedResponseAdmissionEnabled.Get(h.p.sv) {
 		return nil
 	}
 	cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
@@ -345,12 +362,6 @@ func (h *SQLCPUHandle) maybeSettleAndAdmit(ctx context.Context) error {
 		return nil
 	}
 	return h.settleAndAdmit(ctx, cttQueue)
-}
-
-// cttBasedSQLEnabled returns true if CTT-based SQL response admission is
-// enabled. Returns false if settings are unavailable (e.g. external tenants).
-func (h *SQLCPUHandle) cttBasedSQLEnabled() bool {
-	return h.p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(h.p.sv)
 }
 
 // Close is called when no more reporting is needed. It performs final

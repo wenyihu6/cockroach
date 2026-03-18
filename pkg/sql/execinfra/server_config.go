@@ -187,7 +187,7 @@ type ServerConfig struct {
 
 	// SQLSQLResponseAdmissionQ is the admission queue to use for
 	// SQLSQLResponseWork.
-	SQLSQLResponseAdmissionQ *admission.WorkQueue
+	SQLSQLResponseAdmissionQ admission.ResponseAdmissionQ
 
 	// CollectionFactory is used to construct descs.Collections.
 	CollectionFactory *descs.CollectionFactory

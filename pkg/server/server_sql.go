@@ -251,7 +251,7 @@ type sqlServerOptionalKVArgs struct {
 	externalStorageFromURI cloud.ExternalStorageFromURIFactory
 
 	// The admission queue to use for SQLSQLResponseWork.
-	sqlSQLResponseAdmissionQ *admission.WorkQueue
+	sqlSQLResponseAdmissionQ admission.ResponseAdmissionQ
 
 	// Used when creating and deleting tenant records.
 	spanConfigKVAccessor spanconfig.KVAccessor

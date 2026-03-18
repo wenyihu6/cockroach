@@ -918,7 +918,7 @@ type workerCoordinator struct {
 
 	// For request and response admission control.
 	requestAdmissionHeader kvpb.AdmissionHeader
-	responseAdmissionQ     *admission.WorkQueue
+	responseAdmissionQ     admission.ResponseAdmissionQ
 	// workloadID is the identifier for the workload that triggered this
 	// request (e.g. statement fingerprint ID) for ASH sampling.
 	workloadID uint64

@@ -226,7 +226,7 @@ func processProducerMessage(
 	// Note: this goroutine is registered for SQL CPU accounting via
 	// RegisterGoroutine in processInboundStreamHelper.
 	if cpuHandle := flowBase.GetCPUHandle(); cpuHandle != nil {
-		var admissionQ *admission.WorkQueue
+		var admissionQ admission.ResponseAdmissionQ
 		if flowBase.Cfg != nil {
 			admissionQ = flowBase.Cfg.SQLSQLResponseAdmissionQ
 		}
