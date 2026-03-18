@@ -7,6 +7,7 @@ package admission
 
 import (
 	"context"
+	"runtime/trace"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -203,6 +204,9 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 // When the setting is false, the legacy slot-based response admission queue
 // (q) is used.
 func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue) error {
+	if trace.IsEnabled() {
+		defer trace.StartRegion(ctx, "admission.SQLCPUHandle.responseAdmit").End()
+	}
 	gh := h.RegisterGoroutine()
 	if err := gh.MeasureAndAdmit(ctx); err != nil {
 		return err
@@ -271,6 +275,9 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 	}
 
 	// Tokens exhausted. Serialize settlement.
+	if trace.IsEnabled() {
+		defer trace.StartRegion(ctx, "admission.SQLCPUHandle.settle").End()
+	}
 	h.settleMu.Lock()
 	defer h.settleMu.Unlock()
 
