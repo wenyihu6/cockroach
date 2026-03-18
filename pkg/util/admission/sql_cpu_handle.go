@@ -231,7 +231,7 @@ const (
 	// minReservationNanos is the minimum reservation chunk size.
 	minReservationNanos = int64(10 * time.Millisecond)
 	// maxReservationNanos is the maximum reservation chunk size.
-	maxReservationNanos = int64(500 * time.Millisecond)
+	maxReservationNanos = int64(1 * time.Second)
 	// initialReservationNanos is the default reservation before the EWMA
 	// has converged.
 	initialReservationNanos = int64(100 * time.Millisecond)
@@ -283,20 +283,17 @@ func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
 	// Set q under settleMu (first call sets it, subsequent are no-ops).
 	h.q = q
 
-	// Settle the previous reservation.
+	// Settle the previous reservation. Read and clear lastAdmitResp in
+	// a single lock acquisition to reduce mu contention.
 	actualUsed := time.Duration(h.totalReserved - remaining)
 	h.mu.Lock()
 	prevResp := h.mu.lastAdmitResp
+	h.mu.lastAdmitResp = AdmitResponse{}
 	h.mu.Unlock()
 	if prevResp.Enabled {
 		q.AdmittedWorkDone(prevResp, actualUsed)
 		h.ewmaCPUNanos = ewmaAlpha*float64(actualUsed) +
 			(1-ewmaAlpha)*h.ewmaCPUNanos
-		// Clear the settled response so a failed Admit below won't cause
-		// double-settlement on the next settleAndAdmit call.
-		h.mu.Lock()
-		h.mu.lastAdmitResp = AdmitResponse{}
-		h.mu.Unlock()
 		h.totalReserved = 0
 	}
 
