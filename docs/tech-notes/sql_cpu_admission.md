@@ -34,11 +34,11 @@ work, making unified resource management impossible.
    proxy-based response admission with direct CPU accounting.
 3. Provide admission backpressure: when CPU tokens are exhausted, SQL
    work blocks until the filler refills tokens.
-4. Minimize overhead on the hot path (cancel checker calls
-   `MeasureAndAdmit` every 1024 rows across all concurrent queries).
-5. Lay the groundwork for the Resource Manager, where resource groups
-   (with configurable CPU limits) are modeled as tenants in the
-   WorkQueue.
+4. Minimize overhead on the hot path (`MeasureAndAdmit` is called at
+   every KV batch response and every 1024 rows via cancel checker,
+   across all concurrent queries).
+5. Lay the groundwork for the Resource Manager, which provides
+   per-resource-group CPU isolation and within-group QoS guarantees.
 
 ### Non-goals
 
@@ -63,9 +63,9 @@ work, making unified resource management impossible.
                     └──────┬────────────────┬──────────┘
                            │                │
             ┌──────────────▼──┐     ┌───────▼──────────────┐
-            │ Cancel Checker  │     │  KV Response Sites   │
+            │ Cancel Checker  │     │  Response Sites      │
             │ (every 1024     │     │  (kv_batch_fetcher,  │
-            │  rows)          │     │   kvstreamer,        │
+            │  rows/batches)  │     │   kvstreamer,        │
             │                 │     │   inbox, inbound,    │
             │ gh.Measure      │     │   tablewriter)       │
             │   AndAdmit()    │     │                      │
@@ -163,12 +163,13 @@ This approach combines the strengths of the earlier explorations:
 WorkQueue's tenant fair-sharing (from sumeer's prototype and
 Option A) with amortized overhead (inspired by the lease model's
 budget concept, but with adaptive EWMA instead of fixed chunks).
-The Resource Manager requires per-tenant (and eventually per-
-resource-group) CPU isolation. The WorkQueue already implements
-tenant-weighted fair-sharing via a priority heap. Resource groups
-will map to tenants with configurable weights — this would be
-impossible with the direct granter model without reimplementing
-fair-sharing from scratch. The higher per-call overhead is
+The Resource Manager provides per-resource-group CPU isolation
+and within-group QoS guarantees. The WorkQueue already implements
+weighted fair-sharing via a priority heap. Resource groups will
+appear as entries in this heap with configurable weights — this
+would be impossible with the direct granter model without
+reimplementing fair-sharing from scratch. The higher per-call
+overhead is
 acceptable because adaptive reservation sizing (see below)
 dramatically reduces how often we access the WorkQueue.
 
@@ -348,9 +349,16 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(
 
 This is because the choice between `SQLKVResponseAdmissionQ` and
 `SQLSQLResponseAdmissionQ` is determined by the call site (KV
-response vs DistSQL response), not by the handle. The CTT queue, in
-contrast, is resolved by tenant ID inside the handle via
-`getCTTQueue`.
+response vs DistSQL response), not by the handle.
+
+The CTT queue, in contrast, is resolved eagerly at handle
+construction. The constructor checks the cluster setting and, if
+CTT is enabled, resolves the tenant-specific CTT queue via
+`getCTTQueue` and stores it in the handle's `q` field. This means
+`MeasureAndAdmitResponse` and `maybeSettleAndAdmit` just check
+`h.q != nil` — no per-call cluster setting read, no per-call queue
+lookup. A setting change mid-statement takes effect on the next
+statement, which is acceptable granularity for an admission toggle.
 
 ### 9. Goroutine Registration Model
 
@@ -409,11 +417,13 @@ goroutine and with a different legacy queue:
 ```
 1. MakeCPUHandle → SQLCPUHandle created, main goroutine registered
 2. Additional goroutines call RegisterGoroutine as they start
-3. Cancel checker calls MeasureAndAdmit every 1024 rows
+3. Cancel checker calls MeasureAndAdmit every 1024 rows/batches
+   (hardcoded `cancelCheckInterval` in both row and vectorized engines)
    - reportCPU: atomic decrement of reservedTokenNanos
    - If exhausted: settleAndAdmit → AdmittedWorkDone + Admit
 4. Response sites call MeasureAndAdmitResponse per KV/DistSQL response
-   - Same pipeline as (3), plus legacy queue fallback if CTT disabled
+   - Calls MeasureAndAdmit (same as step 3), then settleAndAdmit
+     for CTT, or legacy queue Admit if CTT is not active
 5. Goroutines call GoroutineCPUHandle.Close at their boundary
    - Final measureAndAdmit(noWait=true) for last CPU sample
 6. SQLCPUHandle.Close after all goroutines finish
@@ -470,13 +480,20 @@ that the reservation mechanism effectively amortizes WorkQueue access.
 
 ### Hot Path Cost
 
-The cancel checker hot path (`GoroutineCPUHandle.measureAndAdmit`) is:
+Both the cancel checker path and the response admission path call
+`GoroutineCPUHandle.measureAndAdmit`, which is:
 1. `grunning.Time()` — reads per-goroutine CPU clock (~15ns)
 2. Subtraction + comparison (~1ns)
 3. `atomic.Int64.Add` on `reservedTokenNanos` (~5ns)
 4. `atomic.Int64.Load` to check if exhausted (~1ns)
 
 Total: ~22ns when tokens remain (no locks, no WorkQueue interaction).
+
+`MeasureAndAdmitResponse` adds one additional `settleAndAdmit` call
+after `measureAndAdmit`, which is a single `atomic.Int64.Load` (~1ns)
+when tokens remain (early return at the `remaining > 0` check). This
+runs at every KV batch response — the same frequency as the legacy
+response admission it replaces.
 
 
 ## Comparison with Earlier Approaches
@@ -636,10 +653,15 @@ WorkQueue metrics path.
 
 **`SlotsOrNoopQueueForOldSQL` wrapper**: Sumeer wrapped the legacy
 queue in a struct that checks the cluster setting internally, so
-call sites just call `admissionQ.Admit()` without knowing about
-the toggle. Our approach passes the raw `*WorkQueue` and checks
-the setting inside `MeasureAndAdmitResponse`. Sumeer's is slightly
-cleaner but moot once we remove legacy queues.
+response admission call sites just call `admissionQ.Admit()`
+without knowing about the toggle. This works cleanly in sumeer's
+architecture because CTT admission happens only at cancel checker
+checkpoints (`TryAdmit`) — the response admission sites are purely
+for legacy. In our architecture, CTT admission also happens at
+response boundaries (via `MeasureAndAdmitResponse`), so the
+wrapper can't fully encapsulate the toggle — `MeasureAndAdmitResponse`
+still needs the CTT path. Instead, we resolve the CTT queue eagerly
+at handle construction and check `h.q != nil`.
 
 **Net assessment**: Nothing in `cpu_token_all` is strictly better
 in a way that warrants changes now. The `isSQLCPU` marker is the
@@ -693,10 +715,11 @@ EWMA-sized reservations, most handles never block at all.
    from ~15 files. Remove the
    `admission.sql_cpu_based_response_admission.enabled` setting.
 
-2. **Resource Manager integration**: Resource groups map to tenants
-   in the WorkQueue with configurable CPU weights. The SQL CPU handle
-   already routes through the CTT WorkQueue, so resource groups get
-   CPU isolation with no changes to the handle code.
+2. **Resource Manager integration**: Resource groups appear as
+   entries in the WorkQueue's priority heap with configurable CPU
+   weights, providing per-group CPU isolation and within-group QoS.
+   The SQL CPU handle already routes through the CTT WorkQueue, so
+   resource group enforcement requires no changes to the handle code.
 
 3. **Elastic CPU for SQL**: Background SQL work (statistics
    collection, schema changes) could use a similar handle pattern
