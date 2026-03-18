@@ -463,11 +463,6 @@ func (h *GoroutineCPUHandle) measureAndAdmit(ctx context.Context, noWait bool) e
 	if diff <= 0 {
 		return nil
 	}
-	// TODO(sumeer): adding this diff to an atomic in SQLCPUHandle may be too
-	// much overhead. An alternative would be implement an atomic here, and
-	// only update the SQLCPUHandle when enough has accumulated. The reason
-	// we would need an atomic here is that when SQLCPUHandle is closed, it
-	// needs to reach in and grab whatever CPU has not yet been reported.
 	h.cpuAccounted += diff
 	h.h.reportCPU(diff)
 	// When tokens are exhausted and we're not in the noWait (Close) path,
