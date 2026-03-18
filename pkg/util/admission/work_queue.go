@@ -711,7 +711,8 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// a measurement of CPU time used servicing the request, courtesy of grunning.
 	// tenant.estimator uses past measurements from grunning to make estimates
 	// in this code path, that is, at admission time.
-	if q.mode == usesCPUTimeTokens && !q.knobs.DisableCPUTimeTokenEstimation {
+	if q.mode == usesCPUTimeTokens && !q.knobs.DisableCPUTimeTokenEstimation &&
+		info.RequestedCount == 0 {
 		info.RequestedCount = tenant.cpuTimeTokenEstimator.estimateTokensToBeUsed()
 	}
 	admitResponse := AdmitResponse{
@@ -1002,14 +1003,11 @@ func recordAdmissionWorkQueueStats(
 }
 
 // AdmittedWorkDone is used to inform the WorkQueue that some admitted work is
-// finished. It must be called iff the WorkKind of this WorkQueue is for KVWork.
+// finished. It is called for KVWork and for SQL work using CTT queues.
 // Note that cpuTime is an argument to AdmittedWorkDone. So, even though
 // WorkQueue supports various resources other than CPU, AdmittedWorkDone is
 // special-cased for CPU time admission control.
 func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) {
-	if q.workKind != KVWork {
-		panic(errors.AssertionFailedf("AdmittedWorkDone only supports KVWork but got %v", q.workKind))
-	}
 	if q.mode != usesSlots && q.mode != usesCPUTimeTokens {
 		panic(
 			errors.AssertionFailedf("AdmittedWorkDone only supports usesSlots & usesCPUTimeTokens but got %v", q.mode))

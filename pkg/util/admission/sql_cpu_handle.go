@@ -96,12 +96,18 @@ var goroutineCPUHandlePool = sync.Pool{
 }
 
 // SQLCPUHandle manages CPU accounting and admission for SQL work across
-// multiple goroutines.
-//
-// TODO(sumeer): fill in more details.
+// multiple goroutines. When CTT-based SQL admission is enabled, the handle
+// integrates with the CTT WorkQueue: each MeasureAndAdmitResponse call
+// settles the previous interval's estimate and admits for the next interval.
+// Close performs final settlement.
 type SQLCPUHandle struct {
 	workInfo SQLWorkInfo
 	p        *sqlCPUProviderImpl
+	// q is the CTT WorkQueue, set on first settleAndAdmit call.
+	q *WorkQueue
+	// cpuSinceLastAdmit tracks CPU nanos accumulated since the last Admit
+	// call. Updated atomically by reportCPU from multiple goroutines.
+	cpuSinceLastAdmit atomic.Int64
 
 	mu struct {
 		syncutil.Mutex
@@ -110,6 +116,9 @@ type SQLCPUHandle struct {
 		// Backing for up to 2 goroutine handles, to avoid allocations in
 		// gHandles when there are 2 or fewer goroutines.
 		handlesBacking [2]*GoroutineCPUHandle
+		// lastAdmitResp is the AdmitResponse from the most recent Admit call
+		// on the CTT queue. Used to settle at the next checkpoint or Close.
+		lastAdmitResp AdmitResponse
 	}
 }
 
@@ -123,13 +132,15 @@ func newSQLCPUAdmissionHandle(workInfo SQLWorkInfo, p *sqlCPUProviderImpl) *SQLC
 }
 
 // reportCPU atomically adds the CPU time difference to the appropriate
-// cumulative counter.
+// cumulative counter and tracks CPU since the last Admit call.
 func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
+	nanos := diff.Nanoseconds()
 	if h.workInfo.AtGateway {
-		h.p.cumulativeGatewayCPUNanos.Add(diff.Nanoseconds())
+		h.p.cumulativeGatewayCPUNanos.Add(nanos)
 	} else {
-		h.p.cumulativeDistSQLCPUNanos.Add(diff.Nanoseconds())
+		h.p.cumulativeDistSQLCPUNanos.Add(nanos)
 	}
+	h.cpuSinceLastAdmit.Add(nanos)
 }
 
 // TODO(sumeer): see the comment
@@ -161,21 +172,29 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 }
 
 // MeasureAndAdmitResponse measures CPU time for the calling goroutine and
-// performs response admission on the given queue. The calling goroutine must
-// already be registered via RegisterGoroutine (called at goroutine start);
-// this method retrieves the existing handle. The queue parameter determines
-// which response admission queue to use (SQLKVResponseAdmissionQ or
-// SQLSQLResponseAdmissionQ). If q is nil, only CPU measurement is performed.
+// performs response admission. The calling goroutine must already be
+// registered via RegisterGoroutine (called at goroutine start); this method
+// retrieves the existing handle.
 //
-// When SQLCPUBasedResponseAdmissionEnabled is true, only CPU measurement is
-// performed and the legacy response admission queue is skipped — admission is
-// handled through CPU time tokens instead.
+// When SQLCPUBasedResponseAdmissionEnabled is true, admission is handled
+// through the CTT WorkQueue: each call settles the previous interval's
+// estimate and admits for the next interval, blocking if tokens are
+// exhausted. The passed queue q is ignored in this path.
+//
+// When the setting is false, the legacy slot-based response admission queue
+// (q) is used.
 func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue) error {
 	gh := h.RegisterGoroutine()
 	if err := gh.MeasureAndAdmit(ctx); err != nil {
 		return err
 	}
-	if q != nil && !h.cttBasedSQLEnabled() {
+	if h.cttBasedSQLEnabled() {
+		cttQueue := h.p.getCTTQueue(h.workInfo.TenantID)
+		if cttQueue != nil {
+			return h.settleAndAdmit(ctx, cttQueue)
+		}
+	}
+	if q != nil {
 		workInfo := WorkInfo{
 			TenantID:   h.workInfo.TenantID,
 			Priority:   h.workInfo.Priority,
@@ -189,19 +208,55 @@ func (h *SQLCPUHandle) MeasureAndAdmitResponse(ctx context.Context, q *WorkQueue
 	return nil
 }
 
+// settleAndAdmit settles the previous interval's CPU estimate with the
+// WorkQueue and admits for the next interval. It blocks if tokens are
+// exhausted, providing backpressure on SQL query processing.
+func (h *SQLCPUHandle) settleAndAdmit(ctx context.Context, q *WorkQueue) error {
+	h.q = q
+	actualCPU := time.Duration(h.cpuSinceLastAdmit.Swap(0))
+
+	h.mu.Lock()
+	prevResp := h.mu.lastAdmitResp
+	h.mu.Unlock()
+
+	// Settle previous interval.
+	if prevResp.Enabled {
+		q.AdmittedWorkDone(prevResp, actualCPU)
+	}
+
+	// Admit for next interval. Blocks if tokens are exhausted.
+	workInfo := WorkInfo{
+		TenantID:   h.workInfo.TenantID,
+		Priority:   h.workInfo.Priority,
+		CreateTime: h.workInfo.CreateTime,
+		WorkloadID: h.workInfo.WorkloadID,
+	}
+	resp, err := q.Admit(ctx, workInfo)
+	if err != nil {
+		return err
+	}
+
+	h.mu.Lock()
+	h.mu.lastAdmitResp = resp
+	h.mu.Unlock()
+	return nil
+}
+
 // cttBasedSQLEnabled returns true if CTT-based SQL response admission is
 // enabled. Returns false if settings are unavailable (e.g. external tenants).
 func (h *SQLCPUHandle) cttBasedSQLEnabled() bool {
 	return h.p.sv != nil && SQLCPUBasedResponseAdmissionEnabled.Get(h.p.sv)
 }
 
-// Close is called when no more reporting is needed. It pools
-// GoroutineCPUHandles that have been closed. GoroutineCPUHandles that are not
-// yet closed are left for GC.
+// Close is called when no more reporting is needed. It performs final
+// settlement of any outstanding CTT admission and pools GoroutineCPUHandles
+// that have been closed. GoroutineCPUHandles that are not yet closed are
+// left for GC.
 func (h *SQLCPUHandle) Close() {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.mu.closed = true
+	resp := h.mu.lastAdmitResp
+	h.mu.lastAdmitResp = AdmitResponse{}
 	for i, gh := range h.mu.gHandles {
 		if gh.closed.Load() {
 			gh.reset()
@@ -210,6 +265,13 @@ func (h *SQLCPUHandle) Close() {
 		h.mu.gHandles[i] = nil
 	}
 	h.mu.gHandles = nil
+	h.mu.Unlock()
+
+	// Final settlement: return unused tokens.
+	if resp.Enabled && h.q != nil {
+		actualCPU := time.Duration(h.cpuSinceLastAdmit.Swap(0))
+		h.q.AdmittedWorkDone(resp, actualCPU)
+	}
 }
 
 // GoroutineCPUHandle is used for CPU accounting on a single goroutine. It
@@ -320,6 +382,11 @@ type sqlCPUProviderImpl struct {
 	// sv provides access to cluster settings. May be nil for external tenants
 	// that do not have KV-level admission infrastructure.
 	sv *settings.Values
+	// systemTenantCTTQueue and appTenantCTTQueue are the CTT WorkQueues for
+	// system and app tenant SQL work respectively. May be nil for external
+	// tenants.
+	systemTenantCTTQueue *WorkQueue
+	appTenantCTTQueue    *WorkQueue
 	// cumulativeGatewayCPUNanos tracks the cumulative CPU time in nanoseconds
 	// accounted for SQL work executed at gateway nodes. This value is
 	// monotonically increasing and is updated atomically as CPU time is
@@ -330,6 +397,15 @@ type sqlCPUProviderImpl struct {
 	// increasing and is updated atomically as CPU time is reported via
 	// SQLCPUHandle.reportCPU.
 	cumulativeDistSQLCPUNanos atomic.Int64
+}
+
+// getCTTQueue returns the CTT WorkQueue for the given tenant. Returns nil
+// if CTT queues are not available (e.g. external tenants).
+func (p *sqlCPUProviderImpl) getCTTQueue(tenantID roachpb.TenantID) *WorkQueue {
+	if tenantID.IsSystem() {
+		return p.systemTenantCTTQueue
+	}
+	return p.appTenantCTTQueue
 }
 
 func (p *sqlCPUProviderImpl) GetCumulativeSQLCPUNanos() (gatewayCPUNanos, distCPUNanos int64) {
@@ -343,9 +419,14 @@ func (p *sqlCPUProviderImpl) GetHandle(workInfo SQLWorkInfo) *SQLCPUHandle {
 
 // NewSQLCPUProvider creates a new SQLCPUProvider. The sv parameter provides
 // access to cluster settings and may be nil for external tenants that do not
-// have KV-level admission infrastructure.
-//
-// TODO(sumeer): real implementation.
-func NewSQLCPUProvider(sv *settings.Values) SQLCPUProvider {
-	return &sqlCPUProviderImpl{sv: sv}
+// have KV-level admission infrastructure. The CTT queue parameters may be
+// nil for external tenants.
+func NewSQLCPUProvider(
+	sv *settings.Values, systemTenantCTTQueue, appTenantCTTQueue *WorkQueue,
+) SQLCPUProvider {
+	return &sqlCPUProviderImpl{
+		sv:                   sv,
+		systemTenantCTTQueue: systemTenantCTTQueue,
+		appTenantCTTQueue:    appTenantCTTQueue,
+	}
 }

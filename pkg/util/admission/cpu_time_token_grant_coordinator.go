@@ -78,6 +78,16 @@ func (coord *CPUGrantCoordinators) GetSQLWorkQueue(workKind WorkKind) *WorkQueue
 	return coord.slotsCoord.queues[workKind].(*WorkQueue)
 }
 
+// GetCTTWorkQueue returns the CTT (CPU time token) WorkQueue for the given
+// tenant class. SQL work uses these queues to share the same token pool and
+// per-tenant fair-sharing machinery as KV work.
+func (coord *CPUGrantCoordinators) GetCTTWorkQueue(isSystemTenant bool) *WorkQueue {
+	if isSystemTenant {
+		return coord.cpuTimeCoord.getWorkQueue(systemTenant)
+	}
+	return coord.cpuTimeCoord.getWorkQueue(appTenant)
+}
+
 // SetTenantWeights sets the weight of tenants, using the provided tenant ID
 // => weight map. A nil map will result in all tenants having the same weight.
 // SetTenantWeights adjusts the weights on all WorkQueues that
