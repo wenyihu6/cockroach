@@ -214,7 +214,7 @@ type txnKVFetcher struct {
 
 	// For request and response admission control.
 	requestAdmissionHeader kvpb.AdmissionHeader
-	responseAdmissionQ     admission.ResponseAdmissionQ
+	responseAdmissionQ     *admission.WorkQueue
 	admissionPacer         *admission.Pacer
 	// workloadID is the statement fingerprint ID or job ID for ASH sampling.
 	workloadID uint64
@@ -390,7 +390,7 @@ type newTxnKVFetcherArgs struct {
 
 	admission struct { // groups AC-related fields
 		requestHeader  kvpb.AdmissionHeader
-		responseQ      admission.ResponseAdmissionQ
+		responseQ      *admission.WorkQueue
 		pacerFactory   admission.PacerFactory
 		settingsValues *settings.Values
 	}

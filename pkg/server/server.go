@@ -593,9 +593,7 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 		storesForRACv2,
 		admissionKnobs,
 	)
-	db.SQLKVResponseAdmissionQ = admission.MakeResponseAdmissionQ(
-		gcoords.RegularCPU.GetSQLWorkQueue(admission.SQLKVResponseWork), &st.SV,
-	)
+	db.SQLKVResponseAdmissionQ = gcoords.RegularCPU.GetSQLWorkQueue(admission.SQLKVResponseWork)
 	db.AdmissionPacerFactory = gcoords.ElasticCPU
 	sqlCPUProvider := admission.NewSQLCPUProvider(
 		&st.SV,
@@ -1235,21 +1233,19 @@ func NewServer(cfg Config, stopper *stop.Stopper) (serverctl.ServerStartupInterf
 	// Instantiate the SQL server proper.
 	sqlServer, err := newSQLServer(ctx, sqlServerArgs{
 		sqlServerOptionalKVArgs: sqlServerOptionalKVArgs{
-			nodesStatusServer:      serverpb.MakeOptionalNodesStatusServer(sStatus),
-			nodeLiveness:           optionalnodeliveness.MakeContainer(nodeLiveness),
-			gossip:                 gossip.MakeOptionalGossip(g),
-			grpcServer:             grpcServer.Server,
-			drpcMux:                drpcServer.DRPCServer,
-			nodeIDContainer:        idContainer,
-			externalStorage:        externalStorage,
-			externalStorageFromURI: externalStorageFromURI,
-			isMeta1Leaseholder:     node.stores.IsMeta1Leaseholder,
-			sqlSQLResponseAdmissionQ: admission.MakeResponseAdmissionQ(
-				gcoords.RegularCPU.GetSQLWorkQueue(admission.SQLSQLResponseWork), &st.SV,
-			),
-			spanConfigKVAccessor: spanConfig.kvAccessorForTenantRecords,
-			kvStoresIterator:     kvserver.MakeStoresIterator(node.stores),
-			inspectzServer:       inspectzServer,
+			nodesStatusServer:        serverpb.MakeOptionalNodesStatusServer(sStatus),
+			nodeLiveness:             optionalnodeliveness.MakeContainer(nodeLiveness),
+			gossip:                   gossip.MakeOptionalGossip(g),
+			grpcServer:               grpcServer.Server,
+			drpcMux:                  drpcServer.DRPCServer,
+			nodeIDContainer:          idContainer,
+			externalStorage:          externalStorage,
+			externalStorageFromURI:   externalStorageFromURI,
+			isMeta1Leaseholder:       node.stores.IsMeta1Leaseholder,
+			sqlSQLResponseAdmissionQ: gcoords.RegularCPU.GetSQLWorkQueue(admission.SQLSQLResponseWork),
+			spanConfigKVAccessor:     spanConfig.kvAccessorForTenantRecords,
+			kvStoresIterator:         kvserver.MakeStoresIterator(node.stores),
+			inspectzServer:           inspectzServer,
 
 			notifyChangeToSystemVisibleSettings: tenantSettingsWatcher.SetAlternateDefaults,
 		},

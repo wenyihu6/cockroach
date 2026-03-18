@@ -507,7 +507,7 @@ func (s *vectorizedFlowCreator) makeGetStatsFnForOutbox(
 type runFn func(_ context.Context, flowCtxCancel context.CancelFunc)
 
 type admissionOptions struct {
-	admissionQ    admission.ResponseAdmissionQ
+	admissionQ    *admission.WorkQueue
 	admissionInfo admission.WorkInfo
 }
 

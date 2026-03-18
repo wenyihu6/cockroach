@@ -95,7 +95,7 @@ type Inbox struct {
 	// only the Next/DrainMeta goroutine may access it.
 	stream flowStreamServer
 
-	admissionQ    admission.ResponseAdmissionQ
+	admissionQ    *admission.WorkQueue
 	admissionInfo admission.WorkInfo
 
 	// statsAtomics are the execution statistics that need to be atomically
@@ -159,7 +159,7 @@ func NewInboxWithAdmissionControl(
 	typs []*types.T,
 	streamID execinfrapb.StreamID,
 	flowCtxDone <-chan struct{},
-	admissionQ admission.ResponseAdmissionQ,
+	admissionQ *admission.WorkQueue,
 	admissionInfo admission.WorkInfo,
 ) (*Inbox, error) {
 	i, err := NewInboxWithFlowCtxDone(allocator, typs, streamID, flowCtxDone)
