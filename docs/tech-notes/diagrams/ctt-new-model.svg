@@ -1,0 +1,267 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1150" font-family="Consolas, Monaco, monospace" font-size="12">
+  <title>New CTT Model: Resource Group Prototype</title>
+  <style>
+    .title { font-size: 20px; font-weight: bold; fill: #1a1a2e; }
+    .subtitle { font-size: 12px; fill: #555; }
+    .section-label { font-size: 15px; font-weight: bold; fill: #1a1a2e; }
+    .label { font-size: 11px; fill: #333; font-weight: bold; }
+    .value { font-size: 10.5px; fill: #555; }
+    .annotation { font-size: 10.5px; fill: #666; font-style: italic; }
+    .code { font-size: 10.5px; fill: #2d3748; }
+    .water-high { fill: #48bb78; opacity: 0.55; }
+    .water-med  { fill: #ecc94b; opacity: 0.55; }
+    .water-low  { fill: #f56565; opacity: 0.55; }
+    .water-line { stroke: #2d3748; stroke-width: 0.8; stroke-dasharray: 3,2; }
+    .bucket-wall { fill: none; stroke: #4a5568; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-green { fill: none; stroke: #38a169; stroke-width: 2.5; stroke-linecap: round; }
+    .bucket-wall-blue  { fill: none; stroke: #3182ce; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-purple { fill: none; stroke: #805ad5; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-orange { fill: none; stroke: #c05621; stroke-width: 2; stroke-linecap: round; }
+    .shared-bg { fill: #f0fff4; stroke: #38a169; stroke-width: 1.5; rx: 8; }
+    .wq-bg { fill: #f7fafc; stroke: #a0aec0; stroke-width: 1.5; stroke-dasharray: 5,3; rx: 8; }
+    .rg-bg-blue   { fill: #ebf8ff; stroke: #3182ce; stroke-width: 1; rx: 6; }
+    .rg-bg-purple { fill: #faf5ff; stroke: #805ad5; stroke-width: 1; rx: 6; }
+    .rg-bg-orange { fill: #fffaf0; stroke: #c05621; stroke-width: 1; rx: 6; }
+    .arrow { stroke: #718096; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .arrow-green { stroke: #38a169; stroke-width: 1.5; fill: none; marker-end: url(#arr-g); }
+    .divider { stroke: #e2e8f0; stroke-width: 1; }
+    .highlight { fill: #fefcbf; stroke: #d69e2e; stroke-width: 1; rx: 4; }
+    .heap-row { fill: #fff; stroke: #e2e8f0; stroke-width: 1; }
+    .heap-row-burst { fill: #f0fff4; stroke: #c6f6d5; stroke-width: 1; }
+    .heap-row-noburst { fill: #fff5f5; stroke: #fed7d7; stroke-width: 1; }
+    .threshold-line { stroke: #e53e3e; stroke-width: 1; stroke-dasharray: 4,2; }
+    .refill-arrow { stroke: #38a169; stroke-width: 1; fill: none; marker-end: url(#arr-g-sm); }
+    .drain-arrow { stroke: #e53e3e; stroke-width: 1; fill: none; marker-end: url(#arr-r-sm); }
+  </style>
+
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#718096"/></marker>
+    <marker id="arr-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#38a169"/></marker>
+    <marker id="arr-g-sm" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+      <path d="M0,0 L6,2 L0,4 Z" fill="#38a169"/></marker>
+    <marker id="arr-r-sm" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+      <path d="M0,0 L6,2 L0,4 Z" fill="#e53e3e"/></marker>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- TITLE                                                      -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="600" y="30" text-anchor="middle" class="title">Resource Group Prototype — New CTT Model</text>
+  <text x="600" y="48" text-anchor="middle" class="subtitle">8 vCPUs · UtilGoal=0.75 · BurstDelta=0.25 · online_rg 50% CPU · batch_rg 20% CPU · support_rg 15% CPU</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: NODE-LEVEL GRANTER                               -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="600" y="80" text-anchor="middle" class="section-label">Node-Level Granter — caps total node CPU, no awareness of resource groups</text>
+
+  <rect x="250" y="90" width="700" height="145" class="shared-bg"/>
+  <text x="600" y="110" text-anchor="middle" class="code">cpuTimeTokenGranter.mu.buckets[numBurstQualifications]  // 2 shared buckets</text>
+
+  <!-- canBurst bucket (visual bucket) -->
+  <path d="M 340,120 L 340,190 Q 340,205 355,205 L 475,205 Q 490,205 490,190 L 490,120" class="bucket-wall-green"/>
+  <!-- water fill: 100% -->
+  <path d="M 341,121 L 341,189 Q 341,204 356,204 L 474,204 Q 489,204 489,189 L 489,121 Z" class="water-high"/>
+  <text x="415" y="148" text-anchor="middle" class="label">canBurst</text>
+  <text x="415" y="163" text-anchor="middle" class="value">100% CPU</text>
+  <text x="415" y="178" text-anchor="middle" class="value">8.0s/s</text>
+  <text x="415" y="193" text-anchor="middle" class="value">cap = 8.0s</text>
+  <text x="415" y="225" text-anchor="middle" class="annotation">groups qualifying as canBurst</text>
+  <text x="415" y="237" text-anchor="middle" class="annotation">draw from this bucket</text>
+
+  <!-- noBurst bucket (visual bucket) -->
+  <path d="M 660,120 L 660,190 Q 660,205 675,205 L 795,205 Q 810,205 810,190 L 810,120" class="bucket-wall-green"/>
+  <!-- water fill: 75% of height (height=85, 75% = 64) -->
+  <path d="M 661,157 L 661,189 Q 661,204 676,204 L 794,204 Q 809,204 809,189 L 809,157 Z" class="water-med"/>
+  <line x1="661" y1="157" x2="809" y2="157" class="water-line"/>
+  <text x="735" y="148" text-anchor="middle" class="label">noBurst</text>
+  <text x="735" y="178" text-anchor="middle" class="value">75% CPU</text>
+  <text x="735" y="193" text-anchor="middle" class="value">6.0s/s</text>
+  <text x="735" y="225" text-anchor="middle" class="annotation">groups qualifying as noBurst</text>
+  <text x="735" y="237" text-anchor="middle" class="annotation">restricted to this bucket</text>
+
+  <text x="600" y="252" text-anchor="middle" class="code">All admitted work deducts from BOTH buckets. canBurst ≥ noBurst (invariant).</text>
+
+  <!-- Arrow down to WorkQueue -->
+  <line x1="600" y1="258" x2="600" y2="285" class="arrow-green"/>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: SINGLE WORKQUEUE + RESOURCE GROUP BURST BUCKETS  -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="600" y="300" text-anchor="middle" class="section-label">Single WorkQueue — per-resource-group burst buckets determine canBurst vs noBurst</text>
+
+  <rect x="50" y="310" width="1100" height="480" class="wq-bg"/>
+
+  <!-- Base rate callout -->
+  <rect x="70" y="320" width="1060" height="32" class="highlight"/>
+  <text x="600" y="337" text-anchor="middle" class="code">Burst bucket base rate = canBurst_rate / canBurstTarget = 8e9 ns/s / 1.0 = 8e9 ns/s (100% CPU)</text>
+  <text x="600" y="349" text-anchor="middle" class="annotation">Each resource group's burst bucket = base_rate × burstLimitFrac. Independent thresholds, not shares of a pool.</text>
+
+  <!-- ────────────────────────────────────────────────────────── -->
+  <!-- RESOURCE GROUP: online_rg                                  -->
+  <!-- ────────────────────────────────────────────────────────── -->
+  <rect x="70" y="362" width="1060" height="120" class="rg-bg-blue"/>
+  <text x="90" y="382" class="label" fill="#3182ce">online_rg · CPU_MIN=60% · weight=60 · burstLimitFrac=1.0 (FULLY_UTILIZE) · using 50% CPU</text>
+
+  <!-- Burst bucket for online_rg -->
+  <path d="M 100,395 L 100,460 Q 100,470 110,470 L 210,470 Q 220,470 220,460 L 220,395" class="bucket-wall-blue"/>
+  <!-- Fill: 100% (FULLY_UTILIZE, always full conceptually) -->
+  <path d="M 101,396 L 101,459 Q 101,469 111,469 L 209,469 Q 219,469 219,459 L 219,396 Z" class="water-high"/>
+  <text x="160" y="430" text-anchor="middle" class="label" fill="#fff">FULL</text>
+  <text x="160" y="445" text-anchor="middle" class="value" fill="#fff">8.0e9</text>
+
+  <text x="240" y="405" class="value">capacity = 8e9 × 1.0 = 8.0e9 ns</text>
+  <text x="240" y="420" class="value">refill = 8.0M/ms × 1.0 = 8.0M/ms</text>
+  <text x="240" y="435" class="code">burstLimitFrac ≥ 1.0 → ALWAYS canBurst</text>
+  <text x="240" y="450" class="annotation">Short-circuits burstQualification() — never checks token level</text>
+  <text x="240" y="465" class="annotation">Using 50% CPU (4.0e9/s) but qualification doesn't depend on usage</text>
+
+  <!-- canBurst badge -->
+  <rect x="640" y="418" width="90" height="22" rx="11" fill="#c6f6d5" stroke="#38a169" stroke-width="1"/>
+  <text x="685" y="433" text-anchor="middle" class="label" fill="#276749">canBurst</text>
+
+  <!-- used/weight -->
+  <text x="760" y="425" class="code">used = 0.50 × 8e9 × 1s = 4.0e9</text>
+  <text x="760" y="440" class="code">used/weight = 4.0e9 / 60 = 66.7M</text>
+
+  <!-- ────────────────────────────────────────────────────────── -->
+  <!-- RESOURCE GROUP: batch_rg                                   -->
+  <!-- ────────────────────────────────────────────────────────── -->
+  <rect x="70" y="492" width="1060" height="120" class="rg-bg-purple"/>
+  <text x="90" y="512" class="label" fill="#805ad5">batch_rg · CPU_MIN=30% · weight=30 · burstLimitFrac=0.30 · using 20% CPU</text>
+
+  <!-- Burst bucket for batch_rg -->
+  <path d="M 100,525 L 100,590 Q 100,600 110,600 L 210,600 Q 220,600 220,590 L 220,525" class="bucket-wall-purple"/>
+  <!-- Fill: 100% (under limit, bucket at capacity) -->
+  <path d="M 101,526 L 101,589 Q 101,599 111,599 L 209,599 Q 219,599 219,589 L 219,526 Z" class="water-high"/>
+  <text x="160" y="558" text-anchor="middle" class="label" fill="#fff">100%</text>
+  <text x="160" y="573" text-anchor="middle" class="value" fill="#fff">2.4e9</text>
+
+  <!-- 90% threshold line -->
+  <line x1="98" y1="533" x2="222" y2="533" class="threshold-line"/>
+  <text x="225" y="537" class="value" fill="#e53e3e">90%</text>
+
+  <text x="240" y="535" class="value">capacity = 8e9 × 0.30 = 2.4e9 ns</text>
+  <text x="240" y="550" class="value">refill = 8.0M/ms × 0.30 = 2.4M/ms</text>
+  <text x="240" y="565" class="value">drain at 20% CPU = 0.20 × 8M = 1.6M/ms</text>
+  <text x="240" y="580" class="code">net = +0.8M/ms → bucket stays at capacity</text>
+  <text x="240" y="595" class="annotation">break-even at 30% CPU. Using only 20% → tokens stay full → canBurst</text>
+
+  <!-- refill/drain arrows -->
+  <line x1="80" y1="555" x2="80" y2="530" class="refill-arrow"/>
+  <text x="77" y="545" text-anchor="end" class="value" fill="#38a169">+2.4M</text>
+  <line x1="85" y1="555" x2="85" y2="575" class="drain-arrow"/>
+  <text x="82" y="570" text-anchor="end" class="value" fill="#e53e3e">-1.6M</text>
+
+  <!-- canBurst badge -->
+  <rect x="640" y="548" width="90" height="22" rx="11" fill="#c6f6d5" stroke="#38a169" stroke-width="1"/>
+  <text x="685" y="563" text-anchor="middle" class="label" fill="#276749">canBurst</text>
+
+  <text x="760" y="555" class="code">used = 0.20 × 8e9 × 1s = 1.6e9</text>
+  <text x="760" y="570" class="code">used/weight = 1.6e9 / 30 = 53.3M</text>
+
+  <!-- ────────────────────────────────────────────────────────── -->
+  <!-- RESOURCE GROUP: support_rg                                 -->
+  <!-- ────────────────────────────────────────────────────────── -->
+  <rect x="70" y="622" width="1060" height="155" class="rg-bg-orange"/>
+  <text x="90" y="642" class="label" fill="#c05621">support_rg · CPU_MIN=10% · weight=10 · burstLimitFrac=0.10 · using 15% CPU (OVER LIMIT)</text>
+
+  <!-- Burst bucket for support_rg — 25% full after 1.5s of overuse -->
+  <path d="M 100,655 L 100,740 Q 100,750 110,750 L 210,750 Q 220,750 220,740 L 220,655" class="bucket-wall-orange"/>
+  <!-- Fill: 25% from bottom. bucket height = 95, 25% = 24 -->
+  <path d="M 101,727 L 101,739 Q 101,749 111,749 L 209,749 Q 219,749 219,739 L 219,727 Z" class="water-low"/>
+  <line x1="101" y1="727" x2="219" y2="727" class="water-line"/>
+  <!-- Empty space -->
+  <text x="160" y="690" text-anchor="middle" class="value" fill="#a0aec0">empty</text>
+  <text x="160" y="742" text-anchor="middle" class="value" fill="#c53030">200M</text>
+
+  <!-- 90% threshold line -->
+  <line x1="98" y1="665" x2="222" y2="665" class="threshold-line"/>
+  <text x="225" y="669" class="value" fill="#e53e3e">90% = 720M</text>
+
+  <text x="240" y="665" class="value">capacity = 8e9 × 0.10 = 800M ns</text>
+  <text x="240" y="680" class="value">refill = 8.0M/ms × 0.10 = 800K/ms</text>
+  <text x="240" y="695" class="value">drain at 15% CPU = 0.15 × 8M = 1.2M/ms</text>
+  <text x="240" y="710" class="code">net = -400K/ms → bucket is draining</text>
+  <text x="240" y="725" class="annotation">break-even at 10% CPU. Using 15% → net drain of 400K/ms</text>
+  <text x="240" y="740" class="annotation">After 1.5s of overuse: started at 800M, drained 600M → 200M remaining (25%)</text>
+  <text x="240" y="755" class="annotation">200M &lt; 90% × 800M (720M) → noBurst — restricted to 75% CPU bucket</text>
+
+  <!-- refill/drain arrows -->
+  <line x1="80" y1="700" x2="80" y2="675" class="refill-arrow"/>
+  <text x="77" y="690" text-anchor="end" class="value" fill="#38a169">+800K</text>
+  <line x1="85" y1="695" x2="85" y2="720" class="drain-arrow"/>
+  <text x="82" y="712" text-anchor="end" class="value" fill="#e53e3e">-1.2M</text>
+
+  <!-- noBurst badge -->
+  <rect x="640" y="688" width="90" height="22" rx="11" fill="#fed7d7" stroke="#fc8181" stroke-width="1"/>
+  <text x="685" y="703" text-anchor="middle" class="label" fill="#9b2c2c">noBurst</text>
+
+  <text x="760" y="695" class="code">used = 0.15 × 8e9 × 1s = 1.2e9</text>
+  <text x="760" y="710" class="code">used/weight = 1.2e9 / 10 = 120M</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: TENANT HEAP ORDERING                             -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <line x1="50" y1="800" x2="1150" y2="800" class="divider"/>
+  <text x="600" y="825" text-anchor="middle" class="section-label">tenantHeap Ordering — burst qualification first, then used/weight (lowest first)</text>
+
+  <!-- Heap table -->
+  <rect x="150" y="840" width="900" height="30" rx="4" fill="#edf2f7" stroke="#cbd5e0" stroke-width="1"/>
+  <text x="170" y="860" class="label">Pos</text>
+  <text x="230" y="860" class="label">Resource Group</text>
+  <text x="430" y="860" class="label">Burst Qual</text>
+  <text x="560" y="860" class="label">used</text>
+  <text x="680" y="860" class="label">weight</text>
+  <text x="780" y="860" class="label">used/weight</text>
+  <text x="920" y="860" class="label">Note</text>
+
+  <rect x="150" y="872" width="900" height="28" class="heap-row-burst"/>
+  <text x="170" y="891" class="code">[0]</text>
+  <text x="230" y="891" class="code" fill="#805ad5">batch_rg</text>
+  <rect x="430" y="878" width="70" height="18" rx="9" fill="#c6f6d5" stroke="#38a169" stroke-width="0.8"/>
+  <text x="465" y="891" text-anchor="middle" class="value" fill="#276749">canBurst</text>
+  <text x="560" y="891" class="code">1.6e9</text>
+  <text x="680" y="891" class="code">30</text>
+  <text x="780" y="891" class="code">53.3M</text>
+  <text x="920" y="891" class="annotation">← next grant</text>
+
+  <rect x="150" y="902" width="900" height="28" class="heap-row-burst"/>
+  <text x="170" y="921" class="code">[1]</text>
+  <text x="230" y="921" class="code" fill="#3182ce">online_rg</text>
+  <rect x="430" y="908" width="70" height="18" rx="9" fill="#c6f6d5" stroke="#38a169" stroke-width="0.8"/>
+  <text x="465" y="921" text-anchor="middle" class="value" fill="#276749">canBurst</text>
+  <text x="560" y="921" class="code">4.0e9</text>
+  <text x="680" y="921" class="code">60</text>
+  <text x="780" y="921" class="code">66.7M</text>
+  <text x="920" y="921" class="annotation"></text>
+
+  <rect x="150" y="932" width="900" height="28" class="heap-row-noburst"/>
+  <text x="170" y="951" class="code">[2]</text>
+  <text x="230" y="951" class="code" fill="#c05621">support_rg</text>
+  <rect x="430" y="938" width="70" height="18" rx="9" fill="#fed7d7" stroke="#fc8181" stroke-width="0.8"/>
+  <text x="465" y="951" text-anchor="middle" class="value" fill="#9b2c2c">noBurst</text>
+  <text x="560" y="951" class="code">1.2e9</text>
+  <text x="680" y="951" class="code">10</text>
+  <text x="780" y="951" class="code">120M</text>
+  <text x="920" y="951" class="annotation">noBurst → last</text>
+
+  <text x="600" y="980" text-anchor="middle" class="annotation">batch_rg gets the next grant: both it and online_rg are canBurst, but batch_rg has lower used/weight.</text>
+  <text x="600" y="995" text-anchor="middle" class="annotation">support_rg is last because it is noBurst, regardless of its used/weight ratio.</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 4: INTRA-GROUP (waitingWorkHeap)                    -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <line x1="50" y1="1010" x2="1150" y2="1010" class="divider"/>
+  <text x="600" y="1035" text-anchor="middle" class="section-label">Intra-Resource-Group: waitingWorkHeap (unchanged from existing design)</text>
+
+  <text x="600" y="1055" text-anchor="middle" class="annotation">Once a resource group is selected from the tenantHeap, the waitingWorkHeap picks which request gets granted:</text>
+
+  <rect x="200" y="1065" width="800" height="80" rx="6" fill="#f7fafc" stroke="#a0aec0" stroke-width="1"/>
+  <text x="220" y="1085" class="code">1. Priority (WorkPriority): HighPri (127) > NormalPri (0) > LowPri (-128)</text>
+  <text x="220" y="1103" class="code">2. When priorities equal → arrival time ordering:</text>
+  <text x="240" y="1121" class="code">LIFO (epoch-LIFO): newer first — for closed-epoch work (epoch > 100ms threshold)</text>
+  <text x="240" y="1139" class="code">FIFO: older first — standard first-come-first-served for open-epoch work</text>
+
+</svg>

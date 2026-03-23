@@ -1,0 +1,244 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1050" font-family="Consolas, Monaco, monospace" font-size="12">
+  <title>New CTT Model: System + App as Two Resource Groups</title>
+  <style>
+    .title { font-size: 20px; font-weight: bold; fill: #1a1a2e; }
+    .subtitle { font-size: 12px; fill: #555; }
+    .section-label { font-size: 15px; font-weight: bold; fill: #1a1a2e; }
+    .label { font-size: 11px; fill: #333; font-weight: bold; }
+    .value { font-size: 10.5px; fill: #555; }
+    .annotation { font-size: 10.5px; fill: #666; font-style: italic; }
+    .code { font-size: 10.5px; fill: #2d3748; }
+    .water-high { fill: #48bb78; opacity: 0.55; }
+    .water-med  { fill: #ecc94b; opacity: 0.55; }
+    .water-low  { fill: #f56565; opacity: 0.55; }
+    .water-line { stroke: #2d3748; stroke-width: 0.7; stroke-dasharray: 3,2; }
+    .threshold-line { stroke: #e53e3e; stroke-width: 0.8; stroke-dasharray: 3,2; }
+    .bucket-wall-green { fill: none; stroke: #38a169; stroke-width: 2.5; stroke-linecap: round; }
+    .bucket-wall-blue  { fill: none; stroke: #3182ce; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-purple { fill: none; stroke: #805ad5; stroke-width: 2; stroke-linecap: round; }
+    .shared-bg { fill: #f0fff4; stroke: #38a169; stroke-width: 1.5; rx: 8; }
+    .wq-bg { fill: #f7fafc; stroke: #a0aec0; stroke-width: 1.5; stroke-dasharray: 5,3; rx: 8; }
+    .rg-bg-blue   { fill: #ebf8ff; stroke: #3182ce; stroke-width: 1; rx: 6; }
+    .rg-bg-purple { fill: #faf5ff; stroke: #805ad5; stroke-width: 1; rx: 6; }
+    .arrow { stroke: #718096; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .arrow-green { stroke: #38a169; stroke-width: 1.5; fill: none; marker-end: url(#arr-g); }
+    .divider { stroke: #e2e8f0; stroke-width: 1; }
+    .highlight { fill: #fefcbf; stroke: #d69e2e; stroke-width: 1; rx: 4; }
+    .mapping-bg { fill: #f7fafc; stroke: #a0aec0; stroke-width: 1; rx: 6; }
+    .mapping-old { fill: #fff5f5; stroke: #fc8181; stroke-width: 1; rx: 4; }
+    .mapping-new { fill: #f0fff4; stroke: #68d391; stroke-width: 1; rx: 4; }
+    .mapping-arrow { stroke: #718096; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .heap-row-burst { fill: #f0fff4; stroke: #c6f6d5; stroke-width: 1; }
+    .heap-row-noburst { fill: #fff5f5; stroke: #fed7d7; stroke-width: 1; }
+    .refill-arrow { stroke: #38a169; stroke-width: 1; fill: none; marker-end: url(#arr-g-sm); }
+    .drain-arrow { stroke: #e53e3e; stroke-width: 1; fill: none; marker-end: url(#arr-r-sm); }
+  </style>
+
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#718096"/></marker>
+    <marker id="arr-g" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#38a169"/></marker>
+    <marker id="arr-g-sm" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+      <path d="M0,0 L6,2 L0,4 Z" fill="#38a169"/></marker>
+    <marker id="arr-r-sm" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto">
+      <path d="M0,0 L6,2 L0,4 Z" fill="#e53e3e"/></marker>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- TITLE                                                      -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="600" y="28" text-anchor="middle" class="title">New CTT Model: System + App Mapped as Two Resource Groups</text>
+  <text x="600" y="48" text-anchor="middle" class="subtitle">8 vCPUs · UtilGoal=0.75 · BurstDelta=0.25 · Same tenants as old model, reframed as resource groups</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- MAPPING CALLOUT                                             -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <rect x="100" y="62" width="1000" height="72" class="mapping-bg"/>
+  <text x="600" y="82" text-anchor="middle" class="label">Direct mapping from old 2-tier model:</text>
+
+  <rect x="140" y="90" width="200" height="20" class="mapping-old"/>
+  <text x="240" y="104" text-anchor="middle" class="code">systemTenant (tier 0)</text>
+  <line x1="345" y1="100" x2="395" y2="100" class="mapping-arrow"/>
+  <rect x="400" y="90" width="220" height="20" class="mapping-new"/>
+  <text x="510" y="104" text-anchor="middle" class="code">system_rg: w=9, frac=1.0</text>
+
+  <rect x="140" y="114" width="200" height="20" class="mapping-old"/>
+  <text x="240" y="128" text-anchor="middle" class="code">appTenant (tier 1)</text>
+  <line x1="345" y1="124" x2="395" y2="124" class="mapping-arrow"/>
+  <rect x="400" y="114" width="220" height="20" class="mapping-new"/>
+  <text x="510" y="128" text-anchor="middle" class="code">app tenants: w=1, frac=0.25</text>
+
+  <text x="660" y="104" class="annotation">FULLY_UTILIZE — always canBurst (was: separate queue, always first)</text>
+  <text x="660" y="128" class="annotation">break-even at 25% CPU (was: 20% from noBurst_rate/4)</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: NODE-LEVEL GRANTER                               -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="600" y="160" text-anchor="middle" class="section-label">Node-Level Granter — 2 shared buckets (was 4 in old model)</text>
+
+  <rect x="250" y="170" width="700" height="130" class="shared-bg"/>
+  <text x="600" y="190" text-anchor="middle" class="code">cpuTimeTokenGranter.mu.buckets[numBurstQualifications] — shared by all resource groups</text>
+
+  <!-- canBurst bucket -->
+  <path d="M 340,200 L 340,265 Q 340,278 355,278 L 475,278 Q 490,278 490,265 L 490,200" class="bucket-wall-green"/>
+  <path d="M 341,201 L 341,264 Q 341,277 356,277 L 474,277 Q 489,277 489,264 L 489,201 Z" class="water-high"/>
+  <text x="415" y="230" text-anchor="middle" class="label" fill="#fff">canBurst</text>
+  <text x="415" y="248" text-anchor="middle" class="value" fill="#fff">100% · 8.0s/s</text>
+  <text x="415" y="264" text-anchor="middle" class="value" fill="#fff">cap = 8.0s</text>
+
+  <!-- noBurst bucket -->
+  <path d="M 660,200 L 660,265 Q 660,278 675,278 L 795,278 Q 810,278 810,265 L 810,200" class="bucket-wall-green"/>
+  <path d="M 661,220 L 661,264 Q 661,277 676,277 L 794,277 Q 809,277 809,264 L 809,220 Z" class="water-med"/>
+  <line x1="661" y1="220" x2="809" y2="220" class="water-line"/>
+  <text x="735" y="240" text-anchor="middle" class="label">noBurst</text>
+  <text x="735" y="258" text-anchor="middle" class="value">75% · 6.0s/s</text>
+  <text x="735" y="274" text-anchor="middle" class="value">cap = 6.0s</text>
+
+  <text x="600" y="297" text-anchor="middle" class="annotation">Was: 4 buckets (sys_cb=8.0, sys_nb=7.6, app_cb=6.8, app_nb=6.4). Now: 2 shared buckets.</text>
+
+  <!-- Arrow down to WorkQueue -->
+  <line x1="600" y1="303" x2="600" y2="330" class="arrow-green"/>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: SINGLE WORKQUEUE + PER-RG BURST BUCKETS          -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="600" y="348" text-anchor="middle" class="section-label">Single WorkQueue — per-resource-group burst buckets (was: 2 separate WorkQueues)</text>
+
+  <rect x="50" y="360" width="1100" height="430" class="wq-bg"/>
+
+  <!-- Base rate callout -->
+  <rect x="70" y="370" width="1060" height="32" class="highlight"/>
+  <text x="600" y="386" text-anchor="middle" class="code">Burst bucket base rate = 8e9 ns/s (100% CPU). Was: noBurst_rate/4 per tier (sys=1.9s, app=1.6s).</text>
+  <text x="600" y="398" text-anchor="middle" class="annotation">Now: base × burstLimitFrac per resource group. Each group independently sized.</text>
+
+  <!-- ────────────────────────────────────────────────────────── -->
+  <!-- RESOURCE GROUP: system_rg (was systemTenant tier 0)        -->
+  <!-- ────────────────────────────────────────────────────────── -->
+  <rect x="70" y="412" width="1060" height="115" class="rg-bg-blue"/>
+  <text x="90" y="432" class="label" fill="#3182ce">system_rg (was: systemTenant tier 0) · weight=9 · burstLimitFrac=1.0 (FULLY_UTILIZE)</text>
+
+  <!-- Burst bucket -->
+  <path d="M 100,445 L 100,510 Q 100,520 112,520 L 218,520 Q 230,520 230,510 L 230,445" class="bucket-wall-blue"/>
+  <path d="M 101,446 L 101,509 Q 101,519 113,519 L 217,519 Q 229,519 229,509 L 229,446 Z" class="water-high"/>
+  <text x="165" y="478" text-anchor="middle" class="label" fill="#fff">FULL</text>
+  <text x="165" y="496" text-anchor="middle" class="value" fill="#fff">8.0e9 ns</text>
+
+  <text x="250" y="458" class="value">capacity = 8e9 × 1.0 = 8.0e9 ns (was: burst bucket cap = 1.9s)</text>
+  <text x="250" y="473" class="code">burstLimitFrac ≥ 1.0 → ALWAYS canBurst</text>
+  <text x="250" y="488" class="annotation">Was: system had its own WorkQueue + childGranter, tried first in tier loop.</text>
+  <text x="250" y="503" class="annotation">Now: same single queue as app, but weight=9 gives 9× priority + always canBurst.</text>
+  <text x="250" y="518" class="annotation">Net effect is similar: system work is strongly prioritized over app work.</text>
+
+  <!-- canBurst badge -->
+  <rect x="700" y="465" width="90" height="22" rx="11" fill="#c6f6d5" stroke="#38a169" stroke-width="1"/>
+  <text x="745" y="480" text-anchor="middle" class="label" fill="#276749">canBurst</text>
+
+  <!-- ────────────────────────────────────────────────────────── -->
+  <!-- RESOURCE GROUP: app tenants (was appTenant tier 1)         -->
+  <!-- ────────────────────────────────────────────────────────── -->
+  <rect x="70" y="537" width="1060" height="240" class="rg-bg-purple"/>
+  <text x="90" y="557" class="label" fill="#805ad5">App tenants (was: appTenant tier 1) · weight=1 each · burstLimitFrac=0.25</text>
+  <text x="90" y="572" class="annotation">Was: all app tenants in a single App WorkQueue with uniform burst bucket (cap=1.6s, break-even=20% CPU)</text>
+  <text x="90" y="587" class="annotation">Now: each tenant is an entry in the shared tenantHeap with its own burst bucket (cap=2.0s, break-even=25% CPU)</text>
+
+  <!-- Tenant 2: under limit → canBurst -->
+  <text x="110" y="610" class="label" fill="#805ad5">Tenant 2 (using 15% CPU)</text>
+
+  <path d="M 110,618 L 110,678 Q 110,688 120,688 L 200,688 Q 210,688 210,678 L 210,618" class="bucket-wall-purple"/>
+  <path d="M 111,624 L 111,677 Q 111,687 121,687 L 199,687 Q 209,687 209,677 L 209,624 Z" class="water-high"/>
+  <line x1="109" y1="625" x2="212" y2="625" class="threshold-line"/>
+  <text x="214" y="629" class="value" fill="#e53e3e">90%</text>
+  <text x="160" y="658" text-anchor="middle" class="value" fill="#fff">95%</text>
+
+  <text x="230" y="640" class="value">cap = 8e9 × 0.25 = 2.0e9 ns (was: 1.6s)</text>
+  <text x="230" y="655" class="value">refill = 2.0M/ms · break-even = 25% CPU (was: 20%)</text>
+  <text x="230" y="670" class="value">using 15% &lt; 25% → bucket at 95% → canBurst</text>
+
+  <!-- refill/drain arrows -->
+  <line x1="95" y1="655" x2="95" y2="635" class="refill-arrow"/>
+  <text x="92" y="648" text-anchor="end" class="value" fill="#38a169">+2.0M</text>
+  <line x1="99" y1="650" x2="99" y2="668" class="drain-arrow"/>
+  <text x="96" y="664" text-anchor="end" class="value" fill="#e53e3e">-1.2M</text>
+
+  <rect x="530" y="645" width="90" height="22" rx="11" fill="#c6f6d5" stroke="#38a169" stroke-width="1"/>
+  <text x="575" y="660" text-anchor="middle" class="label" fill="#276749">canBurst</text>
+
+  <!-- Tenant 3: over limit → noBurst -->
+  <text x="110" y="705" class="label" fill="#805ad5">Tenant 3 (using 40% CPU — OVER LIMIT)</text>
+
+  <path d="M 110,713 L 110,768 Q 110,778 120,778 L 200,778 Q 210,778 210,768 L 210,713" class="bucket-wall-purple"/>
+  <!-- 30% fill -->
+  <path d="M 111,755 L 111,767 Q 111,777 121,777 L 199,777 Q 209,777 209,767 L 209,755 Z" class="water-low"/>
+  <line x1="111" y1="755" x2="209" y2="755" class="water-line"/>
+  <line x1="109" y1="720" x2="212" y2="720" class="threshold-line"/>
+  <text x="214" y="724" class="value" fill="#e53e3e">90%</text>
+  <text x="160" y="770" text-anchor="middle" class="value" fill="#fff">30%</text>
+
+  <text x="230" y="735" class="value">cap = 2.0e9 ns · break-even = 25% CPU</text>
+  <text x="230" y="750" class="value">using 40% &gt; 25% → drain = 3.2M/ms &gt; refill = 2.0M/ms</text>
+  <text x="230" y="765" class="value">net = -1.2M/ms → bucket draining → 30% full → noBurst</text>
+
+  <line x1="95" y1="748" x2="95" y2="728" class="refill-arrow"/>
+  <text x="92" y="740" text-anchor="end" class="value" fill="#38a169">+2.0M</text>
+  <line x1="99" y1="743" x2="99" y2="763" class="drain-arrow"/>
+  <text x="96" y="758" text-anchor="end" class="value" fill="#e53e3e">-3.2M</text>
+
+  <rect x="530" y="745" width="90" height="22" rx="11" fill="#fed7d7" stroke="#fc8181" stroke-width="1"/>
+  <text x="575" y="760" text-anchor="middle" class="label" fill="#9b2c2c">noBurst</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: TENANT HEAP ORDERING                             -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <line x1="50" y1="800" x2="1150" y2="800" class="divider"/>
+  <text x="600" y="825" text-anchor="middle" class="section-label">tenantHeap Ordering — burst qualification first, then used/weight (lowest first)</text>
+  <text x="600" y="842" text-anchor="middle" class="annotation">Was: 2 separate heaps (system always granted first via tier loop). Now: 1 merged heap, weight differentiates.</text>
+
+  <!-- Heap header -->
+  <rect x="120" y="855" width="960" height="25" rx="4" fill="#edf2f7" stroke="#cbd5e0" stroke-width="1"/>
+  <text x="140" y="872" class="label">Pos</text>
+  <text x="195" y="872" class="label">Resource Group</text>
+  <text x="400" y="872" class="label">Burst Qual</text>
+  <text x="520" y="872" class="label">weight</text>
+  <text x="610" y="872" class="label">used/weight</text>
+  <text x="750" y="872" class="label">Note</text>
+
+  <!-- Row 0: system_rg -->
+  <rect x="120" y="882" width="960" height="28" class="heap-row-burst"/>
+  <text x="140" y="901" class="code">[0]</text>
+  <text x="195" y="901" class="code" fill="#3182ce">system_rg (T1)</text>
+  <rect x="400" y="888" width="70" height="18" rx="9" fill="#c6f6d5" stroke="#38a169" stroke-width="0.8"/>
+  <text x="435" y="901" text-anchor="middle" class="value" fill="#276749">canBurst</text>
+  <text x="520" y="901" class="code">9</text>
+  <text x="610" y="901" class="code">lowest (w=9)</text>
+  <text x="750" y="901" class="annotation">always canBurst + highest weight → first</text>
+
+  <!-- Row 1: Tenant 2 -->
+  <rect x="120" y="912" width="960" height="28" class="heap-row-burst"/>
+  <text x="140" y="931" class="code">[1]</text>
+  <text x="195" y="931" class="code" fill="#805ad5">app (T2)</text>
+  <rect x="400" y="918" width="70" height="18" rx="9" fill="#c6f6d5" stroke="#38a169" stroke-width="0.8"/>
+  <text x="435" y="931" text-anchor="middle" class="value" fill="#276749">canBurst</text>
+  <text x="520" y="931" class="code">1</text>
+  <text x="610" y="931" class="code">used/1</text>
+  <text x="750" y="931" class="annotation">under 25% limit → canBurst</text>
+
+  <!-- Row 2: Tenant 3 -->
+  <rect x="120" y="942" width="960" height="28" class="heap-row-noburst"/>
+  <text x="140" y="961" class="code">[2]</text>
+  <text x="195" y="961" class="code" fill="#805ad5">app (T3)</text>
+  <rect x="400" y="948" width="70" height="18" rx="9" fill="#fed7d7" stroke="#fc8181" stroke-width="0.8"/>
+  <text x="435" y="961" text-anchor="middle" class="value" fill="#9b2c2c">noBurst</text>
+  <text x="520" y="961" class="code">1</text>
+  <text x="610" y="961" class="code">used/1</text>
+  <text x="750" y="961" class="annotation">over 25% limit → noBurst → last, 75% bucket only</text>
+
+  <!-- Summary -->
+  <text x="600" y="995" text-anchor="middle" class="annotation">system_rg gets the next grant: it has the highest weight AND always qualifies as canBurst.</text>
+  <text x="600" y="1012" text-anchor="middle" class="annotation">T3 is last: noBurst sorts after all canBurst groups, and its work can only draw from the 75% CPU bucket (6.0s/s).</text>
+
+  <!-- Config box -->
+  <rect x="120" y="1025" width="960" height="22" rx="4" fill="#f7fafc" stroke="#a0aec0" stroke-width="1"/>
+  <text x="600" y="1040" text-anchor="middle" class="code">SetResourceGroupConfig({ 1: {Weight:9, BurstLimitFrac:1.0} })  // system. App tenants: default w=1, frac=0.25</text>
+
+</svg>

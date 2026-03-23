@@ -1,0 +1,218 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 880" font-family="Consolas, Monaco, monospace" font-size="12">
+  <title>Old CTT Model: 2D (resourceTier × burstQualification)</title>
+  <style>
+    .title { font-size: 20px; font-weight: bold; fill: #1a1a2e; }
+    .subtitle { font-size: 12px; fill: #555; }
+    .section-label { font-size: 15px; font-weight: bold; fill: #1a1a2e; }
+    .label { font-size: 11px; fill: #333; font-weight: bold; }
+    .value { font-size: 10.5px; fill: #555; }
+    .annotation { font-size: 10.5px; fill: #666; font-style: italic; }
+    .code { font-size: 10.5px; fill: #2d3748; }
+    .setting { font-size: 10.5px; fill: #4a5568; }
+    .water-high { fill: #48bb78; opacity: 0.55; }
+    .water-med  { fill: #ecc94b; opacity: 0.55; }
+    .water-low  { fill: #f56565; opacity: 0.55; }
+    .water-line { stroke: #2d3748; stroke-width: 0.7; stroke-dasharray: 3,2; }
+    .threshold-line { stroke: #e53e3e; stroke-width: 0.8; stroke-dasharray: 3,2; }
+    .bucket-wall { fill: none; stroke: #4a5568; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-sys { fill: none; stroke: #3182ce; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-app { fill: none; stroke: #805ad5; stroke-width: 2; stroke-linecap: round; }
+    .tier-bg-system { fill: #ebf8ff; stroke: #3182ce; stroke-width: 1; rx: 8; }
+    .tier-bg-app { fill: #faf5ff; stroke: #805ad5; stroke-width: 1; rx: 8; }
+    .wq-bg { fill: #f7fafc; stroke: #a0aec0; stroke-width: 1.5; stroke-dasharray: 5,3; rx: 8; }
+    .removed { fill: #fed7d7; stroke: #fc8181; stroke-width: 1; rx: 4; }
+    .arrow { stroke: #718096; stroke-width: 1.5; fill: none; marker-end: url(#arr); }
+    .arrow-sys { stroke: #3182ce; stroke-width: 1.5; fill: none; marker-end: url(#arr-sys); }
+    .arrow-app { stroke: #805ad5; stroke-width: 1.5; fill: none; marker-end: url(#arr-app); }
+    .divider { stroke: #e2e8f0; stroke-width: 1; }
+  </style>
+
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#718096"/></marker>
+    <marker id="arr-sys" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#3182ce"/></marker>
+    <marker id="arr-app" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#805ad5"/></marker>
+  </defs>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- TITLE                                                      -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="550" y="28" text-anchor="middle" class="title">Old CTT Model: 2D (resourceTier × burstQualification)</text>
+  <text x="550" y="48" text-anchor="middle" class="subtitle">8 vCPUs · SystemUtilGoal=0.95 · AppUtilGoal=0.80 · BurstDelta=0.05</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 1: NODE-LEVEL GRANTER (4 buckets)                   -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="550" y="80" text-anchor="middle" class="section-label">Node-Level Granter · buckets[numResourceTiers][numBurstQualifications] — 2×2 = 4 buckets</text>
+
+  <!-- System Tier Box -->
+  <rect x="50" y="95" width="480" height="175" class="tier-bg-system"/>
+  <text x="290" y="115" text-anchor="middle" class="label" fill="#3182ce">systemTenant (tier 0) — SystemUtilGoal=0.95, +BurstDelta → 1.00</text>
+
+  <!-- System canBurst bucket -->
+  <path d="M 100,130 L 100,210 Q 100,222 115,222 L 225,222 Q 240,222 240,210 L 240,130" class="bucket-wall-sys"/>
+  <path d="M 101,131 L 101,209 Q 101,221 116,221 L 224,221 Q 239,221 239,209 L 239,131 Z" class="water-high"/>
+  <text x="170" y="165" text-anchor="middle" class="label" fill="#fff">canBurst</text>
+  <text x="170" y="182" text-anchor="middle" class="value" fill="#fff">100% CPU</text>
+  <text x="170" y="198" text-anchor="middle" class="value" fill="#fff">8.0s/s</text>
+  <text x="170" y="237" text-anchor="middle" class="value">cap = 8.0s</text>
+
+  <!-- System noBurst bucket -->
+  <path d="M 290,130 L 290,210 Q 290,222 305,222 L 415,222 Q 430,222 430,210 L 430,130" class="bucket-wall-sys"/>
+  <!-- 95% fill: height 92 → fill starts at 130 + (92*0.05) = 135 -->
+  <path d="M 291,135 L 291,209 Q 291,221 306,221 L 414,221 Q 429,221 429,209 L 429,135 Z" class="water-high"/>
+  <line x1="291" y1="135" x2="429" y2="135" class="water-line"/>
+  <text x="360" y="165" text-anchor="middle" class="label" fill="#fff">noBurst</text>
+  <text x="360" y="182" text-anchor="middle" class="value" fill="#fff">95% CPU</text>
+  <text x="360" y="198" text-anchor="middle" class="value" fill="#fff">7.6s/s</text>
+  <text x="360" y="237" text-anchor="middle" class="value">cap = 7.6s</text>
+
+  <text x="290" y="258" text-anchor="middle" class="annotation">Invariant #2: canBurst tokens ≥ noBurst tokens (within tier)</text>
+
+  <!-- App Tier Box -->
+  <rect x="570" y="95" width="480" height="175" class="tier-bg-app"/>
+  <text x="810" y="115" text-anchor="middle" class="label" fill="#805ad5">appTenant (tier 1) — AppUtilGoal=0.80, +BurstDelta → 0.85</text>
+
+  <!-- App canBurst bucket -->
+  <path d="M 620,130 L 620,210 Q 620,222 635,222 L 745,222 Q 760,222 760,210 L 760,130" class="bucket-wall-app"/>
+  <!-- 85% fill -->
+  <path d="M 621,144 L 621,209 Q 621,221 636,221 L 744,221 Q 759,221 759,209 L 759,144 Z" class="water-med"/>
+  <line x1="621" y1="144" x2="759" y2="144" class="water-line"/>
+  <text x="690" y="168" text-anchor="middle" class="label" fill="#fff">canBurst</text>
+  <text x="690" y="185" text-anchor="middle" class="value" fill="#fff">85% CPU</text>
+  <text x="690" y="201" text-anchor="middle" class="value" fill="#fff">6.8s/s</text>
+  <text x="690" y="237" text-anchor="middle" class="value">cap = 6.8s</text>
+
+  <!-- App noBurst bucket -->
+  <path d="M 810,130 L 810,210 Q 810,222 825,222 L 935,222 Q 950,222 950,210 L 950,130" class="bucket-wall-app"/>
+  <!-- 80% fill -->
+  <path d="M 811,148 L 811,209 Q 811,221 826,221 L 934,221 Q 949,221 949,209 L 949,148 Z" class="water-med"/>
+  <line x1="811" y1="148" x2="949" y2="148" class="water-line"/>
+  <text x="880" y="168" text-anchor="middle" class="label">noBurst</text>
+  <text x="880" y="185" text-anchor="middle" class="value">80% CPU</text>
+  <text x="880" y="201" text-anchor="middle" class="value">6.4s/s</text>
+  <text x="880" y="237" text-anchor="middle" class="value">cap = 6.4s</text>
+
+  <text x="810" y="258" text-anchor="middle" class="annotation">Invariant #1: system tokens ≥ app tokens (across tiers)</text>
+
+  <!-- Grant priority annotation -->
+  <text x="550" y="280" text-anchor="middle" class="code">tryGrantLocked: for tier := range requester { ... } — system tier always tried first</text>
+  <text x="550" y="295" text-anchor="middle" class="annotation">All admitted work deducts from ALL 4 buckets. System can starve app.</text>
+
+  <!-- Arrows to child granters -->
+  <line x1="290" y1="300" x2="290" y2="320" class="arrow-sys"/>
+  <line x1="810" y1="300" x2="810" y2="320" class="arrow-app"/>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- CHILD GRANTERS                                              -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <rect x="210" y="325" width="160" height="25" class="removed"/>
+  <text x="290" y="342" text-anchor="middle" class="code">childGranter(system)</text>
+
+  <rect x="730" y="325" width="160" height="25" class="removed"/>
+  <text x="810" y="342" text-anchor="middle" class="code">childGranter(app)</text>
+
+  <text x="550" y="342" text-anchor="middle" class="annotation">proxy: injects tier into tryGet(tier, qual, count)</text>
+
+  <line x1="290" y1="355" x2="290" y2="385" class="arrow-sys"/>
+  <line x1="810" y1="355" x2="810" y2="385" class="arrow-app"/>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 2: WORKQUEUES + PER-TENANT BURST BUCKETS            -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <text x="550" y="400" text-anchor="middle" class="section-label">WorkQueues (one per tier) · Per-Tenant Burst Buckets</text>
+
+  <!-- System WorkQueue -->
+  <rect x="50" y="415" width="480" height="215" class="wq-bg"/>
+  <text x="290" y="435" text-anchor="middle" class="label" fill="#3182ce">System WorkQueue</text>
+  <text x="290" y="450" text-anchor="middle" class="setting">burst cap = noBurst_rate / 4 = 7.6s / 4 = 1.9s</text>
+  <text x="290" y="465" text-anchor="middle" class="setting">burst refill = 1.9ms/tick · break-even = 23.75% CPU</text>
+
+  <!-- System tenant burst bucket -->
+  <text x="120" y="488" class="label">Tenant 1 (system)</text>
+  <path d="M 120,495 L 120,555 Q 120,565 132,565 L 252,565 Q 264,565 264,555 L 264,495" class="bucket-wall-sys"/>
+  <path d="M 121,496 L 121,554 Q 121,564 133,564 L 251,564 Q 263,564 263,554 L 263,496 Z" class="water-high"/>
+  <!-- 90% threshold -->
+  <line x1="118" y1="502" x2="266" y2="502" class="threshold-line"/>
+  <text x="270" y="506" class="value" fill="#e53e3e">90%</text>
+  <text x="192" y="535" text-anchor="middle" class="label" fill="#fff">1.9s (100%)</text>
+
+  <text x="290" y="530" class="value">→ canBurst (100% > 90%)</text>
+  <text x="290" y="548" class="annotation">Same bucket for all system tenants.</text>
+  <text x="290" y="565" class="annotation">No per-tenant differentiation.</text>
+
+  <text x="290" y="598" text-anchor="middle" class="annotation">Only system tenant work goes through this queue.</text>
+  <text x="290" y="614" text-anchor="middle" class="annotation">Inter-tenant fair sharing only works within a tier.</text>
+
+  <!-- App WorkQueue -->
+  <rect x="570" y="415" width="480" height="215" class="wq-bg"/>
+  <text x="810" y="435" text-anchor="middle" class="label" fill="#805ad5">App WorkQueue</text>
+  <text x="810" y="450" text-anchor="middle" class="setting">burst cap = noBurst_rate / 4 = 6.4s / 4 = 1.6s</text>
+  <text x="810" y="465" text-anchor="middle" class="setting">burst refill = 1.6ms/tick · break-even = 20% CPU (0.80 × 0.25)</text>
+
+  <!-- App tenant 2 burst bucket: 92% full -->
+  <text x="610" y="488" class="label">Tenant 2</text>
+  <path d="M 610,495 L 610,545 Q 610,553 619,553 L 689,553 Q 698,553 698,545 L 698,495" class="bucket-wall-app"/>
+  <path d="M 611,500 L 611,544 Q 611,552 620,552 L 688,552 Q 697,552 697,544 L 697,500 Z" class="water-high"/>
+  <line x1="609" y1="500" x2="700" y2="500" class="threshold-line"/>
+  <text x="654" y="530" text-anchor="middle" class="value" fill="#fff">92%</text>
+  <text x="710" y="525" class="value">canBurst</text>
+
+  <!-- App tenant 3 burst bucket: 35% full -->
+  <text x="750" y="488" class="label">Tenant 3</text>
+  <path d="M 750,495 L 750,545 Q 750,553 759,553 L 829,553 Q 838,553 838,545 L 838,495" class="bucket-wall-app"/>
+  <!-- 35% fill from bottom -->
+  <path d="M 751,530 L 751,544 Q 751,552 760,552 L 828,552 Q 837,552 837,544 L 837,530 Z" class="water-low"/>
+  <line x1="751" y1="530" x2="837" y2="530" class="water-line"/>
+  <line x1="749" y1="500" x2="840" y2="500" class="threshold-line"/>
+  <text x="794" y="546" text-anchor="middle" class="value" fill="#fff">35%</text>
+  <text x="850" y="541" class="value">noBurst</text>
+
+  <!-- App tenant 4 burst bucket: 95% full -->
+  <text x="880" y="488" class="label">Tenant 4</text>
+  <path d="M 880,495 L 880,545 Q 880,553 889,553 L 959,553 Q 968,553 968,545 L 968,495" class="bucket-wall-app"/>
+  <path d="M 881,498 L 881,544 Q 881,552 890,552 L 958,552 Q 967,552 967,544 L 967,498 Z" class="water-high"/>
+  <line x1="879" y1="500" x2="970" y2="500" class="threshold-line"/>
+  <text x="924" y="530" text-anchor="middle" class="value" fill="#fff">95%</text>
+  <text x="978" y="525" class="value">canBurst</text>
+
+  <text x="810" y="580" text-anchor="middle" class="annotation">All app tenants get identical burst bucket (1.6s cap).</text>
+  <text x="810" y="596" text-anchor="middle" class="annotation">Smaller than system (1.6s vs 1.9s) because AppUtil (80%) &lt; SystemUtil (95%).</text>
+  <text x="810" y="614" text-anchor="middle" class="annotation">No per-tenant differentiation — every app tenant breaks even at 20% CPU.</text>
+
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <!-- SECTION 3: REFILL FLOW                                      -->
+  <!-- ═══════════════════════════════════════════════════════════ -->
+  <line x1="30" y1="645" x2="1070" y2="645" class="divider"/>
+  <text x="550" y="670" text-anchor="middle" class="section-label">Burst Bucket Refill Flow</text>
+
+  <rect x="60" y="685" width="500" height="110" rx="6" fill="#f7fafc" stroke="#a0aec0" stroke-width="1"/>
+  <text x="80" y="705" class="code">allocateTokens:</text>
+  <text x="100" y="723" class="code">for resourceTier := range numResourceTiers {</text>
+  <text x="120" y="741" class="code">toAdd := allocations[resourceTier][noBurst] / 4</text>
+  <text x="120" y="759" class="code">burstCapacity := a.refillRates[resourceTier][noBurst] / 4</text>
+  <text x="120" y="777" class="code">a.queues[resourceTier].refillBurstBuckets(toAdd, burstCapacity)</text>
+  <text x="100" y="792" class="code">}</text>
+
+  <!-- Concrete values -->
+  <rect x="600" y="685" width="440" height="110" rx="6" fill="#f7fafc" stroke="#a0aec0" stroke-width="1"/>
+  <text x="620" y="705" class="label">Concrete values (8 vCPU):</text>
+
+  <text x="620" y="725" class="label" fill="#3182ce">system tier:</text>
+  <text x="720" y="725" class="value">noBurst_rate = 7.6s/s</text>
+  <text x="720" y="740" class="value">burst cap = 7.6/4 = 1.9s, refill = 1.9ms/tick</text>
+  <text x="720" y="755" class="value">break-even = 1.9s/8s = 23.75% CPU</text>
+
+  <text x="620" y="775" class="label" fill="#805ad5">app tier:</text>
+  <text x="720" y="775" class="value">noBurst_rate = 6.4s/s</text>
+  <text x="720" y="790" class="value">burst cap = 6.4/4 = 1.6s, refill = 1.6ms/tick</text>
+  <text x="720" y="805" class="value">break-even = 1.6s/8s = 20% CPU</text>
+
+  <text x="550" y="835" text-anchor="middle" class="annotation">Burst bucket capacity is derived from noBurst rate, not independently configurable.</text>
+  <text x="550" y="850" text-anchor="middle" class="annotation">System gets a bigger burst bucket (1.9s vs 1.6s) as a side effect of higher utilization target.</text>
+
+  <!-- Footer -->
+  <text x="550" y="875" text-anchor="middle" class="subtitle">cpuTimeTokenGranter · cpuTimeTokenChildGranter · cpuTimeTokenAllocator · WorkQueue</text>
+</svg>

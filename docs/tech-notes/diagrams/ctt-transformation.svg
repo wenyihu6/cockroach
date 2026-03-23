@@ -1,0 +1,288 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 1000" font-family="Consolas, Monaco, monospace" font-size="12">
+  <title>CTT Transformation: 2-Tier → N Resource Groups</title>
+  <style>
+    .title { font-size: 20px; font-weight: bold; fill: #1a1a2e; }
+    .subtitle { font-size: 12px; fill: #555; }
+    .section-label { font-size: 14px; font-weight: bold; fill: #1a1a2e; }
+    .side-label { font-size: 13px; font-weight: bold; }
+    .label { font-size: 11px; fill: #333; font-weight: bold; }
+    .value { font-size: 10px; fill: #555; }
+    .annotation { font-size: 10px; fill: #666; font-style: italic; }
+    .transform-label { font-size: 11px; font-weight: bold; fill: #c53030; }
+    .code { font-size: 10px; fill: #2d3748; }
+    .old-bg { fill: #fff5f5; stroke: #fc8181; stroke-width: 1.5; rx: 8; }
+    .new-bg { fill: #f0fff4; stroke: #68d391; stroke-width: 1.5; rx: 8; }
+    .bucket-wall { fill: none; stroke: #4a5568; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-sys { fill: none; stroke: #3182ce; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-app { fill: none; stroke: #805ad5; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-green { fill: none; stroke: #38a169; stroke-width: 2; stroke-linecap: round; }
+    .bucket-wall-blue  { fill: none; stroke: #3182ce; stroke-width: 1.5; stroke-linecap: round; }
+    .bucket-wall-purple { fill: none; stroke: #805ad5; stroke-width: 1.5; stroke-linecap: round; }
+    .bucket-wall-orange { fill: none; stroke: #c05621; stroke-width: 1.5; stroke-linecap: round; }
+    .water-high { fill: #48bb78; opacity: 0.55; }
+    .water-med  { fill: #ecc94b; opacity: 0.55; }
+    .water-low  { fill: #f56565; opacity: 0.55; }
+    .water-line { stroke: #2d3748; stroke-width: 0.7; stroke-dasharray: 3,2; }
+    .threshold-line { stroke: #e53e3e; stroke-width: 0.8; stroke-dasharray: 3,2; }
+    .arrow-transform { stroke: #c53030; stroke-width: 2; fill: none; marker-end: url(#arr-red); }
+    .arrow { stroke: #718096; stroke-width: 1.2; fill: none; marker-end: url(#arr); }
+    .divider { stroke: #e2e8f0; stroke-width: 1; }
+    .center-divider { stroke: #a0aec0; stroke-width: 2; stroke-dasharray: 8,4; }
+    .removed { fill: #fed7d7; stroke: #fc8181; stroke-width: 1; rx: 4; }
+    .added { fill: #c6f6d5; stroke: #68d391; stroke-width: 1; rx: 4; }
+  </style>
+
+  <defs>
+    <marker id="arr" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <path d="M0,0 L7,2.5 L0,5 Z" fill="#718096"/></marker>
+    <marker id="arr-red" markerWidth="10" markerHeight="8" refX="10" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#c53030"/></marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="600" y="28" text-anchor="middle" class="title">CTT Transformation: Fixed 2-Tier → N Resource Groups</text>
+  <text x="600" y="46" text-anchor="middle" class="subtitle">8 vCPUs · How each concept maps from old to new</text>
+
+  <!-- Center divider -->
+  <line x1="580" y1="55" x2="580" y2="1000" class="center-divider"/>
+  <text x="280" y="68" text-anchor="middle" class="side-label" fill="#e53e3e">BEFORE (2D model)</text>
+  <text x="890" y="68" text-anchor="middle" class="side-label" fill="#38a169">AFTER (1D model)</text>
+
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <!-- LAYER 1: GRANTER BUCKETS                                 -->
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <text x="580" y="92" text-anchor="middle" class="section-label">① Node-Level Granter Buckets</text>
+
+  <!-- OLD: 4 buckets (2×2) -->
+  <rect x="20" y="100" width="535" height="170" class="old-bg"/>
+  <text x="40" y="118" class="code">buckets[numResourceTiers][numBurstQualifications]  // 2×2 = 4</text>
+
+  <!-- System tier buckets -->
+  <text x="55" y="138" class="label" fill="#3182ce">system (tier 0)</text>
+  <path d="M 55,145 L 55,185 Q 55,192 62,192 L 118,192 Q 125,192 125,185 L 125,145" class="bucket-wall-sys"/>
+  <path d="M 56,146 L 56,184 Q 56,191 63,191 L 117,191 Q 124,191 124,184 L 124,146 Z" class="water-high"/>
+  <text x="90" y="172" text-anchor="middle" class="value" fill="#fff">cb 8.0</text>
+
+  <path d="M 140,145 L 140,185 Q 140,192 147,192 L 203,192 Q 210,192 210,185 L 210,145" class="bucket-wall-sys"/>
+  <path d="M 141,150 L 141,184 Q 141,191 148,191 L 202,191 Q 209,191 209,184 L 209,150 Z" class="water-high"/>
+  <text x="175" y="172" text-anchor="middle" class="value" fill="#fff">nb 7.6</text>
+
+  <!-- App tier buckets -->
+  <text x="55" y="210" class="label" fill="#805ad5">app (tier 1)</text>
+  <path d="M 55,217 L 55,257 Q 55,264 62,264 L 118,264 Q 125,264 125,257 L 125,217" class="bucket-wall-app"/>
+  <path d="M 56,225 L 56,256 Q 56,263 63,263 L 117,263 Q 124,263 124,256 L 124,225 Z" class="water-med"/>
+  <text x="90" y="248" text-anchor="middle" class="value" fill="#fff">cb 6.8</text>
+
+  <path d="M 140,217 L 140,257 Q 140,264 147,264 L 203,264 Q 210,264 210,257 L 210,217" class="bucket-wall-app"/>
+  <path d="M 141,228 L 141,256 Q 141,263 148,263 L 202,263 Q 209,263 209,256 L 209,228 Z" class="water-med"/>
+  <text x="175" y="248" text-anchor="middle" class="value" fill="#fff">nb 6.4</text>
+
+  <text x="230" y="150" class="annotation">SystemUtil=95%</text>
+  <text x="230" y="163" class="annotation">AppUtil=80%</text>
+  <text x="230" y="176" class="annotation">BurstDelta=5%</text>
+  <text x="230" y="200" class="annotation">Invariant #1:</text>
+  <text x="230" y="213" class="annotation">  system > app (across tiers)</text>
+  <text x="230" y="230" class="annotation">Invariant #2:</text>
+  <text x="230" y="243" class="annotation">  cb > nb (within each tier)</text>
+  <text x="230" y="262" class="annotation">4 separate CPU budgets</text>
+
+  <!-- Transform arrow -->
+  <path d="M 558,195 L 605,195" class="arrow-transform"/>
+  <text x="582" y="185" text-anchor="middle" class="transform-label">collapse</text>
+
+  <!-- NEW: 2 buckets -->
+  <rect x="620" y="100" width="560" height="170" class="new-bg"/>
+  <text x="640" y="118" class="code">buckets[numBurstQualifications]  // 2, shared by all resource groups</text>
+
+  <text x="660" y="138" class="label">all groups</text>
+  <path d="M 660,145 L 660,200 Q 660,210 672,210 L 758,210 Q 770,210 770,200 L 770,145" class="bucket-wall-green"/>
+  <path d="M 661,146 L 661,199 Q 661,209 673,209 L 757,209 Q 769,209 769,199 L 769,146 Z" class="water-high"/>
+  <text x="715" y="175" text-anchor="middle" class="label" fill="#fff">canBurst</text>
+  <text x="715" y="192" text-anchor="middle" class="value" fill="#fff">8.0s/s 100%</text>
+
+  <path d="M 800,145 L 800,200 Q 800,210 812,210 L 898,210 Q 910,210 910,200 L 910,145" class="bucket-wall-green"/>
+  <path d="M 801,162 L 801,199 Q 801,209 813,209 L 897,209 Q 909,209 909,199 L 909,162 Z" class="water-med"/>
+  <line x1="801" y1="162" x2="909" y2="162" class="water-line"/>
+  <text x="855" y="175" text-anchor="middle" class="label">noBurst</text>
+  <text x="855" y="192" text-anchor="middle" class="value">6.0s/s 75%</text>
+
+  <text x="940" y="150" class="annotation">UtilGoal=75%</text>
+  <text x="940" y="163" class="annotation">BurstDelta=25%</text>
+  <text x="940" y="185" class="annotation">Single invariant:</text>
+  <text x="940" y="198" class="annotation">  cb ≥ nb</text>
+  <text x="940" y="220" class="annotation">1 shared CPU budget</text>
+  <text x="940" y="233" class="annotation">Granter has no awareness</text>
+  <text x="940" y="246" class="annotation">of resource groups</text>
+
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <!-- LAYER 2: QUEUE STRUCTURE                                 -->
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <line x1="20" y1="278" x2="1180" y2="278" class="divider"/>
+  <text x="580" y="300" text-anchor="middle" class="section-label">② Queue Structure</text>
+
+  <!-- OLD: 2 queues -->
+  <rect x="20" y="310" width="535" height="115" class="old-bg"/>
+
+  <rect x="50" y="322" width="140" height="22" class="removed"/>
+  <text x="120" y="337" text-anchor="middle" class="code">childGranter(system)</text>
+  <line x1="120" y1="348" x2="120" y2="362" class="arrow"/>
+  <rect x="50" y="365" width="140" height="45" fill="#fff5f5" stroke="#fc8181" stroke-width="1" rx="4"/>
+  <text x="60" y="383" class="label" fill="#3182ce">System WorkQueue</text>
+  <text x="60" y="398" class="value">only system tenant</text>
+
+  <rect x="230" y="322" width="140" height="22" class="removed"/>
+  <text x="300" y="337" text-anchor="middle" class="code">childGranter(app)</text>
+  <line x1="300" y1="348" x2="300" y2="362" class="arrow"/>
+  <rect x="230" y="365" width="140" height="45" fill="#fff5f5" stroke="#fc8181" stroke-width="1" rx="4"/>
+  <text x="240" y="383" class="label" fill="#805ad5">App WorkQueue</text>
+  <text x="240" y="398" class="value">app tenants only</text>
+
+  <text x="400" y="350" class="annotation">tryGrantLocked iterates</text>
+  <text x="400" y="363" class="annotation">tiers: system always first</text>
+  <text x="400" y="380" class="annotation">→ system can starve app</text>
+
+  <!-- Transform arrow -->
+  <path d="M 558,375 L 605,375" class="arrow-transform"/>
+  <text x="582" y="365" text-anchor="middle" class="transform-label">merge</text>
+
+  <!-- NEW: 1 queue -->
+  <rect x="620" y="310" width="560" height="115" class="new-bg"/>
+
+  <rect x="650" y="322" width="360" height="22" class="added"/>
+  <text x="830" y="337" text-anchor="middle" class="code">granter implements granter directly — no childGranter proxy</text>
+  <line x1="830" y1="348" x2="830" y2="362" class="arrow"/>
+
+  <rect x="650" y="365" width="360" height="45" fill="#f0fff4" stroke="#68d391" stroke-width="1" rx="4"/>
+  <text x="660" y="383" class="label" fill="#38a169">Single WorkQueue (all resource groups)</text>
+  <text x="660" y="398" class="value">tenantHeap ordered by: burst qual → used/weight</text>
+
+  <text x="1030" y="350" class="annotation">tryGrantLocked: single</text>
+  <text x="1030" y="363" class="annotation">requester, no tier loop</text>
+  <text x="1030" y="380" class="annotation">Weight-based fair sharing</text>
+
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <!-- LAYER 3: PER-GROUP BURST BUCKETS                         -->
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <line x1="20" y1="435" x2="1180" y2="435" class="divider"/>
+  <text x="580" y="458" text-anchor="middle" class="section-label">③ Per-Resource-Group Burst Buckets</text>
+
+  <!-- OLD: uniform per tier -->
+  <rect x="20" y="468" width="535" height="280" class="old-bg"/>
+  <text x="40" y="488" class="code">capacity = noBurst_refill_rate / 4</text>
+  <text x="40" y="503" class="annotation">Same capacity for ALL tenants within a tier. No per-tenant config.</text>
+
+  <!-- System burst bucket -->
+  <text x="55" y="525" class="label" fill="#3182ce">System tier</text>
+  <text x="55" y="538" class="value">cap = 7.6s/4 = 1.9s</text>
+  <text x="55" y="551" class="value">break-even = 23.75% CPU</text>
+  <!-- bucket visual -->
+  <path d="M 280,518 L 280,568 Q 280,575 288,575 L 382,575 Q 390,575 390,568 L 390,518" class="bucket-wall-sys"/>
+  <path d="M 281,519 L 281,567 Q 281,574 289,574 L 381,574 Q 389,574 389,567 L 389,519 Z" class="water-high"/>
+  <text x="335" y="548" text-anchor="middle" class="value" fill="#fff">1.9s (100%)</text>
+  <text x="400" y="548" class="value">→ canBurst</text>
+
+  <!-- App burst buckets (all same size) -->
+  <text x="55" y="598" class="label" fill="#805ad5">App tier</text>
+  <text x="55" y="611" class="value">cap = 6.4s/4 = 1.6s</text>
+  <text x="55" y="624" class="value">break-even = 20% CPU</text>
+
+  <!-- tenant 2: 92% full -->
+  <path d="M 280,594 L 280,634 Q 280,641 288,641 L 342,641 Q 350,641 350,634 L 350,594" class="bucket-wall-app"/>
+  <path d="M 281,598 L 281,633 Q 281,640 289,640 L 341,640 Q 349,640 349,633 L 349,598 Z" class="water-high"/>
+  <text x="315" y="622" text-anchor="middle" class="value" fill="#fff">92%</text>
+
+  <!-- tenant 3: 35% full -->
+  <path d="M 370,594 L 370,634 Q 370,641 378,641 L 432,641 Q 440,641 440,634 L 440,594" class="bucket-wall-app"/>
+  <path d="M 371,622 L 371,633 Q 371,640 379,640 L 431,640 Q 439,640 439,633 L 439,622 Z" class="water-low"/>
+  <text x="405" y="632" text-anchor="middle" class="value" fill="#fff">35%</text>
+
+  <text x="280" y="658" class="value">T2: canBurst  T3: noBurst</text>
+  <text x="55" y="680" class="annotation">Burst threshold is a side effect of noBurst_rate/4.</text>
+  <text x="55" y="695" class="annotation">Not independently configurable per-tenant.</text>
+  <text x="55" y="710" class="annotation">System tier gets bigger bucket (1.9s) than app (1.6s)</text>
+  <text x="55" y="725" class="annotation">because SystemUtilGoal (95%) > AppUtilGoal (80%).</text>
+  <text x="55" y="740" class="code">refillBurstBuckets(noBurst_alloc/4, noBurst_rate/4)</text>
+
+  <!-- Transform arrow -->
+  <path d="M 558,610 L 605,610" class="arrow-transform"/>
+  <text x="582" y="598" text-anchor="middle" class="transform-label">scale per</text>
+  <text x="582" y="615" text-anchor="middle" class="transform-label">resource</text>
+  <text x="582" y="632" text-anchor="middle" class="transform-label">group</text>
+
+  <!-- NEW: scaled per resource group -->
+  <rect x="620" y="468" width="560" height="280" class="new-bg"/>
+  <text x="640" y="488" class="code">base = canBurst_rate / canBurstTarget = 8e9 ns/s (100% CPU)</text>
+  <text x="640" y="503" class="code">capacity = base × burstLimitFrac  (per resource group)</text>
+
+  <!-- online_rg: frac=1.0 FULLY_UTILIZE -->
+  <text x="660" y="525" class="label" fill="#3182ce">online_rg frac=1.0</text>
+  <path d="M 810,512 L 810,555 Q 810,562 818,562 L 898,562 Q 905,562 905,555 L 905,512" class="bucket-wall-blue"/>
+  <path d="M 811,513 L 811,554 Q 811,561 819,561 L 897,561 Q 904,561 904,554 L 904,513 Z" class="water-high"/>
+  <text x="858" y="538" text-anchor="middle" class="value" fill="#fff">8.0e9</text>
+  <text x="915" y="538" class="value">ALWAYS</text>
+  <text x="915" y="551" class="value">canBurst</text>
+
+  <!-- batch_rg: frac=0.30, under limit → full -->
+  <text x="660" y="585" class="label" fill="#805ad5">batch_rg frac=0.30</text>
+  <path d="M 810,575 L 810,618 Q 810,625 818,625 L 868,625 Q 875,625 875,618 L 875,575" class="bucket-wall-purple"/>
+  <path d="M 811,576 L 811,617 Q 811,624 819,624 L 867,624 Q 874,624 874,617 L 874,576 Z" class="water-high"/>
+  <!-- 90% threshold -->
+  <line x1="808" y1="580" x2="877" y2="580" class="threshold-line"/>
+  <text x="810" y="604" text-anchor="middle" class="value" fill="#fff">2.4e9</text>
+  <text x="842" y="604" text-anchor="middle" class="value" fill="#fff">100%</text>
+  <text x="885" y="604" class="value">canBurst</text>
+  <text x="885" y="618" class="value">(20% &lt; 30%)</text>
+
+  <!-- support_rg: frac=0.10, over limit → 25% -->
+  <text x="660" y="648" class="label" fill="#c05621">support_rg frac=0.10</text>
+  <path d="M 810,638 L 810,681 Q 810,688 818,688 L 848,688 Q 855,688 855,681 L 855,638" class="bucket-wall-orange"/>
+  <!-- 25% fill from bottom -->
+  <path d="M 811,673 L 811,680 Q 811,687 819,687 L 847,687 Q 854,687 854,680 L 854,673 Z" class="water-low"/>
+  <line x1="811" y1="673" x2="854" y2="673" class="water-line"/>
+  <!-- 90% threshold -->
+  <line x1="808" y1="643" x2="857" y2="643" class="threshold-line"/>
+  <text x="833" y="684" text-anchor="middle" class="value" fill="#fff">25%</text>
+  <text x="865" y="668" class="value">noBurst</text>
+  <text x="865" y="682" class="value">(15% > 10%)</text>
+
+  <text x="660" y="712" class="annotation">Each resource group gets independently-sized bucket.</text>
+  <text x="660" y="727" class="annotation">burstLimitFrac = CPU_MIN / 100%. Fracs don't sum to 1.0.</text>
+  <text x="660" y="742" class="code">refillBurstBuckets(base_alloc, base_cap)</text>
+  <text x="660" y="755" class="code">  → per group: scaled_add = alloc × frac, scaled_cap = cap × frac</text>
+
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <!-- LAYER 4: CONFIGURATION                                   -->
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <line x1="20" y1="760" x2="1180" y2="760" class="divider"/>
+  <text x="580" y="783" text-anchor="middle" class="section-label">④ Configuration</text>
+
+  <!-- OLD config -->
+  <rect x="20" y="793" width="535" height="85" class="old-bg"/>
+  <text x="40" y="813" class="code">KVCPUTimeSystemUtilGoal = 0.95   (system noBurst)</text>
+  <text x="40" y="828" class="code">KVCPUTimeAppUtilGoal    = 0.80   (app noBurst)</text>
+  <text x="40" y="843" class="code">KVCPUTimeUtilBurstDelta = 0.05   (shared delta)</text>
+  <text x="40" y="868" class="annotation">Fixed 2-tier config. No per-tenant CPU_MIN.</text>
+
+  <!-- Transform arrow -->
+  <path d="M 558,835 L 605,835" class="arrow-transform"/>
+
+  <!-- NEW config -->
+  <rect x="620" y="793" width="560" height="85" class="new-bg"/>
+  <text x="640" y="813" class="code">KVCPUTimeUtilGoal       = 0.75   (unified noBurst)</text>
+  <text x="640" y="828" class="code">KVCPUTimeUtilBurstDelta = 0.25   (burst headroom)</text>
+  <text x="640" y="843" class="code">SetResourceGroupConfig(map[uint64]ResourceGroupConfig)</text>
+  <text x="660" y="858" class="code">{ Weight: CPU_MIN, BurstLimitFrac: CPU_MIN/100% }</text>
+  <text x="640" y="873" class="annotation">N groups via map. SQL DDL: CREATE RESOURCE GROUP ... CPU_MIN=x [FULLY_UTILIZE]</text>
+
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <!-- KEY MAPPING                                               -->
+  <!-- ═════════════════════════════════════════════════════════ -->
+  <line x1="20" y1="890" x2="1180" y2="890" class="divider"/>
+  <text x="580" y="912" text-anchor="middle" class="section-label">Key Mapping Summary</text>
+
+  <rect x="100" y="922" width="1000" height="72" rx="6" fill="#f7fafc" stroke="#a0aec0" stroke-width="1"/>
+  <text x="120" y="940" class="code">Tier isolation (2 separate queues)               →  Weight-based fair sharing (1 queue, used/weight ordering)</text>
+  <text x="120" y="958" class="code">Per-tier util targets (system=95%, app=80%)       →  Unified target (75%) + per-group burstLimitFrac thresholds</text>
+  <text x="120" y="976" class="code">Uniform burst bucket (noBurst_rate/4, same/tier)  →  Scaled burst bucket (100%_CPU_rate × frac, per resource group)</text>
+
+</svg>
