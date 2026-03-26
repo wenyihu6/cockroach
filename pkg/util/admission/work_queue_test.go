@@ -756,7 +756,7 @@ func TestSQLCPUAdmission(t *testing.T) {
 	ctx := context.Background()
 	tenantID := roachpb.MustMakeTenantID(1)
 
-	t.Run("explicit-requested-count-skips-estimator", func(t *testing.T) {
+	t.Run("sql-cpu-skips-estimator", func(t *testing.T) {
 		q, _, cleanup := makeCPUTimeTokenWorkQueue(t)
 		defer cleanup()
 
@@ -777,24 +777,25 @@ func TestSQLCPUAdmission(t *testing.T) {
 		require.Greater(t, resp.requestedCount, int64(time.Millisecond),
 			"estimator should return a value >> 1ns after training")
 
-		// Admit with an explicit RequestedCount — the estimator should be
-		// skipped and the exact value preserved. This is the path taken by
-		// SQL CPU admission via reportAndAcquireConsumedCPU.
+		// Admit with IsSQLCPU=true — the estimator should be skipped
+		// and the exact RequestedCount preserved. This is the path
+		// taken by SQL CPU admission via reportAndAcquireConsumedCPU.
 		explicitCount := int64(12345)
 		resp, err = q.Admit(ctx, WorkInfo{
 			TenantID:       tenantID,
 			RequestedCount: explicitCount,
+			IsSQLCPU:       true,
 		})
 		require.NoError(t, err)
 		require.Equal(t, explicitCount, resp.requestedCount,
-			"explicit RequestedCount should not be overridden by estimator")
+			"IsSQLCPU RequestedCount should not be overridden by estimator")
 
-		// A subsequent Admit without RequestedCount still uses the
-		// estimator (the explicit call didn't corrupt anything).
+		// A subsequent Admit without IsSQLCPU still uses the
+		// estimator (the SQL CPU call didn't corrupt anything).
 		resp, err = q.Admit(ctx, info)
 		require.NoError(t, err)
 		require.Greater(t, resp.requestedCount, int64(time.Millisecond),
-			"estimator should still work for callers that don't set RequestedCount")
+			"estimator should still work for non-SQL-CPU callers")
 	})
 
 	t.Run("report-cpu-updates-counters", func(t *testing.T) {
@@ -827,6 +828,63 @@ func TestSQLCPUAdmission(t *testing.T) {
 		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 5*time.Millisecond, false /* noWait */))
 		gw, _ := provider.GetCumulativeSQLCPUNanos()
 		require.Equal(t, int64(5*time.Millisecond), gw)
+	})
+
+	t.Run("reservation-reduces-admit-calls", func(t *testing.T) {
+		q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+		defer cleanup()
+
+		provider := &sqlCPUProviderImpl{}
+		h := newSQLCPUAdmissionHandle(
+			WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
+
+		// First call exhausts zero reservation and calls Admit. The
+		// Admit request is for deficit + heuristic (bootstraps with
+		// consumed).
+		tg.buf.stringAndReset()
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Microsecond, false /* noWait */))
+		firstBuf := tg.buf.stringAndReset()
+		require.Contains(t, firstBuf, "tryGet",
+			"first call should reach Admit")
+
+		// Subsequent calls with small diffs should deduct from
+		// the reservation without calling Admit.
+		for i := 0; i < 5; i++ {
+			require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Microsecond, false /* noWait */))
+		}
+		laterBuf := tg.buf.stringAndReset()
+		require.Empty(t, laterBuf,
+			"small calls should be served from reservation without Admit")
+
+		// Verify the reservation is eventually exhausted and Admit
+		// is called again.
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false /* noWait */))
+		exhaustedBuf := tg.buf.stringAndReset()
+		require.Contains(t, exhaustedBuf, "tryGet",
+			"should call Admit once reservation is exhausted")
+	})
+
+	t.Run("close-returns-unused-tokens", func(t *testing.T) {
+		q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+		defer cleanup()
+
+		provider := &sqlCPUProviderImpl{}
+		h := newSQLCPUAdmissionHandle(
+			WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
+
+		// Trigger an Admit call to establish a reservation.
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Microsecond, false /* noWait */))
+
+		// Verify there are reserved tokens.
+		require.Greater(t, h.reservation.Load(), int64(0),
+			"should have reserved tokens after first Admit")
+
+		// Close should return unused tokens.
+		tg.buf.stringAndReset()
+		h.Close()
+		closeBuf := tg.buf.String()
+		require.Contains(t, closeBuf, "returnGrant",
+			"Close should return unused reserved tokens")
 	})
 
 	t.Run("context-canceled-propagates-error", func(t *testing.T) {
