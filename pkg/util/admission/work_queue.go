@@ -1125,6 +1125,13 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 	}
 }
 
+// ReturnTokens returns previously acquired tokens back to the granter,
+// making them available to other work. This is used by SQL CPU admission
+// to return unused reserved tokens when a SQLCPUHandle is closed.
+func (q *WorkQueue) ReturnTokens(count int64) {
+	q.granter.returnGrant(count)
+}
+
 func (q *WorkQueue) hasWaitingRequests() (bool, burstQualification) {
 	q.mu.Lock()
 	defer q.mu.Unlock()

@@ -829,6 +829,64 @@ func TestSQLCPUAdmission(t *testing.T) {
 		require.Equal(t, int64(5*time.Millisecond), gw)
 	})
 
+	t.Run("reservation-reduces-admit-calls", func(t *testing.T) {
+		q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+		defer cleanup()
+
+		provider := &sqlCPUProviderImpl{}
+		h := newSQLCPUAdmissionHandle(
+			WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
+
+		// First call exhausts zero reservation and calls Admit. The
+		// Admit request is for deficit + minReserveSize.
+		tg.buf.stringAndReset()
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Microsecond, false /* noWait */))
+		firstBuf := tg.buf.stringAndReset()
+		require.Contains(t, firstBuf, "tryGet",
+			"first call should reach Admit")
+
+		// Subsequent calls with small diffs should deduct from
+		// the reservation without calling Admit.
+		for i := 0; i < 5; i++ {
+			require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Microsecond, false /* noWait */))
+		}
+		laterBuf := tg.buf.stringAndReset()
+		require.Empty(t, laterBuf,
+			"small calls should be served from reservation without Admit")
+
+		// Verify the reservation is eventually exhausted and Admit
+		// is called again.
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false /* noWait */))
+		exhaustedBuf := tg.buf.stringAndReset()
+		require.Contains(t, exhaustedBuf, "tryGet",
+			"should call Admit once reservation is exhausted")
+	})
+
+	t.Run("close-returns-unused-tokens", func(t *testing.T) {
+		q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+		defer cleanup()
+
+		provider := &sqlCPUProviderImpl{}
+		h := newSQLCPUAdmissionHandle(
+			WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
+
+		// Trigger an Admit call to establish a reservation.
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Microsecond, false /* noWait */))
+
+		// Verify there are reserved tokens.
+		h.mu.Lock()
+		require.Greater(t, h.mu.reservedTokens, int64(0),
+			"should have reserved tokens after first Admit")
+		h.mu.Unlock()
+
+		// Close should return unused tokens.
+		tg.buf.stringAndReset()
+		h.Close()
+		closeBuf := tg.buf.String()
+		require.Contains(t, closeBuf, "returnGrant",
+			"Close should return unused reserved tokens")
+	})
+
 	t.Run("context-canceled-propagates-error", func(t *testing.T) {
 		q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
 		defer cleanup()
