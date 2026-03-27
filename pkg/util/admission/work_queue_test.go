@@ -756,7 +756,7 @@ func TestSQLCPUAdmission(t *testing.T) {
 	ctx := context.Background()
 	tenantID := roachpb.MustMakeTenantID(1)
 
-	t.Run("explicit-requested-count-skips-estimator", func(t *testing.T) {
+	t.Run("sql-cpu-skips-estimator", func(t *testing.T) {
 		q, _, cleanup := makeCPUTimeTokenWorkQueue(t)
 		defer cleanup()
 
@@ -777,24 +777,25 @@ func TestSQLCPUAdmission(t *testing.T) {
 		require.Greater(t, resp.requestedCount, int64(time.Millisecond),
 			"estimator should return a value >> 1ns after training")
 
-		// Admit with an explicit RequestedCount — the estimator should be
-		// skipped and the exact value preserved. This is the path taken by
-		// SQL CPU admission via reportAndAcquireConsumedCPU.
+		// Admit with IsSQLCPU=true — the estimator should be skipped
+		// and the exact RequestedCount preserved. This is the path
+		// taken by SQL CPU admission via reportAndAcquireConsumedCPU.
 		explicitCount := int64(12345)
 		resp, err = q.Admit(ctx, WorkInfo{
 			TenantID:       tenantID,
 			RequestedCount: explicitCount,
+			IsSQLCPU:       true,
 		})
 		require.NoError(t, err)
 		require.Equal(t, explicitCount, resp.requestedCount,
-			"explicit RequestedCount should not be overridden by estimator")
+			"IsSQLCPU RequestedCount should not be overridden by estimator")
 
-		// A subsequent Admit without RequestedCount still uses the
-		// estimator (the explicit call didn't corrupt anything).
+		// A subsequent Admit without IsSQLCPU still uses the
+		// estimator (the SQL CPU call didn't corrupt anything).
 		resp, err = q.Admit(ctx, info)
 		require.NoError(t, err)
 		require.Greater(t, resp.requestedCount, int64(time.Millisecond),
-			"estimator should still work for callers that don't set RequestedCount")
+			"estimator should still work for non-SQL-CPU callers")
 	})
 
 	t.Run("report-cpu-updates-counters", func(t *testing.T) {
@@ -838,7 +839,8 @@ func TestSQLCPUAdmission(t *testing.T) {
 			WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
 
 		// First call exhausts zero reservation and calls Admit. The
-		// Admit request is for deficit + minReserveSize.
+		// Admit request is for deficit + heuristic (bootstraps with
+		// consumed).
 		tg.buf.stringAndReset()
 		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Microsecond, false /* noWait */))
 		firstBuf := tg.buf.stringAndReset()
@@ -874,10 +876,8 @@ func TestSQLCPUAdmission(t *testing.T) {
 		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Microsecond, false /* noWait */))
 
 		// Verify there are reserved tokens.
-		h.mu.Lock()
-		require.Greater(t, h.mu.reservedTokens, int64(0),
+		require.Greater(t, h.reservation.Load(), int64(0),
 			"should have reserved tokens after first Admit")
-		h.mu.Unlock()
 
 		// Close should return unused tokens.
 		tg.buf.stringAndReset()

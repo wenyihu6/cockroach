@@ -199,6 +199,10 @@ type WorkInfo struct {
 	//    nothing left to throttle. BypassAdmission deducts the tokens
 	//    without blocking.
 	BypassAdmission bool
+	// IsSQLCPU indicates this is a SQL CPU admission request. SQL callers
+	// set RequestedCount based on measured CPU consumption (from grunning)
+	// and bypass the per-tenant CPU time token estimator entirely.
+	IsSQLCPU bool
 	// RequestedCount is the requested number of tokens or slots. If unset:
 	// - For slot-based queues we treat it as an implicit request of 1;
 	// - For the store work queue, we use per-request estimates to deduct some
@@ -676,11 +680,10 @@ type AdmitResponse struct {
 // relevant when error=nil, and includes info on whether admission control
 // is enabled. AdmittedWorkDone must be called iff
 // AdmitResponse.Enabled=true && error==nil, and the WorkKind for this
-// queue is KVWork, UNLESS the caller explicitly set RequestedCount (i.e.,
-// the exact resource usage is already known). In that case, the estimator
-// is skipped at Admit time and there is no estimate to correct, so
-// AdmittedWorkDone should not be called. See the callerSetRequestedCount
-// logic below for details.
+// queue is KVWork, UNLESS the caller is SQL CPU admission (IsSQLCPU=true).
+// SQL CPU sets RequestedCount to the exact measured CPU consumption and
+// skips the estimator, so there is no estimate to correct and
+// AdmittedWorkDone should not be called.
 func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, error) {
 	if fn := q.knobs.WorkQueueAdmitInterceptor; fn != nil {
 		fn(info)
@@ -698,15 +701,6 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// the memory overhead of enqueueing each raft command to see whether we
 	// need to do some coalescing at this level.
 
-	// Track whether the caller explicitly set RequestedCount. When true, the
-	// caller knows the exact resource usage (e.g., SQL CPU admission uses
-	// grunning to measure actual CPU consumed) and the CPU time token
-	// estimator should not override it. Currently, only SQL CPU admission
-	// sets RequestedCount in usesCPUTimeTokens mode; above-raft KV leaves
-	// it at 0 and relies on the estimator. Below-raft KV does set
-	// RequestedCount (to the raft command byte size), but uses usesTokens
-	// mode, so it never reaches the estimator guard.
-	callerSetRequestedCount := info.RequestedCount > 0
 	if info.RequestedCount == 0 {
 		// We treat unset RequestCounts as an implicit request of 1.
 		info.RequestedCount = 1
@@ -742,9 +736,11 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// tenant.estimator uses past measurements from grunning to make estimates
 	// in this code path, that is, at admission time.
 	//
-	// Skip the estimator when callerSetRequestedCount is true (see above).
+	// Skip the estimator when the caller is SQL CPU (IsSQLCPU): SQL CPU
+	// admission sets RequestedCount to the exact measured CPU consumption
+	// and must not have it overwritten by the estimator.
 	if q.mode == usesCPUTimeTokens && !q.knobs.DisableCPUTimeTokenEstimation &&
-		!callerSetRequestedCount {
+		!info.IsSQLCPU {
 		info.RequestedCount = tenant.cpuTimeTokenEstimator.estimateTokensToBeUsed()
 	}
 	admitResponse := AdmitResponse{
@@ -1125,11 +1121,18 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 	}
 }
 
-// ReturnTokens returns previously acquired tokens back to the granter,
-// making them available to other work. This is used by SQL CPU admission
-// to return unused reserved tokens when a SQLCPUHandle is closed.
-func (q *WorkQueue) ReturnTokens(count int64) {
-	q.granter.returnGrant(count)
+// AdmittedSQLWorkDone adjusts token accounting when a SQL CPU handle
+// closes or when a concurrent refill detects that the handle is closed.
+// remaining is the leftover reservation (always non-negative, since the
+// CAS-based deduction in SQLCPUHandle never drives the reservation below
+// zero). The method decrements tenant.used (fixing the fair-sharing
+// heap), adjusts the burst bucket, and returns unused tokens to the
+// granter so they are immediately available to other work.
+func (q *WorkQueue) AdmittedSQLWorkDone(tenantID roachpb.TenantID, remaining int64) {
+	q.adjustTenantUsed(tenantID, -remaining)
+	if remaining > 0 {
+		q.granter.returnGrant(remaining)
+	}
 }
 
 func (q *WorkQueue) hasWaitingRequests() (bool, burstQualification) {
