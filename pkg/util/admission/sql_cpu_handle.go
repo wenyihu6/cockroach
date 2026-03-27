@@ -97,10 +97,10 @@ type SQLCPUHandle struct {
 	p         *sqlCPUProviderImpl
 	wq        *WorkQueue
 
-	// closed is set when Close() begins. Checked atomically on the fast
-	// path (to skip admission for goroutines that outlive the handle) and
-	// in the slow path after Admit returns (to prevent token leaks when
-	// Close races with a concurrent refill).
+	// closed is set under refillMu when Close() runs. Read atomically on
+	// the fast path (to skip admission for goroutines that outlive the
+	// handle) and in the slow path under refillMu (to avoid acquiring
+	// tokens after Close has returned the reservation).
 	closed atomic.Bool
 
 	// reservation holds the remaining CPU time tokens (nanoseconds).
@@ -110,10 +110,15 @@ type SQLCPUHandle struct {
 	// concurrently without any locking.
 	reservation atomic.Int64
 
-	// refillMu serializes Admit calls. This is separate from mu so that
-	// RegisterGoroutine and Close are not blocked while a goroutine waits
-	// on Admit. The fast path (CAS on reservation) does not acquire any
-	// lock.
+	// refillMu serializes Admit calls and Close's token return. This is
+	// separate from mu so that RegisterGoroutine is not blocked while a
+	// goroutine waits on Admit. The fast path (CAS on reservation) does
+	// not acquire any lock.
+	//
+	// Close acquires refillMu to set closed and swap the reservation,
+	// ensuring no concurrent slow-path refill can add tokens after Close
+	// returns them. The slow path checks closed under refillMu before
+	// calling Admit.
 	//
 	// A mutex (rather than a channel) is used here because Admit itself
 	// is context-aware: it selects on ctx.Done() internally. When a
@@ -237,14 +242,20 @@ func (h *SQLCPUHandle) refillHeuristic(consumed int64) int64 {
 // there is no estimate to correct, so AdmittedWorkDone is not called. This
 // also avoids training the KV estimator with SQL CPU data, which would
 // corrupt its estimates.
-func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
-	ctx context.Context, diff time.Duration, noWait bool,
-) error {
+// reportCPU updates the cumulative CPU counters for gateway or DistSQL
+// work. Called unconditionally, even after the handle is closed.
+func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
 	if h.atGateway {
 		h.p.cumulativeGatewayCPUNanos.Add(diff.Nanoseconds())
 	} else {
 		h.p.cumulativeDistSQLCPUNanos.Add(diff.Nanoseconds())
 	}
+}
+
+func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
+	ctx context.Context, diff time.Duration, noWait bool,
+) error {
+	h.reportCPU(diff)
 
 	if h.wq == nil {
 		return nil
@@ -285,6 +296,13 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	// multiple goroutines from refilling simultaneously.
 	h.refillMu.Lock()
 
+	// If closed, skip admission. Close sets closed under refillMu, so
+	// if we see it here, Close has already returned the reservation.
+	if h.closed.Load() {
+		h.refillMu.Unlock()
+		return nil
+	}
+
 	// Re-check: another goroutine may have refilled while we waited.
 	if h.tryDeductReservation(diffNanos) {
 		h.refillMu.Unlock()
@@ -307,14 +325,9 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	if resp.Enabled {
 		// Add the heuristic portion to reservation. We consume diffNanos
 		// ourselves, so only the extra (heuristic) becomes buffer for
-		// other goroutines. If the handle was closed concurrently, return
-		// the heuristic tokens to the granter immediately to avoid
-		// leaking them (Close already returned the reservation).
-		if h.closed.Load() {
-			h.refillMu.Unlock()
-			h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, heuristic)
-			return nil
-		}
+		// other goroutines. Close cannot run concurrently because we
+		// hold refillMu — it will return these tokens when it acquires
+		// the lock.
 		h.reservation.Add(heuristic)
 	}
 	// If !resp.Enabled, AC is disabled — Admit took no tokens from the
@@ -358,21 +371,20 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 // and pools GoroutineCPUHandles that have been closed. GoroutineCPUHandles
 // that are not yet closed are left for GC.
 func (h *SQLCPUHandle) Close() {
-	// Set closed first so that any in-flight slow-path goroutine that
-	// completes Admit after this point will see it and return its
-	// heuristic tokens directly instead of adding to reservation.
-	h.closed.Store(true)
-
-	// Return unused reservation tokens. Acquire refillMu to ensure no
-	// concurrent refill is in progress — otherwise a concurrent refill
-	// could add tokens after our swap.
+	// Set closed and return unused reservation tokens under refillMu.
+	// This serializes with the slow path: either Close runs first (the
+	// slow path sees closed and skips Admit), or the slow path finishes
+	// first (adds heuristic to reservation, which we return here).
 	if h.wq != nil {
 		h.refillMu.Lock()
+		h.closed.Store(true)
 		remaining := h.reservation.Swap(0)
 		if remaining > 0 {
 			h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, remaining)
 		}
 		h.refillMu.Unlock()
+	} else {
+		h.closed.Store(true)
 	}
 
 	h.mu.Lock()
