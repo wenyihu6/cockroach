@@ -110,19 +110,20 @@ type SQLCPUHandle struct {
 	// concurrently without any locking.
 	reservation atomic.Int64
 
-	// refillMu serializes Admit calls. This is separate from mu so that
-	// RegisterGoroutine and Close are not blocked while a goroutine waits
-	// on Admit. The fast path (CAS on reservation) does not acquire any
-	// lock.
-	refillMu struct {
-		syncutil.Mutex
-		// lastRefillTime is the wall-clock time of the last Admit call,
-		// used to compute the interval for adaptive sizing.
-		lastRefillTime time.Time
-		// lastHeuristic is the adaptive reservation size (in nanoseconds)
-		// to request on the next Admit call, beyond the immediate deficit.
-		lastHeuristic int64
-	}
+	// refillCh serializes Admit calls. Buffered channel of capacity 1:
+	// sending acquires the turn to call Admit, receiving releases it.
+	// Using a channel (rather than a mutex) allows goroutines to select
+	// on ctx.Done() while waiting for the turn, enabling prompt
+	// cancellation when the context is cancelled. This is separate from
+	// mu so that RegisterGoroutine and Close are not blocked while a
+	// goroutine waits on Admit.
+	refillCh chan struct{}
+
+	// lastRefillTime and lastHeuristic are the adaptive heuristic state.
+	// Protected by the refillCh turn — only the goroutine that has sent
+	// to refillCh may access these fields.
+	lastRefillTime time.Time
+	lastHeuristic  int64
 
 	mu struct {
 		syncutil.Mutex
@@ -141,6 +142,7 @@ func newSQLCPUAdmissionHandle(
 		atGateway: atGateway,
 		p:         p,
 		wq:        wq,
+		refillCh:  make(chan struct{}, 1),
 	}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
@@ -191,29 +193,29 @@ func (h *SQLCPUHandle) tryDeductReservation(diffNanos int64) bool {
 // grows until it reaches the acceptable range, then stabilizes. It
 // only decays when the workload genuinely becomes lighter.
 //
-// Must be called while holding refillMu.
+// Must be called while holding the refillCh turn.
 func (h *SQLCPUHandle) refillHeuristic(consumed int64) int64 {
 	now := timeutil.Now()
-	if h.refillMu.lastRefillTime.IsZero() {
+	if h.lastRefillTime.IsZero() {
 		// Bootstrap: start with consumed (same as current 2x behavior).
-		h.refillMu.lastHeuristic = consumed
+		h.lastHeuristic = consumed
 	} else {
-		elapsed := now.Sub(h.refillMu.lastRefillTime)
+		elapsed := now.Sub(h.lastRefillTime)
 		if elapsed < refillGrowThreshold {
 			// Came back too soon — double to reduce call frequency.
-			h.refillMu.lastHeuristic = min(
-				h.refillMu.lastHeuristic*2, maxRefillHeuristic,
+			h.lastHeuristic = min(
+				h.lastHeuristic*2, maxRefillHeuristic,
 			)
 		} else if elapsed > refillDecayThreshold {
 			// Buffer lasted too long — halve to reduce overcounting.
-			h.refillMu.lastHeuristic = max(
-				consumed, h.refillMu.lastHeuristic/2,
+			h.lastHeuristic = max(
+				consumed, h.lastHeuristic/2,
 			)
 		}
 		// else: in [1ms, 5ms] deadband — no change.
 	}
-	h.refillMu.lastRefillTime = now
-	return h.refillMu.lastHeuristic
+	h.lastRefillTime = now
+	return h.lastHeuristic
 }
 
 // reportAndAcquireConsumedCPU updates cumulative CPU counters and, if a CTT
@@ -274,13 +276,19 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 		return nil
 	}
 
-	// Slow path: serialize Admit calls under refillMu to prevent
-	// multiple goroutines from refilling simultaneously.
-	h.refillMu.Lock()
+	// Slow path: acquire the turn to call Admit, or bail if ctx is
+	// cancelled. Using a channel (rather than a mutex) allows goroutines
+	// to select on ctx.Done() while waiting.
+	select {
+	case h.refillCh <- struct{}{}:
+		// Got the turn.
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
 	// Re-check: another goroutine may have refilled while we waited.
 	if h.tryDeductReservation(diffNanos) {
-		h.refillMu.Unlock()
+		<-h.refillCh
 		return nil
 	}
 
@@ -293,7 +301,7 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	workInfo.IsSQLCPU = true
 	resp, err := h.wq.Admit(ctx, workInfo)
 	if err != nil {
-		h.refillMu.Unlock()
+		<-h.refillCh
 		return err
 	}
 
@@ -304,7 +312,7 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 		// the heuristic tokens to the granter immediately to avoid
 		// leaking them (Close already returned the reservation).
 		if h.closed.Load() {
-			h.refillMu.Unlock()
+			<-h.refillCh
 			h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, heuristic)
 			return nil
 		}
@@ -314,7 +322,7 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	// granter. We must NOT add to reservation (would create phantom
 	// tokens that corrupt the granter when returned at Close). The
 	// goroutine proceeds untracked. Next checkpoint will try again.
-	h.refillMu.Unlock()
+	<-h.refillCh
 	return nil
 }
 
@@ -356,16 +364,16 @@ func (h *SQLCPUHandle) Close() {
 	// heuristic tokens directly instead of adding to reservation.
 	h.closed.Store(true)
 
-	// Return unused reservation tokens. Acquire refillMu to ensure no
-	// concurrent refill is in progress — otherwise a concurrent refill
-	// could add tokens after our swap.
+	// Return unused reservation tokens. Acquire the refillCh turn to
+	// ensure no concurrent refill is in progress — otherwise a concurrent
+	// refill could add tokens after our swap.
 	if h.wq != nil {
-		h.refillMu.Lock()
+		h.refillCh <- struct{}{}
 		remaining := h.reservation.Swap(0)
 		if remaining > 0 {
 			h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, remaining)
 		}
-		h.refillMu.Unlock()
+		<-h.refillCh
 	}
 
 	h.mu.Lock()
