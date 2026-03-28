@@ -54,20 +54,6 @@ func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
 		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
-	// Switch to RM mode dynamically — single queue for all work.
-	KVCPUTimeTokenACMode.Override(ctx, &settings.SV,
-		int64(resourceManagerMode))
-	require.Equal(t,
-		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
-		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
-
-	// Switch back to Serverless — 2 separate queues again.
-	KVCPUTimeTokenACMode.Override(ctx, &settings.SV,
-		int64(serverlessMode))
-	require.NotEqual(t,
-		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
-		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
-
 	// Test that the env var kill switch overrides the cluster setting.
 	defer func(prev bool) {
 		cpuTimeTokenACKillSwitch = prev

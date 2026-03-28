@@ -1505,16 +1505,6 @@ func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
 	}
 }
 
-// setDefaultBurstLimitFrac dynamically updates the default burst limit
-// fraction for tenants not explicitly configured via SetBurstLimits.
-// Called by the allocator on mode transitions (e.g., Serverless → RM
-// sets 1.0, RM → Serverless sets 0.0).
-func (q *WorkQueue) setDefaultBurstLimitFrac(frac float64) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.defaultBurstLimitFrac = frac
-}
-
 // getBurstLimitFracLocked returns the burst limit fraction for the given
 // resource group. If no override exists, returns q.defaultBurstLimitFrac
 // which is set per-queue during construction (0.0 for Serverless, 1.0

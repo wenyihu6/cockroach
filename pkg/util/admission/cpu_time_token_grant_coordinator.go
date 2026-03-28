@@ -38,8 +38,8 @@ func cpuTimeTokenACIsEnabled(sv *settings.Values) bool {
 
 // cpuTimeTokenMode selects between Serverless (2 WorkQueues, per-tier
 // settings) and Resource Manager (1 WorkQueue, resource groups) modes.
-// The mode can be changed at runtime via the
-// admission.cpu_time_tokens.mode cluster setting.
+// The mode is read from the admission.cpu_time_tokens.mode cluster
+// setting at startup and cannot be changed without a restart.
 type cpuTimeTokenMode int64
 
 const (
@@ -53,8 +53,8 @@ const (
 )
 
 // KVCPUTimeTokenACMode selects between Serverless and Resource Manager
-// modes for CPU time token admission control. Can be changed at runtime
-// without a restart — the allocator re-reads this every 1s.
+// modes for CPU time token admission control. Read once at startup;
+// changing the setting requires a restart to take effect.
 var KVCPUTimeTokenACMode = settings.RegisterEnumSetting(
 	settings.SystemOnly,
 	"admission.cpu_time_tokens.mode",
@@ -83,15 +83,11 @@ type CPUGrantCoordinators struct {
 // implements CPU time token AC. In Serverless mode, there is one
 // WorkQueue for system tenant work and another for app tenant work. In
 // Resource Manager mode, there is a single WorkQueue for all work.
-//
-// The mode is read from the cluster setting on every call, so switching
-// modes takes effect immediately for new requests.
 func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
 	}
-	mode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&coord.st.SV))
-	if mode == serverlessMode {
+	if coord.cpuTimeCoord.mode == serverlessMode {
 		if isSystemTenant {
 			return coord.cpuTimeCoord.getWorkQueue(systemTenant)
 		}
@@ -154,6 +150,7 @@ func (cg *CPUGrantCoordinators) Close() {
 }
 
 type cpuTimeTokenGrantCoordinator struct {
+	mode   cpuTimeTokenMode
 	filler *cpuTimeTokenFiller
 	queues [numResourceTiers]requesterClose
 }
@@ -166,8 +163,7 @@ func makeCPUTimeTokenGrantCoordinator(
 	knobs *TestingKnobs,
 ) *cpuTimeTokenGrantCoordinator {
 	// Always create 2 tiers. In RM mode, tier-1 sits idle (no work
-	// routed, zero refill rates). This enables dynamic mode switching
-	// at runtime without rebuilding queues.
+	// routed, zero refill rates).
 	initialMode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&settings.SV))
 
 	metrics := makeCPUTimeTokenMetrics()
@@ -188,7 +184,6 @@ func makeCPUTimeTokenGrantCoordinator(
 		granter:        granter,
 		numActiveTiers: initialActiveTiers,
 		mode:           initialMode,
-		prevMode:       initialMode,
 		settings:       settings,
 		metrics:        metrics,
 	}
@@ -209,14 +204,19 @@ func makeCPUTimeTokenGrantCoordinator(
 		}
 	}
 
-	// All queues start with defaultBurstLimitFrac=0.0 (Serverless
-	// default). In RM mode, the allocator's first resetInterval call
-	// will set queue[0].defaultBurstLimitFrac to 1.0.
+	// In Serverless mode, defaultBurstLimitFrac=0.0 (preserves the
+	// 90%-fullness check for burst qualification). In RM mode,
+	// defaultBurstLimitFrac=1.0 (unconfigured groups always canBurst).
+	var defaultBurstFrac float64
+	if initialMode == resourceManagerMode {
+		defaultBurstFrac = 1.0
+	}
 	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		wqOpts := makeWorkQueueOptions(KVWork)
 		wqOpts.mode = usesCPUTimeTokens
+		wqOpts.defaultBurstLimitFrac = defaultBurstFrac
 		wqOpts.perTenantAggMetrics = &tenantAggMetrics{
 			admittedCount:  metrics.AdmittedCountPerTenant[tier],
 			waitTimeNanos:  metrics.WaitTimeNanosPerTenant[tier],
@@ -231,6 +231,7 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
+		mode:   initialMode,
 		filler: filler,
 	}
 	for tier := 0; tier < int(numResourceTiers); tier++ {

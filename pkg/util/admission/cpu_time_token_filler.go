@@ -177,14 +177,12 @@ type cpuTimeTokenAllocator struct {
 	model    cpuTimeModel
 	metrics  *cpuTimeTokenMetrics
 
-	// mode and numActiveTiers are re-read from the cluster setting
-	// every 1s in resetInterval. Since resetInterval and allocateTokens
-	// run on the same filler goroutine, no synchronization is needed.
+	// mode and numActiveTiers are set at construction time from the
+	// cluster setting and do not change during the lifetime of the
+	// allocator. Since resetInterval and allocateTokens run on the
+	// same filler goroutine, no synchronization is needed.
 	mode           cpuTimeTokenMode
 	numActiveTiers int
-	// prevMode tracks the previous mode to detect transitions and
-	// update per-queue defaultBurstLimitFrac accordingly.
-	prevMode cpuTimeTokenMode
 
 	// refillRates stores the number of CPU time tokens to add to each bucket
 	// per interval (1s).
@@ -331,25 +329,6 @@ func (a *cpuTimeTokenAllocator) refillBurstBuckets(
 // resetInterval is called to signal the beginning of a new interval.
 // allocateTokens adds the desired number of tokens every interval.
 func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
-	// Re-read mode from cluster setting. This runs on the filler
-	// goroutine, so no synchronization needed with allocateTokens.
-	a.mode = cpuTimeTokenMode(
-		KVCPUTimeTokenACMode.Get(&a.settings.SV))
-	if a.mode == resourceManagerMode {
-		a.numActiveTiers = 1
-	} else {
-		a.numActiveTiers = int(numResourceTiers)
-	}
-	// Handle mode transitions.
-	if a.mode != a.prevMode {
-		if a.mode == resourceManagerMode {
-			a.queues[0].setDefaultBurstLimitFrac(1.0)
-		} else {
-			a.queues[0].setDefaultBurstLimitFrac(0.0)
-		}
-		a.prevMode = a.mode
-	}
-
 	var targets targetUtilizations
 	burstDelta := KVCPUTimeUtilBurstDelta.Get(&a.settings.SV)
 
@@ -448,7 +427,6 @@ func (a *cpuTimeTokenAllocator) refill(
 // WorkQueue, to enable unit testing.
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
-	setDefaultBurstLimitFrac(frac float64)
 }
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.

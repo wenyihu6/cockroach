@@ -109,8 +109,6 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 	}
 }
 
-func (m *testBurstManager) setDefaultBurstLimitFrac(_ float64) {}
-
 func (m *testModel) init() {}
 
 func (m *testModel) fit(_ context.Context, targets targetUtilizations, _ int) rates {
@@ -163,7 +161,6 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		granter:        granter,
 		numActiveTiers: 1,
 		mode:           resourceManagerMode,
-		prevMode:       resourceManagerMode,
 		settings:       st,
 		model:          model,
 		metrics:        metrics,
