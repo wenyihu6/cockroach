@@ -109,9 +109,11 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 	}
 }
 
+func (m *testBurstManager) setDefaultBurstLimitFrac(_ float64) {}
+
 func (m *testModel) init() {}
 
-func (m *testModel) fit(_ context.Context, targets targetUtilizations) rates {
+func (m *testModel) fit(_ context.Context, targets targetUtilizations, _ int) rates {
 	// targets uses float64, which when written to golden file can lead to
 	// test reproducibility issues. Here, we multiply by 100 & then round to
 	// the nearest integer.
@@ -121,7 +123,7 @@ func (m *testModel) fit(_ context.Context, targets targetUtilizations) rates {
 	}
 	fmt.Fprint(m.buf, "fit(\n")
 	for qual := int(numBurstQualifications - 1); qual >= 0; qual-- {
-		fmt.Fprintf(m.buf, "\t%s -> %v%%\n", burstQualification(qual).String(), round(targets[qual]))
+		fmt.Fprintf(m.buf, "\t%s -> %v%%\n", burstQualification(qual).String(), round(targets[0][qual]))
 	}
 	fmt.Fprint(m.buf, ")\n")
 	return m.rates
@@ -133,11 +135,12 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 
 	metrics := makeCPUTimeTokenMetrics()
 	granter := newCPUTimeTokenGranter(metrics, timeutil.DefaultTimeSource{})
+	childGranter := &cpuTimeTokenChildGranter{tier: 0, parent: granter}
 	requester := &testRequester{
 		additionalID: "",
-		granter:      granter,
+		granter:      childGranter,
 	}
-	granter.requester = requester
+	granter.requester[0] = requester
 
 	var buf strings.Builder
 	burstMgr := &testBurstManager{}
@@ -151,15 +154,21 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 	}
 
 	model := &testModel{buf: &buf}
-	model.rates[canBurst] = 5000
-	model.rates[noBurst] = 4000
+	model.rates[0][canBurst] = 5000
+	model.rates[0][noBurst] = 4000
+	st := cluster.MakeClusterSettings()
+	KVCPUTimeTokenACMode.Override(context.Background(), &st.SV,
+		int64(resourceManagerMode))
 	allocator := cpuTimeTokenAllocator{
-		granter:  granter,
-		settings: cluster.MakeClusterSettings(),
-		model:    model,
-		metrics:  metrics,
-		queue:    burstMgr,
+		granter:        granter,
+		numActiveTiers: 1,
+		mode:           resourceManagerMode,
+		prevMode:       resourceManagerMode,
+		settings:       st,
+		model:          model,
+		metrics:        metrics,
 	}
+	allocator.queues[0] = burstMgr
 	printBurstMgr = func() string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "burstM  %d\n", burstMgr.tokens)
@@ -173,8 +182,8 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 			var increaseRatesBy int64
 			d.MaybeScanArgs(t, "increase_rates_by", &increaseRatesBy)
 			if increaseRatesBy != 0 {
-				model.rates[canBurst] += increaseRatesBy
-				model.rates[noBurst] += increaseRatesBy
+				model.rates[0][canBurst] += increaseRatesBy
+				model.rates[0][noBurst] += increaseRatesBy
 			}
 			allocator.resetInterval(ctx)
 			return flushAndReset()
@@ -186,8 +195,8 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		case "set-tokens":
 			var v int64
 			d.ScanArgs(t, "v", &v)
-			granter.mu.buckets[canBurst].tokens = v
-			granter.mu.buckets[noBurst].tokens = v
+			granter.mu.buckets[0][canBurst].tokens = v
+			granter.mu.buckets[0][noBurst].tokens = v
 			burstMgr.tokens = v
 			return flushAndReset()
 		case "setClusterSettings":
@@ -232,23 +241,23 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur, 1) // appended value ignored by init
 
 	var targets targetUtilizations
-	targets[noBurst] = 0.75
-	targets[canBurst] = 1.0
+	targets[0][noBurst] = 0.75
+	targets[0][canBurst] = 1.0
 
 	// The first call to fit inits the model, by setting tokenToCPUTimeMultiplier
 	// to one, since in prod on the first call to fit, there will be no CPU
 	// usage data to use to determine tokenToCPUTimeMultiplier.
 	ctx := context.Background()
-	refillRates := model.fit(ctx, targets)
+	refillRates := model.fit(ctx, targets, 1)
 	require.Equal(t, float64(1), model.tokenToCPUTimeMultiplier)
 	// Given that tokenToCPUTimeMultiplier equals one, refillRates is equal
 	// to target utilization for the bucket * the vCPU count (10 vCPUs in this
 	// test). The unit of refillRates is nanoseconds.
 	//
 	// 75% util -> 10 vCPUs * .75 * 1s = 7.5s
-	require.Equal(t, int64(7500000000), refillRates[noBurst])
+	require.Equal(t, int64(7500000000), refillRates[0][noBurst])
 	// 100% util -> 10 vCPUs * 1.0 * 1s = 10s
-	require.Equal(t, int64(10000000000), refillRates[canBurst])
+	require.Equal(t, int64(10000000000), refillRates[0][canBurst])
 
 	// Below tests are of the computation of tokenToCPUTimeMultiplier only. The
 	// computation of tokenToCPUTimeMultiplier involves state stored on the model,
@@ -264,7 +273,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	tolerance := 0.01
 	require.InDelta(t, 2, model.tokenToCPUTimeMultiplier, tolerance)
@@ -276,7 +285,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur*2, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 4, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -286,7 +295,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur*2, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 1, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -297,7 +306,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur*40, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 20, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -308,7 +317,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 1, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -318,7 +327,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur*2, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 2, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -337,7 +346,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur/5, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 2, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -347,7 +356,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur*100, 100)
 	for i := 0; i < 100; i++ {
 		testTime.Advance(time.Second)
-		_ = model.fit(ctx, targets)
+		_ = model.fit(ctx, targets, 1)
 	}
 	require.InDelta(t, 20, model.tokenToCPUTimeMultiplier, tolerance)
 
@@ -366,7 +375,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 		for i := 0; ; i++ {
 			require.Less(t, i, 100)
 			testTime.Advance(time.Second)
-			refillRates = model.fit(ctx, targets)
+			refillRates = model.fit(ctx, targets, 1)
 			mult := model.tokenToCPUTimeMultiplier
 			if mult == lastMult {
 				break
@@ -381,9 +390,9 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	// equal to 3.0 instead of one.
 	//
 	// 75% -> 10 vCPUs * .75 * 1s = 7.5s -> 7.5s / 3.0 = 2.5s
-	require.Equal(t, int64(2500000000), refillRates[noBurst])
+	require.Equal(t, int64(2500000000), refillRates[0][noBurst])
 	// 100% -> 10 vCPUs * 1.0 * 1s = 10s -> 10s / 3.0 = 3.333...s
-	require.Equal(t, int64(3333333333), refillRates[canBurst])
+	require.Equal(t, int64(3333333333), refillRates[0][canBurst])
 
 	// We do not expect the syscall that fetches CPU usage to ever fail.
 	// Verify that log.Fatalf is called when GetCPUUsage returns an error.
@@ -393,7 +402,7 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 		exited = true
 	})
 	defer log.ResetExitFunc()
-	_ = model.fit(ctx, targets)
+	_ = model.fit(ctx, targets, 1)
 	require.True(t, exited, "expected log.Fatalf to be called")
 }
 

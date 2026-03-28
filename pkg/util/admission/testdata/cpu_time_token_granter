@@ -1,13 +1,13 @@
 # Simple tryGet calls.
 init no_burst=1
 ----
-cpuTTG can_burst=0 no_burst=1
+cpuTTG tier0/can_burst=0 tier0/no_burst=1 tier1/can_burst=0 tier1/no_burst=0
 requester: waitingRequests: false, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 0
 
 try-get v=1
 ----
 kv: tryGet(1) returned true
-cpuTTG can_burst=-1 no_burst=0
+cpuTTG tier0/can_burst=-1 tier0/no_burst=0 tier1/can_burst=-1 tier1/no_burst=-1
 
 try-get v=1
 ----
@@ -27,7 +27,7 @@ reset-tokens-used-in-interval() returned 0
 # More simple tryGet calls.
 init no_burst=2
 ----
-cpuTTG can_burst=0 no_burst=2
+cpuTTG tier0/can_burst=0 tier0/no_burst=2 tier1/can_burst=-1 tier1/no_burst=-1
 requester: waitingRequests: false, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 0
 
 # For cpuTimeTokenGranter, this is a NOP. Still, it will be
@@ -39,12 +39,12 @@ kv: continueGrantChain
 try-get v=1
 ----
 kv: tryGet(1) returned true
-cpuTTG can_burst=-1 no_burst=1
+cpuTTG tier0/can_burst=-1 tier0/no_burst=1 tier1/can_burst=-2 tier1/no_burst=-2
 
 try-get v=1
 ----
 kv: tryGet(1) returned true
-cpuTTG can_burst=-2 no_burst=0
+cpuTTG tier0/can_burst=-2 tier0/no_burst=0 tier1/can_burst=-3 tier1/no_burst=-3
 
 try-get v=1
 ----
@@ -58,23 +58,23 @@ reset-tokens-used-in-interval() returned 2
 # returnGrant adds tokens to the buckets, when a positive count is used.
 init no_burst=1
 ----
-cpuTTG can_burst=0 no_burst=1
+cpuTTG tier0/can_burst=0 tier0/no_burst=1 tier1/can_burst=-3 tier1/no_burst=-3
 requester: waitingRequests: false, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 0
 
 return-grant v=1
 ----
 kv: returnGrant(1)
-cpuTTG can_burst=1 no_burst=2
+cpuTTG tier0/can_burst=1 tier0/no_burst=2 tier1/can_burst=-2 tier1/no_burst=-2
 
 try-get v=1
 ----
 kv: tryGet(1) returned true
-cpuTTG can_burst=0 no_burst=1
+cpuTTG tier0/can_burst=0 tier0/no_burst=1 tier1/can_burst=-3 tier1/no_burst=-3
 
 try-get v=1
 ----
 kv: tryGet(1) returned true
-cpuTTG can_burst=-1 no_burst=0
+cpuTTG tier0/can_burst=-1 tier0/no_burst=0 tier1/can_burst=-4 tier1/no_burst=-4
 
 # The net of one return-grant v=1 with two try-gets v=1 is one
 # token used.
@@ -85,13 +85,13 @@ reset-tokens-used-in-interval() returned 1
 # Simple tookWithoutPermission test.
 init no_burst=3
 ----
-cpuTTG can_burst=0 no_burst=3
+cpuTTG tier0/can_burst=0 tier0/no_burst=3 tier1/can_burst=-4 tier1/no_burst=-4
 requester: waitingRequests: false, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 0
 
 took-without-permission v=3
 ----
 kv: tookWithoutPermission(3)
-cpuTTG can_burst=-3 no_burst=0
+cpuTTG tier0/can_burst=-3 tier0/no_burst=0 tier1/can_burst=-7 tier1/no_burst=-7
 
 try-get v=1
 ----
@@ -105,7 +105,7 @@ reset-tokens-used-in-interval() returned 3
 # Test granting. A request will be admitted.
 init waiter=2
 ----
-cpuTTG can_burst=0 no_burst=0
+cpuTTG tier0/can_burst=0 tier0/no_burst=0 tier1/can_burst=-7 tier1/no_burst=-7
 requester: waitingRequests: true, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 2
 
 return-grant v=2
@@ -122,7 +122,7 @@ reset-tokens-used-in-interval() returned 0
 # Test granting. Two requests will be admitted.
 init can_burst=-1 no_burst=-1 waiter=1
 ----
-cpuTTG can_burst=-1 no_burst=-1
+cpuTTG tier0/can_burst=-1 tier0/no_burst=-1 tier1/can_burst=-7 tier1/no_burst=-7
 requester: waitingRequests: true, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 1
 
 # With three returned, no_burst will have two tokens. Thus two
@@ -135,7 +135,7 @@ return-grant v=3
 kv: returnGrant(3)
 kv: granted in chain 0, and returning 1
 kv: granted in chain 0, and returning 1
-cpuTTG can_burst=0 no_burst=0
+cpuTTG tier0/can_burst=0 tier0/no_burst=0 tier1/can_burst=-6 tier1/no_burst=-6
 
 # The net of one return-grant v=3 with that grant leading to admission of two requests
 # with token count equal to one is -1 tokens used.
@@ -146,7 +146,7 @@ reset-tokens-used-in-interval() returned -1
 # Simple tryGet calls, with burst this time.
 init can_burst=1
 ----
-cpuTTG can_burst=1 no_burst=0
+cpuTTG tier0/can_burst=1 tier0/no_burst=0 tier1/can_burst=-6 tier1/no_burst=-6
 requester: waitingRequests: false, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 0
 
 try-get v=1
@@ -156,7 +156,7 @@ kv: tryGet(1) returned false
 try-get burst v=1
 ----
 kv: tryGet(1) returned true
-cpuTTG can_burst=0 no_burst=-1
+cpuTTG tier0/can_burst=0 tier0/no_burst=-1 tier1/can_burst=-7 tier1/no_burst=-7
 
 try-get burst v=1
 ----
@@ -188,13 +188,13 @@ reset-tokens-used-in-interval() returned 0
 # have enough tokens to grant. So no grant, since the waiting request is a burst request.
 init can_burst=-1 no_burst=0 waiter=1 burst_waiter
 ----
-cpuTTG can_burst=-1 no_burst=0
+cpuTTG tier0/can_burst=-1 tier0/no_burst=0 tier1/can_burst=-7 tier1/no_burst=-7
 requester: waitingRequests: true, returnValueFromHasWaitingRequests: can_burst, returnValueFromGranted: 1
 
 return-grant v=1
 ----
 kv: returnGrant(1)
-cpuTTG can_burst=0 no_burst=1
+cpuTTG tier0/can_burst=0 tier0/no_burst=1 tier1/can_burst=-6 tier1/no_burst=-6
 
 # The net of one return-grant v=1 with that grant not leading to any admission is
 # -1 tokens used.
@@ -207,7 +207,7 @@ reset-tokens-used-in-interval() returned -1
 # for admission.
 init waiter=1
 ----
-cpuTTG can_burst=0 no_burst=0
+cpuTTG tier0/can_burst=0 tier0/no_burst=0 tier1/can_burst=-6 tier1/no_burst=-6
 requester: waitingRequests: true, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 1
 
 # The arguments to refill are hard-coded in the test code, but they are also
@@ -228,7 +228,7 @@ refill(
 	can_burst -> delta: 5, cap: 20, min: 0
 	no_burst -> delta: 4, cap: 16, min: -4
 )
-cpuTTG can_burst=1 no_burst=0
+cpuTTG tier0/can_burst=1 tier0/no_burst=0 tier1/can_burst=-4 tier1/no_burst=-4
 
 # Refilling the buckets does not count as token usage. The only usage that happens
 # here is that four requests with token count equal to one are granted admission,
@@ -242,7 +242,7 @@ reset-tokens-used-in-interval() returned 4
 # bucket starts deeply negative, so it is clamped to its floor of -4.
 init no_burst=-100 can_burst=16
 ----
-cpuTTG can_burst=16 no_burst=-100
+cpuTTG tier0/can_burst=16 tier0/no_burst=-100 tier1/can_burst=-4 tier1/no_burst=-4
 requester: waitingRequests: false, returnValueFromHasWaitingRequests: no_burst, returnValueFromGranted: 0
 
 refill
@@ -251,4 +251,4 @@ refill(
 	can_burst -> delta: 5, cap: 20, min: 0
 	no_burst -> delta: 4, cap: 16, min: -4
 )
-cpuTTG can_burst=20 no_burst=-4
+cpuTTG tier0/can_burst=20 tier0/no_burst=-4 tier1/can_burst=0 tier1/no_burst=0

@@ -39,7 +39,9 @@ type cpuTimeBurstBucket struct {
 	// burstLimitFrac controls burst qualification:
 	//   >= 1.0: always canBurst (FULLY_UTILIZE resource groups)
 	//   < 1.0:  canBurst only when tokens > burstLimitFrac × capacity
-	// Default is defaultBurstLimitFrac (0.25).
+	// Default is workQueueOptions.defaultBurstLimitFrac, which is 0.0
+	// for Serverless (preserves 90%-fullness check) and 1.0 for RM
+	// (unconfigured groups are FULLY_UTILIZE).
 	burstLimitFrac float64
 	// disabled is true when mode != usesCPUTimeTokens, causing
 	// burstQualification to always return noBurst. This effectively

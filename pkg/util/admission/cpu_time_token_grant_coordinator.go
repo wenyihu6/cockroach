@@ -22,22 +22,50 @@ import (
 var cpuTimeTokenACEnabled = settings.RegisterBoolSetting(
 	settings.ApplicationLevel,
 	"admission.cpu_time_tokens.enabled",
-	"if true, CPU time token AC will be used for foreground KVWork, instead of slots-based AC -- "+
-		"note that this is not supported in production except on multi-tenant Serverless clusters",
+	"if true, CPU time token AC will be used for foreground KVWork, instead "+
+		"of slots-based AC -- note that this is not supported in production "+
+		"except on multi-tenant Serverless clusters",
 	false)
 
 // cpuTimeTokenACKillSwitch is an env var kill switch that disables CPU time
-// token AC regardless of the cluster setting. This is useful when SQL is
-// unavailable, preventing the cluster setting from being changed.
+// token AC regardless of the cluster setting.
 var cpuTimeTokenACKillSwitch = envutil.EnvOrDefaultBool(
 	"COCKROACH_DISABLE_CPU_TIME_TOKEN_AC", false)
 
-// cpuTimeTokenACIsEnabled returns true if CPU time token AC is enabled. It
-// checks both the cluster setting and the env var kill switch. The kill switch
-// takes precedence over the cluster setting.
 func cpuTimeTokenACIsEnabled(sv *settings.Values) bool {
 	return !cpuTimeTokenACKillSwitch && cpuTimeTokenACEnabled.Get(sv)
 }
+
+// cpuTimeTokenMode selects between Serverless (2 WorkQueues, per-tier
+// settings) and Resource Manager (1 WorkQueue, resource groups) modes.
+// The mode can be changed at runtime via the
+// admission.cpu_time_tokens.mode cluster setting.
+type cpuTimeTokenMode int64
+
+const (
+	// serverlessMode uses 2 WorkQueues (systemTenant, appTenant), per-tier
+	// utilization targets, and 4 buckets (2 tiers x 2 burst quals).
+	serverlessMode cpuTimeTokenMode = iota
+	// resourceManagerMode uses 1 WorkQueue with N resource groups,
+	// a single utilization target, and 2 buckets (1 tier x 2 burst quals).
+	// In RM mode, only queue[0] receives work; queue[1] sits idle.
+	resourceManagerMode
+)
+
+// KVCPUTimeTokenACMode selects between Serverless and Resource Manager
+// modes for CPU time token admission control. Can be changed at runtime
+// without a restart — the allocator re-reads this every 1s.
+var KVCPUTimeTokenACMode = settings.RegisterEnumSetting(
+	settings.SystemOnly,
+	"admission.cpu_time_tokens.mode",
+	"selects between serverless (2 queues, per-tier targets) and "+
+		"resource_manager (1 queue, single target) CPU time token modes",
+	"serverless",
+	map[int64]string{
+		int64(serverlessMode):      "serverless",
+		int64(resourceManagerMode): "resource_manager",
+	},
+)
 
 // CPUGrantCoordinators's main purpose is to act as a shim. Depending on
 // whether admission.cpu_time_tokens.enabled is true or false, a WorkQueue
@@ -51,16 +79,26 @@ type CPUGrantCoordinators struct {
 }
 
 // GetKVWorkQueue returns a WorkQueue to use for KVWork. If
-// admission.cpu_time_tokens.enabled is true, it returns the single WorkQueue
-// that implements CPU time token AC. Else it returns a WorkQueue that does
-// slots-based AC. The isSystemTenant parameter is kept for API compatibility
-// but is ignored when CPU time token AC is enabled — all work goes through
-// the same queue.
+// admission.cpu_time_tokens.enabled is true, it returns a WorkQueue that
+// implements CPU time token AC. In Serverless mode, there is one
+// WorkQueue for system tenant work and another for app tenant work. In
+// Resource Manager mode, there is a single WorkQueue for all work.
+//
+// The mode is read from the cluster setting on every call, so switching
+// modes takes effect immediately for new requests.
 func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
 	}
-	return coord.cpuTimeCoord.getWorkQueue()
+	mode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&coord.st.SV))
+	if mode == serverlessMode {
+		if isSystemTenant {
+			return coord.cpuTimeCoord.getWorkQueue(systemTenant)
+		}
+		return coord.cpuTimeCoord.getWorkQueue(appTenant)
+	}
+	// Resource Manager mode: single queue for all work.
+	return coord.cpuTimeCoord.getWorkQueue(0)
 }
 
 // GetSQLWorkQueue returns a WorkQueue for SQLKVResponseWork or
@@ -68,14 +106,15 @@ func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueu
 // it panics.
 func (coord *CPUGrantCoordinators) GetSQLWorkQueue(workKind WorkKind) *WorkQueue {
 	if workKind != SQLKVResponseWork && workKind != SQLSQLResponseWork {
-		panic(fmt.Sprintf("workKind %q not supported by GetSQLWorkQueue", workKind))
+		panic(fmt.Sprintf(
+			"workKind %q not supported by GetSQLWorkQueue", workKind))
 	}
 	return coord.slotsCoord.queues[workKind].(*WorkQueue)
 }
 
-// SetTenantWeights sets the weight of tenants, using the provided tenant ID
-// => weight map. A nil map will result in all tenants having the same weight.
-// SetTenantWeights adjusts the weights on all WorkQueues that
+// SetTenantWeights sets the weight of tenants, using the provided tenant
+// ID => weight map. A nil map will result in all tenants having the same
+// weight. SetTenantWeights adjusts the weights on all WorkQueues that
 // CPUGrantCoordinators manages.
 func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.slotsCoord.GetWorkQueue(KVWork).SetTenantWeights(weights)
@@ -84,18 +123,13 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 
 // ResourceGroupConfig holds per-resource-group configuration.
 type ResourceGroupConfig struct {
-	Weight        uint32
+	Weight         uint32
 	BurstLimitFrac float64
 }
 
 // SetResourceGroupConfig sets per-resource-group weights and burst limits.
-// Each resource group appears as a tenant with weight = CPU_MIN. The
-// BurstLimitFrac controls burst qualification:
-//   - >= 1.0: FULLY_UTILIZE (always canBurst)
-//   - < 1.0: canBurst only while usage < burst limit fraction of CPU
-func (coord *CPUGrantCoordinators) SetResourceGroupConfig(
-	config map[uint64]ResourceGroupConfig,
-) {
+// Only meaningful in Resource Manager mode.
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
 	weights := make(map[uint64]uint32, len(config))
 	burstLimits := make(map[uint64]float64, len(config))
 	for id, cfg := range config {
@@ -103,7 +137,8 @@ func (coord *CPUGrantCoordinators) SetResourceGroupConfig(
 		burstLimits[id] = cfg.BurstLimitFrac
 	}
 	coord.SetTenantWeights(weights)
-	coord.cpuTimeCoord.getWorkQueue().SetBurstLimits(burstLimits)
+	// In RM mode, there's only one queue (tier 0).
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetBurstLimits(burstLimits)
 }
 
 // GetRunnableCountCallback returns a callback of type
@@ -120,7 +155,7 @@ func (cg *CPUGrantCoordinators) Close() {
 
 type cpuTimeTokenGrantCoordinator struct {
 	filler *cpuTimeTokenFiller
-	queue  requesterClose
+	queues [numResourceTiers]requesterClose
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -130,18 +165,32 @@ func makeCPUTimeTokenGrantCoordinator(
 	registry *metric.Registry,
 	knobs *TestingKnobs,
 ) *cpuTimeTokenGrantCoordinator {
+	// Always create 2 tiers. In RM mode, tier-1 sits idle (no work
+	// routed, zero refill rates). This enables dynamic mode switching
+	// at runtime without rebuilding queues.
+	initialMode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&settings.SV))
+
 	metrics := makeCPUTimeTokenMetrics()
 	registry.AddMetricStruct(metrics)
 	timeSource := timeutil.DefaultTimeSource{}
 	granter := newCPUTimeTokenGranter(metrics, timeSource)
+
 	filler := &cpuTimeTokenFiller{
 		timeSource: timeSource,
 		closeCh:    make(chan struct{}),
 	}
+
+	initialActiveTiers := int(numResourceTiers)
+	if initialMode == resourceManagerMode {
+		initialActiveTiers = 1
+	}
 	allocator := &cpuTimeTokenAllocator{
-		granter:  granter,
-		settings: settings,
-		metrics:  metrics,
+		granter:        granter,
+		numActiveTiers: initialActiveTiers,
+		mode:           initialMode,
+		prevMode:       initialMode,
+		settings:       settings,
+		metrics:        metrics,
 	}
 	model := &cpuTimeTokenLinearModel{
 		granter:            granter,
@@ -152,75 +201,77 @@ func makeCPUTimeTokenGrantCoordinator(
 	allocator.model = model
 	filler.allocator = allocator
 
+	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
+	for tier := 0; tier < int(numResourceTiers); tier++ {
+		childGranters[tier] = cpuTimeTokenChildGranter{
+			tier:   resourceTier(tier),
+			parent: granter,
+		}
+	}
+
+	// All queues start with defaultBurstLimitFrac=0.0 (Serverless
+	// default). In RM mode, the allocator's first resetInterval call
+	// will set queue[0].defaultBurstLimitFrac to 1.0.
+	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
-	wqOpts := makeWorkQueueOptions(KVWork)
-	wqOpts.mode = usesCPUTimeTokens
-	wqOpts.admittedCountPerTenant = metrics.AdmittedCountPerTenant
-	wqOpts.waitTimeNanosPerTenant = metrics.WaitTimeNanosPerTenant
-	req := makeWorkQueue(
-		ambientCtx, KVWork, granter, settings, wqMetrics, wqOpts)
-	granter.requester = req
-	// This type assertion is always valid, since makeWorkQueue always
-	// returns a *WorkQueue.
-	allocator.queue = req.(*WorkQueue)
+	for tier := 0; tier < int(numResourceTiers); tier++ {
+		wqOpts := makeWorkQueueOptions(KVWork)
+		wqOpts.mode = usesCPUTimeTokens
+		wqOpts.perTenantAggMetrics = &tenantAggMetrics{
+			admittedCount:  metrics.AdmittedCountPerTenant[tier],
+			waitTimeNanos:  metrics.WaitTimeNanosPerTenant[tier],
+			tokensUsed:     metrics.TokensUsedPerTenant[tier],
+			tokensReturned: metrics.TokensReturnedPerTenant[tier],
+		}
+		requesters[tier] = makeWorkQueue(
+			ambientCtx, KVWork, &childGranters[tier],
+			settings, wqMetrics, wqOpts)
+		granter.requester[tier] = requesters[tier]
+		allocator.queues[tier] = requesters[tier].(*WorkQueue)
+	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
 		filler: filler,
-		queue:  req,
+	}
+	for tier := 0; tier < int(numResourceTiers); tier++ {
+		coordinator.queues[tier] = requesters[tier]
 	}
 
-	// Hardcode 2 resource groups for the prototype:
-	//   - System tenant (ID=1): FULLY_UTILIZE, weight=9
-	//   - App tenants (default): non-FULLY_UTILIZE, weight=1
-	//
-	// System tenant gets burstLimitFrac=1.0 (always canBurst, access to
-	// 100% CPU bucket). App tenants default to burstLimitFrac=0.25 via
-	// getBurstLimitFracLocked, meaning they qualify for burst only when
-	// using < 25% of node CPU.
-	//
-	// In production, this will be driven by SQL DDL:
-	//   CREATE RESOURCE GROUP ... CPU_MIN=<pct> [FULLY_UTILIZE]
-	wq := req.(*WorkQueue)
-	wq.SetTenantWeights(map[uint64]uint32{
-		1: 9, // system tenant gets 9x weight
-	})
-	wq.SetBurstLimits(map[uint64]float64{
-		1: 1.0, // system tenant: FULLY_UTILIZE (always canBurst)
-	})
-
-	// The filler ticking appears to have a slight negative impact on perf.
-	// For now, we accept this, since CPU time token AC will be off by
-	// default, and only enabled in Serverless. To track fixing the perf
-	// issue, we have the following ticket:
-	// https://github.com/cockroachdb/cockroach/issues/161945
 	if !knobs.DisableCPUTimeTokenFillerGoroutine {
 		var once sync.Once
 		if cpuTimeTokenACIsEnabled(&settings.SV) {
 			once.Do(func() {
-				filler.start(ambientCtx.AnnotateCtx(context.Background()))
+				filler.start(
+					ambientCtx.AnnotateCtx(context.Background()))
 			})
 		}
-		cpuTimeTokenACEnabled.SetOnChange(&settings.SV, func(ctx context.Context) {
-			if cpuTimeTokenACIsEnabled(&settings.SV) {
-				once.Do(func() {
-					filler.start(ambientCtx.AnnotateCtx(context.Background()))
-				})
-			}
-		})
+		cpuTimeTokenACEnabled.SetOnChange(&settings.SV,
+			func(ctx context.Context) {
+				if cpuTimeTokenACIsEnabled(&settings.SV) {
+					once.Do(func() {
+						filler.start(
+							ambientCtx.AnnotateCtx(context.Background()))
+					})
+				}
+			})
 	}
 
 	return coordinator
 }
 
-func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue() *WorkQueue {
-	return coord.queue.(*WorkQueue)
+func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue(tier resourceTier) *WorkQueue {
+	return coord.queues[tier].(*WorkQueue)
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) setTenantWeights(weights map[uint64]uint32) {
-	coord.queue.(*WorkQueue).SetTenantWeights(weights)
+	for tier := range coord.queues {
+		coord.queues[tier].(*WorkQueue).SetTenantWeights(weights)
+	}
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) close() {
-	coord.queue.close()
+	for tier := range coord.queues {
+		coord.queues[tier].close()
+	}
 	coord.filler.close()
 }

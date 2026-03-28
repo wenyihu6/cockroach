@@ -330,9 +330,15 @@ type WorkQueue struct {
 	metrics      *WorkQueueMetrics
 	stopCh       chan struct{}
 
-	// Per-tenant admission metrics. Only set when mode == usesCPUTimeTokens.
-	admittedCountPerTenant *aggmetric.AggCounter
-	waitTimeNanosPerTenant *aggmetric.AggCounter
+	// perTenantAggMetrics holds the parent AggCounters for per-tenant
+	// metrics. Only set when mode == usesCPUTimeTokens.
+	perTenantAggMetrics *tenantAggMetrics
+	// defaultBurstLimitFrac is the burst limit fraction for tenants not
+	// explicitly configured via SetBurstLimits.
+	//   - Serverless: 0.0 (disables FULLY_UTILIZE short-circuit, matching
+	//     master's 90%-fullness burst check)
+	//   - RM: 1.0 (unconfigured groups are FULLY_UTILIZE by default)
+	defaultBurstLimitFrac float64
 
 	timeSource timeutil.TimeSource
 	knobs      *TestingKnobs
@@ -340,14 +346,28 @@ type WorkQueue struct {
 
 var _ requester = &WorkQueue{}
 
+// tenantAggMetrics holds parent AggCounters for per-tenant admission
+// metrics. One instance is shared across all tenants within a WorkQueue.
+// Only used when mode == usesCPUTimeTokens.
+type tenantAggMetrics struct {
+	admittedCount  *aggmetric.AggCounter
+	waitTimeNanos  *aggmetric.AggCounter
+	tokensUsed     *aggmetric.AggCounter
+	tokensReturned *aggmetric.AggCounter
+}
+
 type workQueueOptions struct {
 	mode           workQueueMode
 	tiedToRange    bool
 	usesAsyncAdmit bool
 	// Per-tenant admission metrics. Only set when mode == usesCPUTimeTokens.
-	// See cpuTimeTokenMetrics for details.
-	admittedCountPerTenant *aggmetric.AggCounter
-	waitTimeNanosPerTenant *aggmetric.AggCounter
+	perTenantAggMetrics *tenantAggMetrics
+	// defaultBurstLimitFrac is the default burst limit fraction for
+	// tenants not explicitly configured via SetBurstLimits.
+	//   - Serverless: 0.0 (preserves master's 90%-fullness burst check)
+	//   - RM: 1.0 (unconfigured groups are FULLY_UTILIZE by default)
+	// Only meaningful when mode == usesCPUTimeTokens.
+	defaultBurstLimitFrac float64
 
 	// timeSource can be set to non-nil for tests. If nil,
 	// the timeutil.DefaultTimeSource will be used.
@@ -428,8 +448,8 @@ func initWorkQueue(
 	q.logThreshold = log.Every(5 * time.Minute)
 	q.metrics = metrics
 	q.stopCh = stopCh
-	q.admittedCountPerTenant = opts.admittedCountPerTenant
-	q.waitTimeNanosPerTenant = opts.waitTimeNanosPerTenant
+	q.perTenantAggMetrics = opts.perTenantAggMetrics
+	q.defaultBurstLimitFrac = opts.defaultBurstLimitFrac
 	q.timeSource = timeSource
 	q.knobs = knobs
 	q.mu.defaultCPUTimeTokenEstimator = cpuTimeTokenEstimator{}
@@ -703,7 +723,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		tenant = newTenantInfo(rgID, q.getTenantWeightLocked(rgID),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
 			q.mu.burstBucketCapacity, burstLimitFrac,
-			q.admittedCountPerTenant, q.waitTimeNanosPerTenant)
+			q.perTenantAggMetrics)
 		q.mu.tenants[rgID] = tenant
 	}
 	// If mode == usesCPUTimeTokens, WorkQueue does CPU time token estimation.
@@ -840,7 +860,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 			tenant = newTenantInfo(rgID, q.getTenantWeightLocked(rgID),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
 				q.mu.burstBucketCapacity, burstLimitFrac,
-				q.admittedCountPerTenant, q.waitTimeNanosPerTenant)
+				q.perTenantAggMetrics)
 			q.mu.tenants[rgID] = tenant
 		}
 		q.adjustTenantUsedLocked(tenant, -info.RequestedCount)
@@ -1236,6 +1256,15 @@ func (q *WorkQueue) adjustTenantUsedLocked(tenant *tenantInfo, delta int64) {
 		// Burst bucket tracks available budget, so we negate delta: consuming
 		// resources (positive delta to used) depletes the burst bucket.
 		tenant.cpuTimeBurstBucket.adjust(-delta)
+		// Track per-tenant token usage/returns via separate counters so
+		// that rate() can be computed over arbitrary windows.
+		if tenant.tokensUsed != nil {
+			if delta > 0 {
+				tenant.tokensUsed.Inc(delta)
+			} else {
+				tenant.tokensReturned.Inc(-delta)
+			}
+		}
 	}
 	if isInTenantHeap(tenant) {
 		q.mu.tenantHeap.fix(tenant)
@@ -1476,15 +1505,20 @@ func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
 	}
 }
 
-// defaultBurstLimitFrac is the burst limit fraction for resource groups
-// not explicitly configured via SetBurstLimits. A value of 1.0 means
-// unconfigured groups are FULLY_UTILIZE (always canBurst). Non-
-// FULLY_UTILIZE groups must be explicitly configured with a lower
-// burstLimitFrac via SetResourceGroupConfig.
-const defaultBurstLimitFrac = 1.0
+// setDefaultBurstLimitFrac dynamically updates the default burst limit
+// fraction for tenants not explicitly configured via SetBurstLimits.
+// Called by the allocator on mode transitions (e.g., Serverless → RM
+// sets 1.0, RM → Serverless sets 0.0).
+func (q *WorkQueue) setDefaultBurstLimitFrac(frac float64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.defaultBurstLimitFrac = frac
+}
 
 // getBurstLimitFracLocked returns the burst limit fraction for the given
-// resource group. If no override exists, returns defaultBurstLimitFrac.
+// resource group. If no override exists, returns q.defaultBurstLimitFrac
+// which is set per-queue during construction (0.0 for Serverless, 1.0
+// for Resource Manager).
 //
 // REQUIRES: q.mu is held.
 func (q *WorkQueue) getBurstLimitFracLocked(rgID uint64) float64 {
@@ -1493,7 +1527,7 @@ func (q *WorkQueue) getBurstLimitFracLocked(rgID uint64) float64 {
 			return frac
 		}
 	}
-	return defaultBurstLimitFrac
+	return q.defaultBurstLimitFrac
 }
 
 // getResourceGroupIDLocked returns the resource group ID for the given
@@ -1730,8 +1764,10 @@ type tenantInfo struct {
 
 	// Per-tenant admission metric children. Only set when
 	// mode == usesCPUTimeTokens. See cpuTimeTokenMetrics for details.
-	admittedCount *aggmetric.Counter
-	waitTimeNanos *aggmetric.Counter
+	admittedCount  *aggmetric.Counter
+	waitTimeNanos  *aggmetric.Counter
+	tokensUsed     *aggmetric.Counter
+	tokensReturned *aggmetric.Counter
 }
 
 // tenantHeap is a heap of resource groups with waiting work, ordered by
@@ -1756,8 +1792,7 @@ func newTenantInfo(
 	cpuTimeTokenEstimate int64,
 	burstBucketCapacity int64,
 	burstLimitFrac float64,
-	admittedCountPerTenant *aggmetric.AggCounter,
-	waitTimeNanosPerTenant *aggmetric.AggCounter,
+	aggMetrics *tenantAggMetrics,
 ) *tenantInfo {
 	ti := tenantInfoPool.Get().(*tenantInfo)
 	*ti = tenantInfo{
@@ -1777,10 +1812,12 @@ func newTenantInfo(
 	scaledCapacity := int64(float64(burstBucketCapacity) * burstLimitFrac)
 	ti.cpuTimeBurstBucket.init(
 		scaledCapacity, mode != usesCPUTimeTokens /* disable */, burstLimitFrac)
-	if admittedCountPerTenant != nil {
+	if aggMetrics != nil {
 		tid := strconv.FormatUint(id, 10)
-		ti.admittedCount = admittedCountPerTenant.AddChild(tid)
-		ti.waitTimeNanos = waitTimeNanosPerTenant.AddChild(tid)
+		ti.admittedCount = aggMetrics.admittedCount.AddChild(tid)
+		ti.waitTimeNanos = aggMetrics.waitTimeNanos.AddChild(tid)
+		ti.tokensUsed = aggMetrics.tokensUsed.AddChild(tid)
+		ti.tokensReturned = aggMetrics.tokensReturned.AddChild(tid)
 	}
 	return ti
 }
@@ -1792,6 +1829,8 @@ func releaseTenantInfo(ti *tenantInfo) {
 	if ti.admittedCount != nil {
 		ti.admittedCount.Unlink()
 		ti.waitTimeNanos.Unlink()
+		ti.tokensUsed.Unlink()
+		ti.tokensReturned.Unlink()
 	}
 	// NB: {waitingWorkHeap,openEpochsHeap}.Pop nil the slice elements when
 	// removing, so we are not inadvertently holding any references.
