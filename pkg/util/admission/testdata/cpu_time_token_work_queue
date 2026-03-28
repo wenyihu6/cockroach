@@ -585,3 +585,95 @@ print
 closed epoch: 0 tenantHeap len: 0
  tenant-id: 53 used: 13, w: 1, fifo: -128
 burst-buckets: t53=fullness=87.0% tokens=87 capacity=100 burstLimitFrac=1.00 qual=can_burst
+
+###
+# Test Serverless burst qualification. With defaultBurstLimitFrac=0.0,
+# tenants should use the dynamic 90% fullness check (not always canBurst
+# or always noBurst). Refill should pass through full values without
+# scaling by 0.0.
+###
+init default-burst-limit-frac=0.0
+----
+
+set-try-get-return-value v=true
+----
+
+# Admit tenant 1 before refillBurstBuckets. The bucket has 0 capacity
+# and 0 tokens at startup (same as RM mode). burstQualification returns
+# noBurst since 0 > 0 is false.
+admit id=1 tenant=1 requested-count=1
+----
+tryGet: input no_burst, returning true
+id 1: admit succeeded
+
+print
+----
+closed epoch: 0 tenantHeap len: 0
+ tenant-id: 1 used: 1, w: 1, fifo: -128
+burst-buckets: t1=fullness=0.0% tokens=-1 capacity=0 burstLimitFrac=0.00 qual=no_burst
+
+# Refill with full values. With burstLimitFrac=0.0 (Serverless sentinel),
+# the full toAdd=100 and capacity=100 are passed through without scaling.
+# tokens=-1+100=99, capacity=100. 99 > 90 → canBurst.
+refill-burst-buckets to-add=100 capacity=100
+----
+
+admit id=2 tenant=1 requested-count=1
+----
+tryGet: input can_burst, returning true
+id 2: admit succeeded
+
+print
+----
+closed epoch: 0 tenantHeap len: 0
+ tenant-id: 1 used: 2, w: 1, fifo: -128
+burst-buckets: t1=fullness=98.0% tokens=98 capacity=100 burstLimitFrac=0.00 qual=can_burst
+
+# Drain tokens below 90% fullness to test the dynamic threshold.
+# Admit 9 tokens → 98-9=89. 89 > 90 is false → noBurst.
+admit id=3 tenant=1 requested-count=9
+----
+tryGet: input can_burst, returning true
+id 3: admit succeeded
+
+print
+----
+closed epoch: 0 tenantHeap len: 0
+ tenant-id: 1 used: 11, w: 1, fifo: -128
+burst-buckets: t1=fullness=89.0% tokens=89 capacity=100 burstLimitFrac=0.00 qual=no_burst
+
+# Next admit sees noBurst since tokens are below 90%.
+admit id=4 tenant=1 requested-count=1
+----
+tryGet: input no_burst, returning true
+id 4: admit succeeded
+
+# Refill again to recover above 90%. tokens=88+100=100 (capped).
+refill-burst-buckets to-add=100 capacity=100
+----
+
+admit id=5 tenant=1 requested-count=1
+----
+tryGet: input can_burst, returning true
+id 5: admit succeeded
+
+print
+----
+closed epoch: 0 tenantHeap len: 0
+ tenant-id: 1 used: 13, w: 1, fifo: -128
+burst-buckets: t1=fullness=99.0% tokens=99 capacity=100 burstLimitFrac=0.00 qual=can_burst
+
+# Verify tenant 2 inited after refillBurstBuckets gets full capacity.
+# burstBucketCapacity=100 (stored from last refill), burstLimitFrac=0.0
+# → no scaling → init with capacity=100, tokens=100 → canBurst.
+admit id=6 tenant=2 requested-count=1
+----
+tryGet: input can_burst, returning true
+id 6: admit succeeded
+
+print
+----
+closed epoch: 0 tenantHeap len: 0
+ tenant-id: 1 used: 13, w: 1, fifo: -128
+ tenant-id: 2 used: 1, w: 1, fifo: -128
+burst-buckets: t1=fullness=99.0% tokens=99 capacity=100 burstLimitFrac=0.00 qual=can_burst t2=fullness=99.0% tokens=99 capacity=100 burstLimitFrac=0.00 qual=can_burst

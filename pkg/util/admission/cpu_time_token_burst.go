@@ -30,18 +30,23 @@ import "github.com/cockroachdb/redact"
 //
 // The bucket capacity and refill rate are derived from the 100% CPU rate
 // (canBurstRate / canBurstTarget), scaled per-tenant by burstLimitFrac
-// (= CPU_MIN fraction) in refillBurstBuckets. A tenant with CPU_MIN=10%
-// gets 10% of the 100% CPU rate, so its burst bucket breaks even at
-// exactly 10% CPU usage, regardless of the configured utilization targets.
+// (= CPU_MIN fraction) in refillBurstBuckets. When burstLimitFrac is 0.0
+// (Serverless sentinel), no scaling is applied. A tenant with CPU_MIN=10%
+// (burstLimitFrac=0.1) gets 10% of the 100% CPU rate, so its burst bucket
+// breaks even at exactly 10% CPU usage, regardless of the configured
+// utilization targets.
 type cpuTimeBurstBucket struct {
 	tokens   int64
 	capacity int64
-	// burstLimitFrac controls burst qualification:
-	//   >= 1.0: always canBurst (FULLY_UTILIZE resource groups)
-	//   < 1.0:  canBurst only when tokens > burstLimitFrac × capacity
+	// burstLimitFrac controls burst qualification and refill scaling:
+	//   0.0:    Serverless sentinel — no refill scaling (full pass-through),
+	//           burst check uses dynamic 90%-fullness threshold.
+	//   (0,1):  RM CPU_MIN fraction — scales refill rate and capacity,
+	//           burst check uses dynamic 90%-fullness threshold.
+	//   >= 1.0: RM FULLY_UTILIZE — no refill scaling needed (frac >= 1),
+	//           always canBurst (bypasses fullness check).
 	// Default is workQueueOptions.defaultBurstLimitFrac, which is 0.0
-	// for Serverless (preserves 90%-fullness check) and 1.0 for RM
-	// (unconfigured groups are FULLY_UTILIZE).
+	// for Serverless and 1.0 for RM.
 	burstLimitFrac float64
 	// disabled is true when mode != usesCPUTimeTokens, causing
 	// burstQualification to always return noBurst. This effectively

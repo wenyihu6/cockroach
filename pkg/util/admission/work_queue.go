@@ -1275,13 +1275,18 @@ func (q *WorkQueue) adjustTenantUsedLocked(tenant *tenantInfo, delta int64) {
 // and updates their capacity. This is called by cpuTimeTokenAllocator
 // periodically (every 1ms). toAdd and capacity represent the 100% CPU
 // rate (normalized by dividing out canBurstTarget in the allocator).
-// These are scaled per-group by burstLimitFrac.
 //
-// The per-group scaling ensures that each resource group's burst bucket
-// break-even point (where refill = drain) corresponds to their CPU_MIN
-// fraction of node CPU. For example, a group with burstLimitFrac=0.1
-// (CPU_MIN=10%) gets 10% of the 100% CPU refill rate, so its burst
-// bucket drains when the group exceeds ~10% of node CPU.
+// In RM mode, these are scaled per-group by burstLimitFrac (a non-zero
+// value representing the CPU_MIN fraction). The per-group scaling
+// ensures that each resource group's burst bucket break-even point
+// (where refill = drain) corresponds to their CPU_MIN fraction of
+// node CPU. For example, a group with burstLimitFrac=0.1 (CPU_MIN=10%)
+// gets 10% of the 100% CPU refill rate, so its burst bucket drains
+// when the group exceeds ~10% of node CPU.
+//
+// In Serverless mode, burstLimitFrac is 0.0 (sentinel), and no scaling
+// is applied — each tenant gets the full toAdd/capacity, preserving
+// the dynamic 90%-fullness burst check behavior from master.
 //
 // If a group's burst qualification changes as a result of the refill,
 // the group's position in the tenantHeap is updated to maintain correct
@@ -1292,8 +1297,15 @@ func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 	q.mu.burstBucketCapacity = capacity
 	for id, tenant := range q.mu.tenants {
 		burstLimitFrac := q.getBurstLimitFracLocked(id)
-		scaledAdd := int64(float64(toAdd) * burstLimitFrac)
-		scaledCapacity := int64(float64(capacity) * burstLimitFrac)
+		// burstLimitFrac == 0.0 is the Serverless sentinel: no per-tenant
+		// scaling, pass through full toAdd/capacity. Only RM mode uses
+		// non-zero fractions to scale refill by CPU_MIN share.
+		scaledAdd := toAdd
+		scaledCapacity := capacity
+		if burstLimitFrac != 0.0 {
+			scaledAdd = int64(float64(toAdd) * burstLimitFrac)
+			scaledCapacity = int64(float64(capacity) * burstLimitFrac)
+		}
 		prevBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
 		tenant.cpuTimeBurstBucket.refill(scaledAdd, scaledCapacity)
 		curBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
@@ -1509,6 +1521,12 @@ func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
 // resource group. If no override exists, returns q.defaultBurstLimitFrac
 // which is set per-queue during construction (0.0 for Serverless, 1.0
 // for Resource Manager).
+//
+// A return value of 0.0 is the Serverless sentinel meaning "no per-tenant
+// scaling" — callers in refillBurstBuckets and newTenantInfo pass through
+// full unscaled values. A value in (0.0, 1.0) scales refill/capacity by
+// that fraction (RM CPU_MIN). A value >= 1.0 means always-canBurst
+// (FULLY_UTILIZE resource groups).
 //
 // REQUIRES: q.mu is held.
 func (q *WorkQueue) getBurstLimitFracLocked(rgID uint64) float64 {
@@ -1799,7 +1817,12 @@ func newTenantInfo(
 	// If mode != usesCPUTimeTokens, cpuTimeBurstBucket.burstQualification
 	// always returns noBurst. This effectively disables the
 	// burstQualification functionality.
-	scaledCapacity := int64(float64(burstBucketCapacity) * burstLimitFrac)
+	// burstLimitFrac == 0.0 is the Serverless sentinel: no scaling,
+	// use full burstBucketCapacity. See refillBurstBuckets.
+	scaledCapacity := burstBucketCapacity
+	if burstLimitFrac != 0.0 {
+		scaledCapacity = int64(float64(burstBucketCapacity) * burstLimitFrac)
+	}
 	ti.cpuTimeBurstBucket.init(
 		scaledCapacity, mode != usesCPUTimeTokens /* disable */, burstLimitFrac)
 	if aggMetrics != nil {
