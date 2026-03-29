@@ -63,9 +63,9 @@ burst-buckets: t53=fullness=0.0% tokens=-1 capacity=0 burstLimitFrac=1.00 qual=c
 
 ###
 # This test is of the integration of burstQualification with the
-# tenant heap sorting in WorkQueue. That is, we check that work
-# associated with can_burst tenants sort to the top of the heap.
-# See cpu_time_token_burst.go for more.
+# resource group heap sorting in WorkQueue. That is, we check that
+# work associated with can_burst resource groups sort to the top
+# of the heap. See cpu_time_token_burst.go for more.
 #
 # We set burst limits so that tenant 54 has burstLimitFrac=0.5
 # (non-FULLY_UTILIZE), while tenant 53 keeps burstLimitFrac=1.0

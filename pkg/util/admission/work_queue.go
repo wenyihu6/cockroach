@@ -281,13 +281,17 @@ type WorkQueue struct {
 
 	mu struct {
 		syncutil.Mutex
-		// Tenants with waiting work. Ordered by burst qualification
-		// then used/weight.
+		// Resource groups with waiting work. Each entry is a resource
+		// group (represented as a tenantInfo). Ordered by burst
+		// qualification then used/weight.
 		tenantHeap tenantHeap
-		// All tenants, including those without waiting work.
-		// Periodically cleaned.
-		tenants       map[uint64]*tenantInfo
-		tenantWeights struct {
+		// All resource groups, including those without waiting work.
+		// Keyed by resource group ID. Periodically cleaned.
+		tenants map[uint64]*tenantInfo
+		// tenantToResourceGroup maps tenantID to resource group ID.
+		// nil means default mapping (tenantID == resourceGroupID).
+		tenantToResourceGroup map[uint64]uint64
+		tenantWeights         struct {
 			mu syncutil.Mutex
 			// active refers to the currently active weights. mu is held for updates
 			// to the inactive weights, to prevent concurrent updates. After
@@ -314,9 +318,9 @@ type WorkQueue struct {
 		// Also used as the initial capacity for newly created tenants
 		// (buckets init full). Only used if mode == usesCPUTimeTokens.
 		burstBucketCapacity int64
-		// burstLimits maps tenant ID to a per-tenant burst limit fraction.
-		// See cpuTimeBurstBucket.burstLimitFrac for semantics. Only used
-		// if mode == usesCPUTimeTokens.
+		// burstLimits maps resource group ID to a per-group burst limit
+		// fraction. See cpuTimeBurstBucket.burstLimitFrac for semantics.
+		// Only used if mode == usesCPUTimeTokens.
 		burstLimits map[uint64]float64
 		// overrideAllToBypassAdmission, when true, causes all work to bypass
 		// admission control. Used by CPU time token AC.
@@ -708,19 +712,19 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// When changing the code, be careful in making sure the mutex is properly
 	// unlocked on all code paths.
 	q.mu.Lock()
-	tenant, ok := q.mu.tenants[tenantID]
+	rgID := q.getResourceGroupIDLocked(tenantID)
+	tenant, ok := q.mu.tenants[rgID]
 	if !ok {
 		// See comment below about CPU time token estimation. If no tenantInfo
-		// struct exists for a tenant, then there is no cpuTimeTokenEstimator
-		// dedicated to that tenant yet. When we create the tenantInfo struct
-		// here, we also create the estimator. We init the estimator using a
-		// global estimator that sees workload across all tenants.
-		burstLimitFrac := q.getBurstLimitFracLocked(tenantID)
-		tenant = newTenantInfo(tenantID, q.getTenantWeightLocked(tenantID),
+		// struct exists for a resource group, then there is no
+		// cpuTimeTokenEstimator dedicated to it yet. We init the estimator
+		// using a global estimator that sees workload across all groups.
+		burstLimitFrac := q.getBurstLimitFracLocked(rgID)
+		tenant = newTenantInfo(rgID, q.getTenantWeightLocked(rgID),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
 			q.mu.burstBucketCapacity, burstLimitFrac,
 			q.perTenantAggMetrics)
-		q.mu.tenants[tenantID] = tenant
+		q.mu.tenants[rgID] = tenant
 	}
 	// If mode == usesCPUTimeTokens, WorkQueue does CPU time token estimation.
 	// When Admit is called, the request hasn't yet executed, so we do not
@@ -847,16 +851,17 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// the state of the requesters to see if there is any queued work that
 		// can be granted admission.
 		q.mu.Lock()
-		// The tenant could have been removed. See the comment where the
-		// tenantInfo struct is declared.
-		tenant, ok = q.mu.tenants[tenantID]
+		// The resource group entry could have been removed. See the comment
+		// where the tenantInfo struct is declared.
+		rgID = q.getResourceGroupIDLocked(tenantID)
+		tenant, ok = q.mu.tenants[rgID]
 		if !ok {
-			burstLimitFrac := q.getBurstLimitFracLocked(tenantID)
-			tenant = newTenantInfo(tenantID, q.getTenantWeightLocked(tenantID),
+			burstLimitFrac := q.getBurstLimitFracLocked(rgID)
+			tenant = newTenantInfo(rgID, q.getTenantWeightLocked(rgID),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
 				q.mu.burstBucketCapacity, burstLimitFrac,
 				q.perTenantAggMetrics)
-			q.mu.tenants[tenantID] = tenant
+			q.mu.tenants[rgID] = tenant
 		}
 		q.adjustTenantUsedLocked(tenant, -info.RequestedCount)
 	}
@@ -1228,7 +1233,8 @@ func (q *WorkQueue) gcTenantsResetUsedAndUpdateEstimators() {
 func (q *WorkQueue) adjustTenantUsed(tenantID roachpb.TenantID, delta int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	tenant, ok := q.mu.tenants[tenantID.ToUint64()]
+	rgID := q.getResourceGroupIDLocked(tenantID.ToUint64())
+	tenant, ok := q.mu.tenants[rgID]
 	if !ok {
 		return
 	}
@@ -1265,26 +1271,26 @@ func (q *WorkQueue) adjustTenantUsedLocked(tenant *tenantInfo, delta int64) {
 	}
 }
 
-// refillBurstBuckets adds tokens to all tenant burst buckets and
-// updates their capacity. This is called by cpuTimeTokenAllocator
+// refillBurstBuckets adds tokens to all resource group burst buckets
+// and updates their capacity. This is called by cpuTimeTokenAllocator
 // periodically (every 1ms). toAdd and capacity represent the 100% CPU
 // rate (normalized by dividing out canBurstTarget in the allocator).
 //
-// In RM mode, these are scaled per-tenant by burstLimitFrac (a non-zero
-// value representing the CPU_MIN fraction). The per-tenant scaling
-// ensures that each tenant's burst bucket break-even point (where
-// refill = drain) corresponds to their CPU_MIN fraction of node CPU.
-// For example, a tenant with burstLimitFrac=0.1 (CPU_MIN=10%) gets
-// 10% of the 100% CPU refill rate, so its burst bucket drains when the
-// tenant exceeds ~10% of node CPU.
+// In RM mode, these are scaled per-group by burstLimitFrac (a non-zero
+// value representing the CPU_MIN fraction). The per-group scaling
+// ensures that each resource group's burst bucket break-even point
+// (where refill = drain) corresponds to their CPU_MIN fraction of
+// node CPU. For example, a group with burstLimitFrac=0.1 (CPU_MIN=10%)
+// gets 10% of the 100% CPU refill rate, so its burst bucket drains
+// when the group exceeds ~10% of node CPU.
 //
 // In Serverless mode, burstLimitFrac is 0.0 (sentinel), and no scaling
 // is applied — each tenant gets the full toAdd/capacity, preserving
 // the dynamic 90%-fullness burst check behavior from master.
 //
-// If a tenant's burst qualification changes as a result of the refill,
-// the tenant's position in the tenantHeap is updated to maintain
-// correct priority ordering.
+// If a group's burst qualification changes as a result of the refill,
+// the group's position in the tenantHeap is updated to maintain correct
+// priority ordering.
 func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -1490,10 +1496,10 @@ func (q *WorkQueue) SetTenantWeights(tenantWeights map[uint64]uint32) {
 	}
 }
 
-// SetBurstLimits sets per-tenant burst limit fractions, using the
-// provided tenant ID => burstLimitFrac map. Existing tenants have
-// their burst buckets updated; new tenants will pick up their limit
-// when created.
+// SetBurstLimits sets per-resource-group burst limit fractions, using the
+// provided resource group ID => burstLimitFrac map. Existing groups have
+// their burst buckets updated; new groups will pick up their limit when
+// created.
 func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -1511,25 +1517,49 @@ func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
 	}
 }
 
-// getBurstLimitFracLocked returns the burst limit fraction for the
-// given tenant. If no override exists, returns q.defaultBurstLimitFrac
+// getBurstLimitFracLocked returns the burst limit fraction for the given
+// resource group. If no override exists, returns q.defaultBurstLimitFrac
 // which is set per-queue during construction (0.0 for Serverless, 1.0
 // for Resource Manager).
 //
-// A return value of 0.0 is the Serverless sentinel meaning "no
-// per-tenant scaling" — callers in refillBurstBuckets and newTenantInfo
-// pass through full unscaled values. A value in (0.0, 1.0) scales
-// refill/capacity by that fraction (RM CPU_MIN). A value >= 1.0 means
-// always-canBurst (FULLY_UTILIZE).
+// A return value of 0.0 is the Serverless sentinel meaning "no per-tenant
+// scaling" — callers in refillBurstBuckets and newTenantInfo pass through
+// full unscaled values. A value in (0.0, 1.0) scales refill/capacity by
+// that fraction (RM CPU_MIN). A value >= 1.0 means always-canBurst
+// (FULLY_UTILIZE resource groups).
 //
 // REQUIRES: q.mu is held.
-func (q *WorkQueue) getBurstLimitFracLocked(tenantID uint64) float64 {
+func (q *WorkQueue) getBurstLimitFracLocked(rgID uint64) float64 {
 	if q.mu.burstLimits != nil {
-		if frac, ok := q.mu.burstLimits[tenantID]; ok {
+		if frac, ok := q.mu.burstLimits[rgID]; ok {
 			return frac
 		}
 	}
 	return q.defaultBurstLimitFrac
+}
+
+// getResourceGroupIDLocked returns the resource group ID for the given
+// tenant. Default: tenantID is its own resource group.
+//
+// REQUIRES: q.mu is held.
+func (q *WorkQueue) getResourceGroupIDLocked(tenantID uint64) uint64 {
+	if q.mu.tenantToResourceGroup != nil {
+		if rgID, ok := q.mu.tenantToResourceGroup[tenantID]; ok {
+			return rgID
+		}
+	}
+	return tenantID
+}
+
+// SetTenantToResourceGroupMapping sets the mapping from tenant IDs to
+// resource group IDs. A nil map means default mapping (each tenant is
+// its own resource group). Multiple tenants can map to the same resource
+// group — their work will share a single burst bucket and compete in
+// the same waitingWorkHeap, ordered by priority then createTime.
+func (q *WorkQueue) SetTenantToResourceGroupMapping(mapping map[uint64]uint64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.mu.tenantToResourceGroup = mapping
 }
 
 // close tells the gc goroutine to stop.
@@ -1678,10 +1708,14 @@ func (ps *priorityStates) getFIFOPriorityThresholdAndReset(
 	return priority
 }
 
-// tenantInfo is the per-tenant information in the tenantHeap.
+// tenantInfo represents a resource group in the tenantHeap. Despite the
+// name, each entry corresponds to a resource group (which may aggregate
+// multiple tenants via SetTenantToResourceGroupMapping). The id field
+// is the resource group ID.
 type tenantInfo struct {
 	id uint64
-	// The weight assigned to the tenant. Must be > 0.
+	// The weight assigned to the resource group. Must be > 0. For
+	// resource groups, this is CPU_MIN.
 	weight uint32
 	// used is computed over an interval and periodically reset. Ordering
 	// between tenants, for fair sharing, utilizes this value.
@@ -1744,9 +1778,11 @@ type tenantInfo struct {
 	tokensReturned *aggmetric.Counter
 }
 
-// tenantHeap is a heap of tenants with waiting work, ordered by burst
-// qualification (canBurst before noBurst) then by used/weight (lower
-// ratio first). That is, we prefer tenants that are using less.
+// tenantHeap is a heap of resource groups with waiting work, ordered by
+// burst qualification (canBurst before noBurst) then by
+// used/weight (lower ratio first). Each entry represents a resource
+// group — multiple tenants can map to the same entry via
+// SetTenantToResourceGroupMapping.
 type tenantHeap []*tenantInfo
 
 var _ heap.Interface = (*tenantHeap)(nil)
@@ -1839,29 +1875,31 @@ func (th *tenantHeap) Len() int {
 }
 
 func (th *tenantHeap) Less(i, j int) bool {
-	// First, order by burstQualification: canBurst tenants come before
-	// noBurst tenants. canBurst tenants have access to more CPU time
+	// First, order by burstQualification: canBurst groups come before
+	// noBurst groups. canBurst groups have access to more CPU time
 	// than noBurst -- see cpu_time_token_granter.go for details -- so
-	// it is important that work from a canBurst tenant always sorts
-	// before work from a noBurst tenant -- else available capacity is
+	// it is important that work from a canBurst group always sorts
+	// before work from a noBurst group -- else available capacity is
 	// left on the table.
 	iBurstQual := (*th)[i].cpuTimeBurstBucket.burstQualification()
 	jBurstQual := (*th)[j].cpuTimeBurstBucket.burstQualification()
 	if iBurstQual != jBurstQual {
 		return iBurstQual < jBurstQual
 	}
-	// Beyond burstQualification (which is only enabled on CPU time token
-	// AC today), for tenant fairness, we use used_i/weight_i <
-	// used_j/weight_j to determine order. In case of a tie, prioritize
-	// items with higher weight, and then items with lower tenant id.
+	// Beyond burstQualification (which is only enabled on CPU time
+	// token AC today), for inter-group fairness, we use
+	// used_i/weight_i < used_j/weight_j to determine order. In case
+	// of a tie, prioritize items with higher weight, and then items
+	// with lower id.
 	//
 	// A reader may wonder if sorting on just used has the same effect
 	// as sorting on burstQualification first and used second. It is
 	// indeed similar, but it is not the same -- for example, used is
-	// reset every 1s, thus right after a reset it can fall out of sync
-	// with cpuTimeBurstBucket's burstQualification method. The source
-	// of truth for whether a tenant can burst is cpuTimeBurstBucket's
-	// burstQualification method, so we must call it here.
+	// reset every 1s, thus right after a reset it can fall out of
+	// sync with cpuTimeBurstBucket's burstQualification method. The
+	// source of truth for whether a group can burst is
+	// cpuTimeBurstBucket's burstQualification method, so we must call
+	// it here.
 	if (*th)[i].used*uint64((*th)[j].weight) == (*th)[j].used*uint64((*th)[i].weight) {
 		if (*th)[i].weight == (*th)[j].weight {
 			return (*th)[i].id < (*th)[j].id
