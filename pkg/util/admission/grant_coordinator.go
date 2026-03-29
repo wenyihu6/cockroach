@@ -185,7 +185,8 @@ func NewGrantCoordinators(
 	}
 
 	slotsCoord := makeRegularGrantCoordinator(ambientCtx, opts, st, metrics, registry, knobs)
-	cpuTimeTokenCoord := makeCPUTimeTokenGrantCoordinator(ambientCtx, opts, st, registry, knobs)
+	cpuTimeTokenCoord := makeCPUTimeTokenGrantCoordinator(
+		ambientCtx, opts, st, registry, knobs)
 
 	// CPU time token AC currently only supports Serverless. In Serverless,
 	// SQL pods do not run admission control, and the vast majority of work

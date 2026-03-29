@@ -430,9 +430,21 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				opts.disableEpochClosingGoroutine = true
 				opts.disableGCTenantsAndResetUsed = true
 				opts.mode = usesCPUTimeTokens
+				// Default to 1.0 (RM mode). Tests can override with
+				// default-burst-limit-frac to test Serverless (0.0).
+				opts.defaultBurstLimitFrac = 1.0
+				if d.HasArg("default-burst-limit-frac") {
+					var frac float64
+					d.ScanArgs(t, "default-burst-limit-frac", &frac)
+					opts.defaultBurstLimitFrac = frac
+				}
 				cpuMetrics := makeCPUTimeTokenMetrics()
-				opts.admittedCountPerTenant = cpuMetrics.AdmittedCountPerTenant
-				opts.waitTimeNanosPerTenant = cpuMetrics.WaitTimeNanosPerTenant
+				opts.perTenantAggMetrics = &tenantAggMetrics{
+					admittedCount:  cpuMetrics.AdmittedCountPerTenant[0],
+					waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[0],
+					tokensUsed:     cpuMetrics.TokensUsedPerTenant[0],
+					tokensReturned: cpuMetrics.TokensReturnedPerTenant[0],
+				}
 				q = makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
 					workKind, tg, st, metrics, opts).(*WorkQueue)
 				q.knobs.DisableCPUTimeTokenEstimation = true
@@ -584,9 +596,14 @@ func TestCPUTimeTokenEstimation(t *testing.T) {
 	tg.mu.returnValueFromTryGet = true
 	opts := makeWorkQueueOptions(KVWork)
 	opts.mode = usesCPUTimeTokens
+	opts.defaultBurstLimitFrac = 1.0
 	cpuMetrics := makeCPUTimeTokenMetrics()
-	opts.admittedCountPerTenant = cpuMetrics.AdmittedCountPerTenant
-	opts.waitTimeNanosPerTenant = cpuMetrics.WaitTimeNanosPerTenant
+	opts.perTenantAggMetrics = &tenantAggMetrics{
+		admittedCount:  cpuMetrics.AdmittedCountPerTenant[0],
+		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[0],
+		tokensUsed:     cpuMetrics.TokensUsedPerTenant[0],
+		tokensReturned: cpuMetrics.TokensReturnedPerTenant[0],
+	}
 	timeSource = timeutil.NewManualTime(initialTime)
 	opts.timeSource = timeSource
 	opts.disableEpochClosingGoroutine = true
