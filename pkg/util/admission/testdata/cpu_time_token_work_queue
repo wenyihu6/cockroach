@@ -62,12 +62,19 @@ closed epoch: 0 tenantHeap len: 0
 burst-buckets: t53=fullness=0.0% tokens=-1 capacity=0 burstLimitFrac=1.00 qual=can_burst t54=fullness=0.0% tokens=-15 capacity=0 burstLimitFrac=1.00 qual=can_burst
 
 ###
-# This test is of the integration of burstQualification with the tenant
-# heap sorting in WorkQueue. That is, we check that work associated with
-# can_burst tenants sort to the top of the heap. See
-# cpu_time_token_burst.go for more.
+# This test is of the integration of burstQualification with the
+# tenant heap sorting in WorkQueue. That is, we check that work
+# associated with can_burst tenants sort to the top of the heap.
+# See cpu_time_token_burst.go for more.
+#
+# We set burst limits so that tenant 54 has burstLimitFrac=0.5
+# (non-FULLY_UTILIZE), while tenant 53 keeps burstLimitFrac=1.0
+# (FULLY_UTILIZE, always canBurst).
 ###
 init
+----
+
+set-burst-limits limits=53:1.0,54:0.5
 ----
 
 set-try-get-return-value v=true
@@ -80,7 +87,7 @@ id 1: admit succeeded
 
 admit id=2 tenant=54 requested-count=1
 ----
-tryGet: input can_burst, returning true
+tryGet: input no_burst, returning true
 id 2: admit succeeded
 
 # Set up buckets so that tenant 53 can burst, while tenant
@@ -99,7 +106,7 @@ print
 closed epoch: 0 tenantHeap len: 0
  tenant-id: 53 used: 1, w: 1, fifo: -128
  tenant-id: 54 used: 101, w: 1, fifo: -128
-burst-buckets: t53=fullness=99.0% tokens=99 capacity=100 burstLimitFrac=1.00 qual=can_burst t54=fullness=-1.0% tokens=-1 capacity=100 burstLimitFrac=1.00 qual=can_burst
+burst-buckets: t53=fullness=99.0% tokens=99 capacity=100 burstLimitFrac=1.00 qual=can_burst t54=fullness=-102.0% tokens=-51 capacity=50 burstLimitFrac=0.50 qual=no_burst
 
 set-try-get-return-value v=false
 ----
@@ -111,19 +118,15 @@ set-try-get-return-value v=false
 # available can_burst CPU time tokens in the granter).
 admit id=5 tenant=54 requested-count=15
 ----
-tryGet: input can_burst, returning false
+tryGet: input no_burst, returning false
 
 set-try-get-return-value v=true
 ----
 
 admit id=6 tenant=53 requested-count=1
 ----
-
-granted chain-id=1
-----
-continueGrantChain 1
+tryGet: input can_burst, returning true
 id 6: admit succeeded
-granted: returned 1
 
 set-try-get-return-value v=false
 ----
@@ -136,6 +139,7 @@ admit id=7 tenant=54 requested-count=15
 
 admit id=8 tenant=53 requested-count=1
 ----
+tryGet: input can_burst, returning false
 
 # See Less implementation in WorkQueue. We clear used to be sure
 # that the reason the WorkQueue sorts the heap the way it does below

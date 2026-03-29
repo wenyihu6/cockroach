@@ -117,6 +117,26 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setTenantWeights(weights)
 }
 
+// ResourceGroupConfig holds per-resource-group configuration.
+type ResourceGroupConfig struct {
+	Weight         uint32
+	BurstLimitFrac float64
+}
+
+// SetResourceGroupConfig sets per-resource-group weights and burst limits.
+// Only meaningful in Resource Manager mode.
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	weights := make(map[uint64]uint32, len(config))
+	burstLimits := make(map[uint64]float64, len(config))
+	for id, cfg := range config {
+		weights[id] = cfg.Weight
+		burstLimits[id] = cfg.BurstLimitFrac
+	}
+	coord.SetTenantWeights(weights)
+	// In RM mode, there's only one queue (tier 0).
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetBurstLimits(burstLimits)
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
