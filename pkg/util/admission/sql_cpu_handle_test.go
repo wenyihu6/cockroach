@@ -26,7 +26,7 @@ import (
 )
 
 // TestSQLCPUHandleFastPath verifies that the CAS-based fast path deducts
-// from reservation without acquiring refillMu or calling Admit.
+// from reservation without taking the turn or calling Admit.
 func TestSQLCPUHandleFastPath(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
@@ -48,7 +48,7 @@ func TestSQLCPUHandleFastPath(t *testing.T) {
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
 
 	// Reservation should now be diffNanos (heuristic=2*diff, minus diff consumed).
-	reservationBefore := h.refillMu.reservation.Load()
+	reservationBefore := h.reservation.Load()
 	require.Equal(t, int64(1*time.Millisecond), reservationBefore,
 		"reservation should be heuristic(2*diff) - diff = diff")
 
@@ -57,7 +57,7 @@ func TestSQLCPUHandleFastPath(t *testing.T) {
 	_ = tg.buf.stringAndReset()
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 500*time.Microsecond, false))
 
-	reservationAfter := h.refillMu.reservation.Load()
+	reservationAfter := h.reservation.Load()
 	require.Equal(t, reservationBefore-int64(500*time.Microsecond), reservationAfter)
 
 	// Verify no Admit call was made (no tryGet in the buffer).
@@ -70,7 +70,7 @@ func TestSQLCPUHandleFastPath(t *testing.T) {
 }
 
 // TestSQLCPUHandleSlowPath verifies that when reservation is exhausted,
-// the slow path acquires refillMu, calls Admit, and refills reservation.
+// the slow path takes a turn, calls Admit, and refills reservation.
 func TestSQLCPUHandleSlowPath(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
@@ -92,15 +92,141 @@ func TestSQLCPUHandleSlowPath(t *testing.T) {
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 2*time.Millisecond, false))
 
 	// heuristic = 2 * 2ms = 4ms requested. 2ms consumed, so reservation = 2ms.
-	require.Equal(t, int64(2*time.Millisecond), h.refillMu.reservation.Load())
+	require.Equal(t, int64(2*time.Millisecond), h.reservation.Load())
 
-	// Exhaust the reservation with a large request.
+	// Request more than reservation: partial deduction grabs 2ms from
+	// reservation, remaining 3ms goes through slow path.
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 5*time.Millisecond, false))
 
-	// 5ms > 2ms reservation, so slow path runs again.
-	// Elapsed < 1ms (grow): buffer = 2ms * 2 = 4ms. Total = 5ms + 4ms = 9ms.
-	// Reservation += 9ms - 5ms = 4ms, total = existing(2ms) + 4ms = 6ms.
-	require.Equal(t, int64(6*time.Millisecond), h.refillMu.reservation.Load())
+	// 5ms diff, reservation=2ms. Fast path grabs 2ms (partial), remaining=3ms.
+	// Slow path: elapsed < 1ms (grow), buffer = 2ms * 2 = 4ms.
+	// Total = 3ms + 4ms = 7ms. Reservation = 0 + (7ms - 3ms) = 4ms.
+	require.Equal(t, int64(4*time.Millisecond), h.reservation.Load())
+}
+
+// TestSQLCPUHandlePartialDeduction verifies that when reservation has fewer
+// tokens than requested, the fast path grabs what's available (partial
+// deduction) and only the remaining amount goes through the slow path.
+// This avoids stranding tokens in the reservation.
+func TestSQLCPUHandlePartialDeduction(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	tenantID := roachpb.MustMakeTenantID(1)
+	q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+	defer cleanup()
+
+	provider := &sqlCPUProviderImpl{}
+	h := newSQLCPUAdmissionHandle(
+		WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
+
+	tg.mu.Lock()
+	tg.mu.returnValueFromTryGet = true
+	tg.mu.Unlock()
+
+	// Seed the reservation with a known amount. First call: diff=10ms,
+	// bootstrap heuristic=10ms (capped at maxRefillHeuristic=10ms),
+	// total=20ms. Reservation = 20ms - 10ms = 10ms.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Millisecond, false))
+	require.Equal(t, int64(10*time.Millisecond), h.reservation.Load())
+
+	// Set reservation to exactly 3ms to test partial deduction.
+	h.reservation.Store(int64(3 * time.Millisecond))
+
+	// Request 10ms. Fast path should grab 3ms (partial), leaving 0 in
+	// reservation. Slow path requests remaining 7ms + heuristic.
+	_ = tg.buf.stringAndReset()
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Millisecond, false))
+
+	// Reservation should have been fully consumed by the fast path
+	// (partial deduction), then refilled by the slow path with buffer
+	// from Admit. The key invariant: reservation is never left with
+	// stranded tokens that can't be deducted.
+	require.Greater(t, h.reservation.Load(), int64(0),
+		"slow path should have refilled reservation")
+
+	// Verify Admit was called (slow path was used for the remaining 7ms).
+	output := tg.buf.stringAndReset()
+	require.Contains(t, output, "tryGet",
+		"slow path should have called Admit for the remaining amount")
+
+	// All CPU should be reported.
+	gw, _ := provider.GetCumulativeSQLCPUNanos()
+	require.Equal(t, int64(20*time.Millisecond), gw)
+}
+
+// TestSQLCPUHandleCloseDoesNotBlockOnAdmit verifies that Close returns
+// promptly even when a goroutine is blocked in Admit holding the turn.
+// The blocked goroutine cleans up reservation tokens when it unblocks.
+func TestSQLCPUHandleCloseDoesNotBlockOnAdmit(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	tenantID := roachpb.MustMakeTenantID(1)
+	q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+	defer cleanup()
+
+	// Start with tryGet=true so we can seed the reservation.
+	tg.mu.Lock()
+	tg.mu.returnValueFromTryGet = true
+	tg.mu.Unlock()
+
+	provider := &sqlCPUProviderImpl{}
+	h := newSQLCPUAdmissionHandle(
+		WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
+
+	// Seed reservation.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+	require.Greater(t, h.reservation.Load(), int64(0))
+
+	// Now make tryGet return false so the next slow-path Admit blocks.
+	tg.mu.Lock()
+	tg.mu.returnValueFromTryGet = false
+	tg.mu.Unlock()
+
+	// Drain reservation so the next call goes to the slow path.
+	h.reservation.Store(0)
+
+	// Start a goroutine that will block in Admit (holding the turn).
+	cancelCtx, cancel := context.WithCancel(ctx)
+	admitStarted := make(chan struct{})
+	admitDone := make(chan error, 1)
+	go func() {
+		// Signal that we're about to enter the slow path.
+		close(admitStarted)
+		admitDone <- h.reportAndAcquireConsumedCPU(cancelCtx, 1*time.Millisecond, false)
+	}()
+
+	// Wait for the goroutine to start and give it time to take the turn.
+	<-admitStarted
+	// Give the goroutine time to take the turn and block in Admit.
+	// This is inherently racy but sufficient for the test's purpose.
+	time.Sleep(10 * time.Millisecond)
+
+	// Close should return promptly (setting mu.closed is non-blocking).
+	closeDone := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		// Close returned promptly — mu.closed=true + Swap is non-blocking.
+	case <-time.After(1 * time.Second):
+		t.Fatal("Close blocked — should have returned promptly")
+	}
+
+	h.mu.Lock()
+	require.True(t, h.mu.closed)
+	h.mu.Unlock()
+
+	// Unblock the goroutine stuck in Admit by canceling its context.
+	cancel()
+	err := <-admitDone
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 // TestSQLCPUHandleCloseReturnsTokens verifies that Close returns unused
@@ -124,7 +250,7 @@ func TestSQLCPUHandleCloseReturnsTokens(t *testing.T) {
 
 	// Acquire tokens so reservation has a buffer.
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
-	remaining := h.refillMu.reservation.Load()
+	remaining := h.reservation.Load()
 	require.Equal(t, int64(1*time.Millisecond), remaining)
 
 	// Clear buffer and close.
@@ -136,8 +262,10 @@ func TestSQLCPUHandleCloseReturnsTokens(t *testing.T) {
 	require.Contains(t, output, "returnGrant")
 
 	// Reservation should be zeroed.
-	require.Equal(t, int64(0), h.refillMu.reservation.Load())
-	require.True(t, h.refillMu.closed.Load())
+	require.Equal(t, int64(0), h.reservation.Load())
+	h.mu.Lock()
+	require.True(t, h.mu.closed)
+	h.mu.Unlock()
 }
 
 // TestSQLCPUHandleCloseZeroReservation verifies that Close calls
@@ -158,16 +286,19 @@ func TestSQLCPUHandleCloseZeroReservation(t *testing.T) {
 	_ = tg.buf.stringAndReset()
 	h.Close()
 
-	require.True(t, h.refillMu.closed.Load())
+	h.mu.Lock()
+	require.True(t, h.mu.closed)
+	h.mu.Unlock()
 	// No returnGrant or tookWithoutPermission since remaining is 0.
 	output := tg.buf.String()
 	require.NotContains(t, output, "returnGrant")
 	require.NotContains(t, output, "tookWithoutPermission")
 }
 
-// TestSQLCPUHandleClosedSkipsAdmission verifies that after Close,
-// reportAndAcquireConsumedCPU still reports CPU but skips Admit.
-func TestSQLCPUHandleClosedSkipsAdmission(t *testing.T) {
+// TestSQLCPUHandleClosedAccountsViaBypass verifies that after Close,
+// reportAndAcquireConsumedCPU still reports CPU and accounts it via
+// BypassAdmission (non-blocking) to keep tenant.used accurate.
+func TestSQLCPUHandleClosedAccountsViaBypass(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
@@ -181,9 +312,12 @@ func TestSQLCPUHandleClosedSkipsAdmission(t *testing.T) {
 		WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
 
 	h.Close()
-	require.True(t, h.refillMu.closed.Load())
+	h.mu.Lock()
+	require.True(t, h.mu.closed)
+	h.mu.Unlock()
 
-	// Post-close reportAndAcquireConsumedCPU should still report CPU.
+	// Post-close reportAndAcquireConsumedCPU should still report CPU
+	// and account it via BypassAdmission (non-blocking).
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 3*time.Millisecond, false))
 	gw, _ := provider.GetCumulativeSQLCPUNanos()
 	require.Equal(t, int64(3*time.Millisecond), gw)
@@ -285,7 +419,7 @@ func TestSQLCPUHandleConcurrentFastPath(t *testing.T) {
 	// buffer = min(50ms, maxRefillHeuristic=10ms) = 10ms. Total =
 	// 50ms + 10ms = 60ms. Reservation = 60ms - 50ms = 10ms.
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 50*time.Millisecond, false))
-	require.Equal(t, int64(10*time.Millisecond), h.refillMu.reservation.Load())
+	require.Equal(t, int64(10*time.Millisecond), h.reservation.Load())
 
 	// Clear the buffer so we can check if any slow-path Admit calls happen.
 	_ = tg.buf.stringAndReset()
@@ -309,7 +443,7 @@ func TestSQLCPUHandleConcurrentFastPath(t *testing.T) {
 
 	// Verify reservation was correctly deducted.
 	expected := int64(10*time.Millisecond) - int64(numGoroutines)*int64(perGoroutine)
-	require.Equal(t, expected, h.refillMu.reservation.Load(),
+	require.Equal(t, expected, h.reservation.Load(),
 		"CAS deductions should be exact under contention")
 
 	// Verify no Admit calls were made (all satisfied via fast path).
@@ -319,8 +453,8 @@ func TestSQLCPUHandleConcurrentFastPath(t *testing.T) {
 
 // TestSQLCPUHandleConcurrentSlowPath exercises the slow path under
 // contention. When reservation is exhausted, goroutines serialize on
-// refillMu and only one calls Admit while others may find reservation
-// refilled by the winner.
+// the admitTurn channel and only one calls Admit while others may find
+// reservation refilled by the winner.
 func TestSQLCPUHandleConcurrentSlowPath(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
@@ -357,7 +491,7 @@ func TestSQLCPUHandleConcurrentSlowPath(t *testing.T) {
 
 	require.Equal(t, int64(0), errors.Load())
 	// Reservation should be non-negative.
-	require.GreaterOrEqual(t, h.refillMu.reservation.Load(), int64(0),
+	require.GreaterOrEqual(t, h.reservation.Load(), int64(0),
 		"reservation must never be negative")
 
 	// All CPU should be reported.
@@ -424,9 +558,11 @@ func TestSQLCPUHandleConcurrentCloseAndAdmit(t *testing.T) {
 
 	wg.Wait()
 
-	require.True(t, h.refillMu.closed.Load())
-	require.Equal(t, int64(0), h.refillMu.reservation.Load(),
-		"Close should have swapped reservation to 0")
+	h.mu.Lock()
+	require.True(t, h.mu.closed)
+	h.mu.Unlock()
+	require.Equal(t, int64(0), h.reservation.Load(),
+		"reservation should be 0 after close completes")
 }
 
 // TestSQLCPUHandleConcurrentCASAndSwap verifies that the fast-path CAS
@@ -458,28 +594,30 @@ func TestSQLCPUHandleConcurrentCASAndSwap(t *testing.T) {
 		var wg sync.WaitGroup
 		var casDeducted atomic.Int64
 
-		// Goroutines try CAS deductions concurrently.
+		// Goroutines try CAS deductions concurrently. With partial
+		// deduction, each goroutine may grab less than the requested
+		// amount, but the total across all CAS grabs + Swap must
+		// equal the initial reservation.
 		const numGoroutines = 5
 		wg.Add(numGoroutines)
 		for i := 0; i < numGoroutines; i++ {
 			go func() {
 				defer wg.Done()
 				amount := int64(500 * time.Microsecond)
-				if h.tryDeductReservation(amount) {
-					casDeducted.Add(amount)
-				}
+				grabbed := h.tryDeductReservation(amount)
+				casDeducted.Add(grabbed)
 			}()
 		}
 
-		// Close concurrently (Swap(0)).
+		// Close concurrently (set closed + Swap(0)).
 		wg.Add(1)
 		var swapped int64
 		go func() {
 			defer wg.Done()
-			h.refillMu.Lock()
-			h.refillMu.closed.Store(true)
-			swapped = h.refillMu.reservation.Swap(0)
-			h.refillMu.Unlock()
+			h.mu.Lock()
+			h.mu.closed = true
+			h.mu.Unlock()
+			swapped = h.reservation.Swap(0)
 		}()
 
 		wg.Wait()
@@ -579,8 +717,8 @@ func TestSQLCPUHandleConcurrentMeasureAndClose(t *testing.T) {
 
 	// SQLCPUHandle close should pool all the closed handles.
 	h.Close()
-	require.True(t, h.refillMu.closed.Load())
 	h.mu.Lock()
+	require.True(t, h.mu.closed)
 	require.Nil(t, h.mu.gHandles)
 	h.mu.Unlock()
 }
@@ -607,11 +745,13 @@ func TestSQLCPUHandleNoWorkQueue(t *testing.T) {
 	require.Equal(t, int64(3*time.Millisecond), gw)
 
 	// Reservation stays at 0 (no refills without a WorkQueue).
-	require.Equal(t, int64(0), h.refillMu.reservation.Load())
+	require.Equal(t, int64(0), h.reservation.Load())
 
 	// Close should work cleanly.
 	h.Close()
-	require.True(t, h.refillMu.closed.Load())
+	h.mu.Lock()
+	require.True(t, h.mu.closed)
+	h.mu.Unlock()
 }
 
 // TestSQLCPUHandlePauseMeasuring verifies that pausing and unpausing
@@ -647,17 +787,15 @@ func TestSQLCPUHandlePauseMeasuring(t *testing.T) {
 }
 
 // TestRefillHeuristic exercises the adaptive buffer sizing in
-// refillHeuristicLocked using datadriven testdata.
+// refillHeuristic using datadriven testdata.
 func TestRefillHeuristic(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
 	h := &SQLCPUHandle{}
 	callHeuristic := func(diffNanos int64) (buffer, total int64) {
-		h.refillMu.Lock()
-		defer h.refillMu.Unlock()
-		total = h.refillHeuristicLocked(diffNanos)
-		buffer = h.refillMu.lastHeuristic
+		total = h.refillHeuristic(diffNanos)
+		buffer = h.lastHeuristic
 		return buffer, total
 	}
 
@@ -678,7 +816,7 @@ func TestRefillHeuristic(t *testing.T) {
 				d.ScanArgs(t, "age", &ageStr)
 				age, err := time.ParseDuration(ageStr)
 				require.NoError(t, err)
-				h.refillMu.lastRefillTime = timeutil.Now().Add(-age)
+				h.lastRefillTime = timeutil.Now().Add(-age)
 				return "ok\n"
 
 			case "set-buffer":
@@ -686,7 +824,7 @@ func TestRefillHeuristic(t *testing.T) {
 				d.ScanArgs(t, "val", &valStr)
 				val, err := time.ParseDuration(valStr)
 				require.NoError(t, err)
-				h.refillMu.lastHeuristic = val.Nanoseconds()
+				h.lastHeuristic = val.Nanoseconds()
 				return "ok\n"
 
 			default:
@@ -732,10 +870,10 @@ func makeBenchWorkQueue(b *testing.B) (q *WorkQueue, tg *testGranter) {
 // entirely.
 //
 // "without-reservation" drains the reservation before each checkpoint,
-// forcing every call through the slow path (refillMu lock + Admit).
+// forcing every call through the slow path (admitTurn + Admit).
 //
 // The ns/op difference shows the real cost saved by the reservation: under
-// contention the fast path avoids both the refillMu lock and the WorkQueue
+// contention the fast path avoids both the admitTurn and the WorkQueue
 // internal lock, so throughput scales with goroutine count.
 func BenchmarkSQLCPUHandleReservation(b *testing.B) {
 	const cpuPerCheckpoint = 100 * time.Microsecond
@@ -771,7 +909,7 @@ func BenchmarkSQLCPUHandleReservation(b *testing.B) {
 								if !useReservation {
 									// Drain reservation to force every call
 									// through the slow path (Admit).
-									h.refillMu.reservation.Store(0)
+									h.reservation.Store(0)
 								}
 								_ = h.reportAndAcquireConsumedCPU(
 									ctx, cpuPerCheckpoint, false)

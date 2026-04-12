@@ -97,28 +97,36 @@ type SQLCPUHandle struct {
 	p         *sqlCPUProviderImpl
 	wq        *WorkQueue
 
-	refillMu struct {
-		syncutil.Mutex
-		// reservation is accessed atomically without the lock on the
-		// fast path (CAS deduction) and the noWait path. This is safe
-		// because CAS is self-protecting (never drives negative).
-		// closed is read under refillMu in the slow path; the noWait
-		// path skips the closed check since BypassAdmission is safe
-		// after Close. The lock serializes the slow path (Admit + Add)
-		// with Close (set closed + Swap reservation).
-		reservation atomic.Int64
-		closed      atomic.Bool
-		// lastRefillTime is the wall-clock time of the last Admit call,
-		// used to compute the interval for adaptive sizing.
-		lastRefillTime time.Time
-		// lastHeuristic is the adaptive buffer size (in nanoseconds)
-		// to request beyond the consumed CPU on the next Admit call.
-		// The total RequestedCount is diffNanos + lastHeuristic.
-		lastHeuristic int64
-	}
+	// admitTurn is a capacity-1 channel for serializing slow-path Admit
+	// calls. Pre-filled with one token in the constructor. A goroutine
+	// reads from it to take a turn and writes back when done. Using a
+	// channel (rather than a mutex) allows the slow path to respect
+	// context cancellation via select.
+	admitTurn chan struct{}
+
+	// reservation is the only atomic field. It is accessed via CAS on
+	// the fast path (lock-free partial deduction) and via Add/Swap
+	// while holding the turn (slow path and close). CAS supports
+	// partial deductions: grabs min(current, requested), never drives
+	// the reservation negative.
+	reservation atomic.Int64
+
+	// lastRefillTime is the wall-clock time of the last Admit call,
+	// used to compute the interval for adaptive sizing. Accessed only
+	// while holding the turn (between read/write of admitTurn).
+	lastRefillTime time.Time
+	// lastHeuristic is the adaptive buffer size (in nanoseconds) to
+	// request beyond the consumed CPU on the next Admit call. Accessed
+	// only while holding the turn.
+	lastHeuristic int64
 
 	mu struct {
 		syncutil.Mutex
+		// closed is set to true by setClosed. The slow path checks this
+		// under mu.Lock() in the post-Admit commit step to serialize with
+		// setClosed, eliminating the race between reservation.Add and
+		// reservation.Swap.
+		closed   bool
 		gHandles []*GoroutineCPUHandle
 		// Backing for up to 2 goroutine handles, to avoid allocations in
 		// gHandles when there are 2 or fewer goroutines.
@@ -134,7 +142,10 @@ func newSQLCPUAdmissionHandle(
 		atGateway: atGateway,
 		p:         p,
 		wq:        wq,
+		admitTurn: make(chan struct{}, 1),
 	}
+	// Pre-fill the turn so the first slow-path entrant can proceed.
+	h.admitTurn <- struct{}{}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
 }
@@ -149,17 +160,19 @@ func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
 	}
 }
 
-// tryDeductReservation attempts to deduct diffNanos from the reservation
-// via CAS. Returns true if successful (reservation had enough tokens).
-// Never drives the reservation negative.
-func (h *SQLCPUHandle) tryDeductReservation(diffNanos int64) bool {
+// tryDeductReservation attempts to deduct up to diffNanos from the
+// reservation via CAS. Returns the amount actually grabbed, which may
+// be less than diffNanos if the reservation didn't have enough tokens
+// (partial deduction). Never drives the reservation negative.
+func (h *SQLCPUHandle) tryDeductReservation(diffNanos int64) int64 {
 	for {
-		current := h.refillMu.reservation.Load()
-		if current < diffNanos {
-			return false
+		current := h.reservation.Load()
+		if current <= 0 {
+			return 0
 		}
-		if h.refillMu.reservation.CompareAndSwap(current, current-diffNanos) {
-			return true
+		grab := min(current, diffNanos)
+		if h.reservation.CompareAndSwap(current, current-grab) {
+			return grab
 		}
 	}
 }
@@ -180,34 +193,36 @@ const (
 	maxRefillHeuristic = int64(10 * time.Millisecond)
 )
 
-// refillHeuristicLocked returns the total RequestedCount to pass to Admit:
-// the consumed CPU (diffNanos) plus an adaptive buffer for future fast-path
-// CAS deductions. The buffer (lastHeuristic) is adjusted based on the
-// interval between Admit calls: doubled when calls are too frequent
-// (< 1ms), halved when too infrequent (> 5ms), and stable otherwise.
-// The buffer is capped at maxRefillHeuristic. The return value is always
-// >= diffNanos, so (resp.requestedCount - diffNanos) is non-negative.
-func (h *SQLCPUHandle) refillHeuristicLocked(diffNanos int64) int64 {
-	h.refillMu.AssertHeld()
+// refillHeuristic returns the total RequestedCount to pass to Admit:
+// the consumed CPU (diffNanos) plus an adaptive buffer for future
+// fast-path CAS deductions. The buffer (lastHeuristic) is adjusted
+// based on the interval between Admit calls: doubled when calls are too
+// frequent (< 1ms), halved when too infrequent (> 5ms), and stable
+// otherwise. The buffer is capped at maxRefillHeuristic. The return
+// value is always >= diffNanos, so (resp.requestedCount - diffNanos) is
+// non-negative.
+//
+// Must be called while holding the turn (after reading from admitTurn).
+func (h *SQLCPUHandle) refillHeuristic(diffNanos int64) int64 {
 	now := timeutil.Now()
-	if h.refillMu.lastHeuristic == 0 {
+	if h.lastHeuristic == 0 {
 		// Bootstrap: seed buffer equal to consumed.
-		h.refillMu.lastHeuristic = diffNanos
+		h.lastHeuristic = diffNanos
 	} else {
-		elapsed := now.Sub(h.refillMu.lastRefillTime)
+		elapsed := now.Sub(h.lastRefillTime)
 		if elapsed < refillGrowThreshold {
 			// Came back too soon — double to reduce call frequency.
-			h.refillMu.lastHeuristic *= 2
+			h.lastHeuristic *= 2
 		} else if elapsed > refillDecayThreshold {
 			// Buffer lasted too long — halve to reduce overcounting.
-			h.refillMu.lastHeuristic /= 2
+			h.lastHeuristic /= 2
 		}
 		// else: in [1ms, 5ms] deadband — no change.
 	}
 	// Cap buffer at maxRefillHeuristic.
-	h.refillMu.lastHeuristic = min(h.refillMu.lastHeuristic, maxRefillHeuristic)
-	h.refillMu.lastRefillTime = now
-	return diffNanos + h.refillMu.lastHeuristic
+	h.lastHeuristic = min(h.lastHeuristic, maxRefillHeuristic)
+	h.lastRefillTime = now
+	return diffNanos + h.lastHeuristic
 }
 
 // constructWorkInfo returns a copy of the handle's WorkInfo with the given
@@ -224,10 +239,12 @@ func (h *SQLCPUHandle) constructWorkInfo(reqCount int64, noWait bool) WorkInfo {
 // paths are tried in order:
 //
 //  1. Fast path — CAS deduction from the local reservation (no lock, no Admit).
+//     Supports partial deduction: grabs min(available, requested).
 //  2. noWait path — BypassAdmission Admit (non-blocking accounting only, used
 //     by GoroutineCPUHandle.Close).
-//  3. Slow path — acquire refillMu, call Admit to replenish the reservation.
-//     May block until tokens are available.
+//  3. Slow path — take a turn via admitTurn channel, call Admit to replenish
+//     the reservation. May block until tokens are available. Respects context
+//     cancellation while waiting for the turn.
 func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	ctx context.Context, diff time.Duration, noWait bool,
 ) error {
@@ -239,37 +256,53 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 
 	diffNanos := diff.Nanoseconds()
 
-	// Fast path: deduct from reservation via CAS. No lock needed.
-	// After Close, reservation is 0 (Swap'd), so CAS fails immediately.
-	if h.tryDeductReservation(diffNanos) {
+	// Fast path: deduct from reservation via CAS. No lock needed. Grabs
+	// as much as available, up to diffNanos (partial deduction). After
+	// Close, reservation is 0 (Swap'd), so this returns 0 immediately.
+	grabbed := h.tryDeductReservation(diffNanos)
+	if grabbed == diffNanos {
 		return nil
 	}
+	remaining := diffNanos - grabbed
 
 	if noWait {
-		// Account the CPU via BypassAdmission (non-blocking). This
-		// updates tenant.used and tells the granter tokens were taken,
-		// but never blocks. We do not deduct from reservation here
-		// because driving it negative would break the CAS invariant
-		// for other goroutines. This path is safe after Close because
-		// BypassAdmission never blocks and keeps tenant.used accurate
-		// for CPU consumed by goroutines that haven't closed yet.
-		_, _ = h.wq.Admit(ctx, h.constructWorkInfo(diffNanos, true))
+		// Account the remaining CPU via BypassAdmission (non-blocking).
+		// This updates tenant.used and tells the granter tokens were
+		// taken, but never blocks. The grabbed portion was already
+		// accounted for by a prior Admit that filled the reservation.
+		// This path is safe after Close because BypassAdmission never
+		// blocks and keeps tenant.used accurate for CPU consumed by
+		// goroutines that haven't closed yet.
+		_, _ = h.wq.Admit(ctx, h.constructWorkInfo(remaining, true))
 		return nil
 	}
 
-	// Slow path: serialize refills under refillMu so only one goroutine
-	// calls Admit at a time.
-	h.refillMu.Lock()
-	defer h.refillMu.Unlock()
+	// Slow path: take a turn to serialize Admit calls. Respects context
+	// cancellation while waiting for the turn.
+	select {
+	case <-h.admitTurn:
+		// Got the turn. Release it when we're done.
+		defer func() { h.admitTurn <- struct{}{} }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 
-	// Re-check after acquiring the lock: Close may have run, or another
+	// Re-check after taking the turn: Close may have run, or another
 	// goroutine's refill may have replenished the reservation.
-	if h.refillMu.closed.Load() {
+	h.mu.Lock()
+	closed := h.mu.closed
+	h.mu.Unlock()
+	if closed {
+		// After close, account remaining via BypassAdmission to keep
+		// tenant.used accurate.
+		_, _ = h.wq.Admit(ctx, h.constructWorkInfo(remaining, true))
 		return nil
 	}
-	if h.tryDeductReservation(diffNanos) {
+	grabbed2 := h.tryDeductReservation(remaining)
+	if grabbed2 == remaining {
 		return nil
 	}
+	remaining -= grabbed2
 
 	// Request the consumed CPU plus a buffer (see refillHeuristic). Setting
 	// RequestedCount > 0 skips the WorkQueue's CPU time token estimator
@@ -278,16 +311,28 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	// portion goes into reservation for future fast-path CAS deductions.
 	// Because the exact amount is deducted at Admit time, there is no
 	// estimate to correct, so AdmittedWorkDone is not called.
-	resp, err := h.wq.Admit(ctx, h.constructWorkInfo(h.refillHeuristicLocked(diffNanos), false))
+	resp, err := h.wq.Admit(ctx, h.constructWorkInfo(h.refillHeuristic(remaining), false))
 	if err != nil {
 		return err
 	}
 
 	if resp.Enabled {
-		// Add the buffer portion (requestedCount - diffNanos) to the
-		// reservation. Close cannot race here because we hold refillMu;
-		// it will return these tokens when it acquires the lock.
-		h.refillMu.reservation.Add(resp.requestedCount - diffNanos)
+		buffer := resp.requestedCount - remaining
+		// The commit step is atomic under mu: checking closed and adding
+		// to reservation cannot interleave with setClosed setting
+		// closed=true. If setClosed already ran, we return the buffer.
+		// If it hasn't, reservation.Add is visible to setClosed's later
+		// Swap(0).
+		h.mu.Lock()
+		if h.mu.closed {
+			h.mu.Unlock()
+			if buffer > 0 {
+				h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, buffer)
+			}
+		} else {
+			h.reservation.Add(buffer)
+			h.mu.Unlock()
+		}
 	}
 	return nil
 }
@@ -342,16 +387,20 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 }
 
 // setClosed marks the handle as closed and returns any remaining reservation
-// tokens to the granter. Holding refillMu ensures no concurrent slow-path
-// refill is in progress — any in-flight Admit must complete and release the
-// lock before we proceed, so Swap(0) captures all outstanding tokens.
+// tokens to the granter. It sets mu.closed=true under mu.Lock() to serialize
+// with the slow path's post-Admit commit step, then atomically swaps the
+// reservation to 0 and returns any tokens. This is non-blocking: if a
+// goroutine is in the slow path (blocked in Admit), it will see mu.closed
+// when Admit returns and return its buffer tokens via AdmittedSQLWorkDone.
 func (h *SQLCPUHandle) setClosed() {
-	h.refillMu.Lock()
-	defer h.refillMu.Unlock()
-	h.refillMu.closed.Store(true)
+	h.mu.Lock()
+	h.mu.closed = true
+	h.mu.Unlock()
 	if h.wq != nil {
-		remaining := h.refillMu.reservation.Swap(0)
-		h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, remaining)
+		remaining := h.reservation.Swap(0)
+		if remaining > 0 {
+			h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, remaining)
+		}
 	}
 }
 
