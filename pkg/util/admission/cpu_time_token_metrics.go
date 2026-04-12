@@ -43,8 +43,10 @@ var (
 		Unit:        metric.Unit_COUNT,
 	}
 
-	cpuTimeTokenAdmittedCountPerTenantMeta = metric.Metadata{
-		Name: "admission.cpu_time_tokens.per_tenant.admitted_count",
+	// NB: The per-tenant metric metadata templates below are used to create
+	// one AggCounter per resource tier (system_tenant / app_tenant). The tier
+	// suffix is appended in makeCPUTimeTokenMetrics.
+	cpuTimeTokenAdmittedCountPerTenantMetaBase = metric.Metadata{
 		Help: crstrings.UnwrapText(`
 			Cumulative number of requests admitted per tenant by CPU time
 			token admission control; use with wait_time_nanos to compute
@@ -53,14 +55,30 @@ var (
 		Unit:        metric.Unit_COUNT,
 	}
 
-	cpuTimeTokenWaitTimeNanosPerTenantMeta = metric.Metadata{
-		Name: "admission.cpu_time_tokens.per_tenant.wait_time_nanos",
+	cpuTimeTokenWaitTimeNanosPerTenantMetaBase = metric.Metadata{
 		Help: crstrings.UnwrapText(`
 			Cumulative nanoseconds of admission queue wait time per tenant
 			in CPU time token admission control; use with admitted_count to
 			compute mean wait time via rate(wait_time) / rate(admitted_count)`),
 		Measurement: "Nanoseconds",
 		Unit:        metric.Unit_NANOSECONDS,
+	}
+
+	cpuTimeTokensUsedPerTenantMetaBase = metric.Metadata{
+		Help: crstrings.UnwrapText(`
+			Cumulative CPU time tokens consumed per tenant by admitted
+			work; rate() gives the per-tenant token consumption rate`),
+		Measurement: "Tokens",
+		Unit:        metric.Unit_COUNT,
+	}
+
+	cpuTimeTokensReturnedPerTenantMetaBase = metric.Metadata{
+		Help: crstrings.UnwrapText(`
+			Cumulative CPU time tokens returned per tenant, for example
+			when actual CPU usage was lower than the initial estimate;
+			rate() gives the per-tenant token return rate`),
+		Measurement: "Tokens",
+		Unit:        metric.Unit_COUNT,
 	}
 )
 
@@ -77,15 +95,6 @@ type cpuTimeTokenMetrics struct {
 	// than using a CounterVec, because tookWithoutPermissionLocked is on the
 	// hot admission path: Counter.Inc is a single atomic add, whereas
 	// CounterVec.Inc involves allocations, mutex grabs, and hash lookups.
-	//
-	// The counter accumulates nanoseconds of exhaustion. Applying
-	// rate(exhausted_duration_nanos) in DD/Prometheus yields the fraction of
-	// wall-clock time the bucket was exhausted, queryable over any window
-	// (1m, 5m, 30m, etc.).
-	//
-	// Per (tier, qual) counters use flat arrays indexed by
-	// perBucketIdx(tier, qual) rather than nested [tier][qual] arrays,
-	// because AddMetricStruct cannot register metrics inside nested arrays.
 	ExhaustedDurationNanos [numPerBucketCounters]*metric.Counter
 
 	// RefillAdded tracks cumulative tokens added to each bucket via
@@ -98,14 +107,15 @@ type cpuTimeTokenMetrics struct {
 	RefillRemoved [numPerBucketCounters]*metric.Counter
 
 	// AdmittedCountPerTenant and WaitTimeNanosPerTenant track per-tenant
-	// admission stats. Together they enable computing mean wait time per
-	// tenant via rate(wait_time_nanos) / rate(admitted_count) in
-	// DD/Prometheus. We start with these for just CPU time token AC for
-	// cost reasons (there are many work queues); over time we may
-	// integrate into WorkQueueMetrics. We use two counters to derive the
-	// mean rather than a histogram, also for cost reasons.
-	AdmittedCountPerTenant *aggmetric.AggCounter
-	WaitTimeNanosPerTenant *aggmetric.AggCounter
+	// admission stats. Each tier gets its own AggCounter because
+	// AggCounter.AddChild panics on duplicate label values.
+	AdmittedCountPerTenant [numResourceTiers]*aggmetric.AggCounter
+	WaitTimeNanosPerTenant [numResourceTiers]*aggmetric.AggCounter
+
+	// TokensUsedPerTenant and TokensReturnedPerTenant track per-tenant
+	// token consumption and returns via adjustTenantUsedLocked.
+	TokensUsedPerTenant     [numResourceTiers]*aggmetric.AggCounter
+	TokensReturnedPerTenant [numResourceTiers]*aggmetric.AggCounter
 }
 
 func makeCPUTimeTokenMetrics() *cpuTimeTokenMetrics {
@@ -113,11 +123,32 @@ func makeCPUTimeTokenMetrics() *cpuTimeTokenMetrics {
 	// per-tenant metrics. Inlined to avoid a dependency cycle.
 	b := aggmetric.MakeBuilder("tenant_id")
 	m := &cpuTimeTokenMetrics{
-		Multiplier:             metric.NewGaugeFloat64(cpuTimeTokenMultiplierMeta),
-		TokensConsumed:         metric.NewCounter(cpuTimeTokensConsumedMeta),
-		TokensReturned:         metric.NewCounter(cpuTimeTokensReturnedMeta),
-		AdmittedCountPerTenant: b.Counter(cpuTimeTokenAdmittedCountPerTenantMeta),
-		WaitTimeNanosPerTenant: b.Counter(cpuTimeTokenWaitTimeNanosPerTenantMeta),
+		Multiplier:     metric.NewGaugeFloat64(cpuTimeTokenMultiplierMeta),
+		TokensConsumed: metric.NewCounter(cpuTimeTokensConsumedMeta),
+		TokensReturned: metric.NewCounter(cpuTimeTokensReturnedMeta),
+	}
+	// Create one AggCounter per tier for each per-tenant metric.
+	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
+		tierStr := tier.String()
+		admittedMeta := cpuTimeTokenAdmittedCountPerTenantMetaBase
+		admittedMeta.Name = fmt.Sprintf(
+			"admission.cpu_time_tokens.per_tenant.admitted_count.%s", tierStr)
+		m.AdmittedCountPerTenant[tier] = b.Counter(admittedMeta)
+
+		waitMeta := cpuTimeTokenWaitTimeNanosPerTenantMetaBase
+		waitMeta.Name = fmt.Sprintf(
+			"admission.cpu_time_tokens.per_tenant.wait_time_nanos.%s", tierStr)
+		m.WaitTimeNanosPerTenant[tier] = b.Counter(waitMeta)
+
+		usedMeta := cpuTimeTokensUsedPerTenantMetaBase
+		usedMeta.Name = fmt.Sprintf(
+			"admission.cpu_time_tokens.per_tenant.tokens_used.%s", tierStr)
+		m.TokensUsedPerTenant[tier] = b.Counter(usedMeta)
+
+		returnedMeta := cpuTimeTokensReturnedPerTenantMetaBase
+		returnedMeta.Name = fmt.Sprintf(
+			"admission.cpu_time_tokens.per_tenant.tokens_returned.%s", tierStr)
+		m.TokensReturnedPerTenant[tier] = b.Counter(returnedMeta)
 	}
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		for qual := burstQualification(0); qual < numBurstQualifications; qual++ {
