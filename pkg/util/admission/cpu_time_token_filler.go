@@ -19,8 +19,7 @@ import (
 	"github.com/cockroachdb/redact"
 )
 
-// Below two are the non-burstable utilization goals. See resetInterval for
-// more.
+// Serverless per-tier utilization goals.
 var KVCPUTimeAppUtilGoal = settings.RegisterFloatSetting(
 	settings.SystemOnly,
 	"admission.cpu_time_tokens.target_util.app_tenant",
@@ -35,6 +34,15 @@ var KVCPUTimeSystemUtilGoal = settings.RegisterFloatSetting(
 	"the target CPU utilization for system tenant work if using the KV CPU "+
 		"time token system, value is in the interval [0,1] where 1 means all cores",
 	0.95,
+	settings.FloatWithMinimum(minTargetUtilFrac))
+
+// Resource Manager single utilization goal.
+var KVCPUTimeUtilGoal = settings.RegisterFloatSetting(
+	settings.SystemOnly,
+	"admission.cpu_time_tokens.target_util",
+	"the target CPU utilization for work if using the KV CPU time "+
+		"token system, value is in the interval [0,1] where 1 means all cores",
+	0.75,
 	settings.FloatWithMinimum(minTargetUtilFrac))
 
 // Burstable work is given this much CPU headroom above non-burstable. See

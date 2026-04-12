@@ -39,6 +39,37 @@ func cpuTimeTokenACIsEnabled(sv *settings.Values) bool {
 	return !cpuTimeTokenACKillSwitch && cpuTimeTokenACEnabled.Get(sv)
 }
 
+// cpuTimeTokenMode selects between Serverless (2 WorkQueues, per-tier
+// settings) and Resource Manager (1 WorkQueue, resource groups) modes.
+// The mode can be changed at runtime via the
+// admission.cpu_time_tokens.mode cluster setting.
+type cpuTimeTokenMode int64
+
+const (
+	// serverlessMode uses 2 WorkQueues (systemTenant, appTenant), per-tier
+	// utilization targets, and 4 buckets (2 tiers x 2 burst quals).
+	serverlessMode cpuTimeTokenMode = iota
+	// resourceManagerMode uses 1 WorkQueue with N resource groups,
+	// a single utilization target, and 2 buckets (1 tier x 2 burst quals).
+	// In RM mode, only queue[0] receives work; queue[1] sits idle.
+	resourceManagerMode
+)
+
+// KVCPUTimeTokenACMode selects between Serverless and Resource Manager
+// modes for CPU time token admission control. Can be changed at runtime
+// without a restart — the allocator re-reads this every 1s.
+var KVCPUTimeTokenACMode = settings.RegisterEnumSetting(
+	settings.SystemOnly,
+	"admission.cpu_time_tokens.mode",
+	"selects between serverless (2 queues, per-tier targets) and "+
+		"resource_manager (1 queue, single target) CPU time token modes",
+	"serverless",
+	map[int64]string{
+		int64(serverlessMode):      "serverless",
+		int64(resourceManagerMode): "resource_manager",
+	},
+)
+
 // CPUGrantCoordinators's main purpose is to act as a shim. Depending on
 // whether admission.cpu_time_tokens.enabled is true or false, a WorkQueue
 // that does slot-based or CPU time token AC is returned from
