@@ -97,23 +97,51 @@ type SQLCPUHandle struct {
 	p         *sqlCPUProviderImpl
 	wq        *WorkQueue
 
-	// admitTurn is a capacity-1 channel for serializing slow-path Admit
-	// calls. Starts empty. A goroutine writes to it to take a turn
-	// (blocks if full, i.e. another goroutine holds the turn) and reads
-	// from it when done. Using a channel (rather than a mutex) allows
-	// the slow path to respect context cancellation via select.
+	// Synchronization:
+	//
+	// admitTurn serializes slow-path Admit calls. It is a capacity-1
+	// channel, initially empty. A goroutine writes to it to acquire
+	// the turn (blocks if another goroutine holds the turn) and reads
+	// from it to release. A channel is used instead of a mutex so the
+	// slow path can select on both admitTurn and ctx.Done().
+	//
+	// mu protects closed and gHandles. It is held briefly (never
+	// during Admit). The post-Admit commit step (check closed + Add
+	// to reservation) and setClosed (set closed + Swap reservation)
+	// both acquire mu, serializing them and preventing the race where
+	// setClosed's Swap(0) misses a concurrent Add.
+	//
+	// Invariants:
+	//
+	// reservation is always >= 0. It is the only atomic field. Writes
+	// that decrease reservation use CAS to ensure non-negativity.
+	// Writes that increase reservation (Add) happen while holding the
+	// turn or under mu. When closed is true, reservation is 0 (set by
+	// setClosed's Swap(0), or cleaned up by the post-Admit commit
+	// step under mu).
+	//
+	// closed transitions from false to true exactly once (in
+	// setClosed) and never back. Once closed is true, no new tokens
+	// are added to reservation.
+	//
+	// Three paths for deducting consumed CPU:
+	//
+	//  1. Fast path: CAS deduction from reservation. Lock-free, no
+	//     Admit call. Grabs min(available, requested).
+	//  2. noWait path: BypassAdmission Admit. Non-blocking accounting
+	//     only, used by GoroutineCPUHandle.Close.
+	//  3. Slow path: acquire the turn, call Admit to replenish
+	//     reservation. May block until tokens are available.
 	admitTurn chan struct{}
 
-	// reservation is the only atomic field. It is accessed via CAS on
-	// the fast path (lock-free partial deduction) and via Add/Swap
-	// while holding the turn (slow path and close). CAS supports
-	// partial deductions: grabs min(current, requested), never drives
-	// the reservation negative.
+	// reservation is the local token cache, funded by Admit calls.
+	// Accessed via CAS on the fast path (lock-free) and via Add/Swap
+	// while holding the turn or under mu.
 	reservation atomic.Int64
 
 	// lastRefillTime is the wall-clock time of the last Admit call,
 	// used to compute the interval for adaptive sizing. Accessed only
-	// while holding the turn (between read/write of admitTurn).
+	// while holding the turn.
 	lastRefillTime time.Time
 	// lastHeuristic is the adaptive buffer size (in nanoseconds) to
 	// request beyond the consumed CPU on the next Admit call. Accessed
@@ -122,14 +150,12 @@ type SQLCPUHandle struct {
 
 	mu struct {
 		syncutil.Mutex
-		// closed is set to true by setClosed. The slow path checks this
-		// under mu.Lock() in the post-Admit commit step to serialize with
-		// setClosed, eliminating the race between reservation.Add and
-		// reservation.Swap.
+		// closed is set to true exactly once by setClosed, never
+		// reverted. Checked under mu in the post-Admit commit step.
 		closed   bool
 		gHandles []*GoroutineCPUHandle
-		// Backing for up to 2 goroutine handles, to avoid allocations in
-		// gHandles when there are 2 or fewer goroutines.
+		// Backing for up to 2 goroutine handles, to avoid allocations
+		// in gHandles when there are 2 or fewer goroutines.
 		handlesBacking [2]*GoroutineCPUHandle
 	}
 }
@@ -233,16 +259,10 @@ func (h *SQLCPUHandle) constructWorkInfo(reqCount int64, noWait bool) WorkInfo {
 }
 
 // reportAndAcquireConsumedCPU updates cumulative CPU counters and, if a CTT
-// WorkQueue is attached, deducts the consumed CPU from the token bucket. Three
-// paths are tried in order:
+// WorkQueue is attached, deducts the consumed CPU from the token bucket.
 //
-//  1. Fast path — CAS deduction from the local reservation (no lock, no Admit).
-//     Supports partial deduction: grabs min(available, requested).
-//  2. noWait path — BypassAdmission Admit (non-blocking accounting only, used
-//     by GoroutineCPUHandle.Close).
-//  3. Slow path — take a turn via admitTurn channel, call Admit to replenish
-//     the reservation. May block until tokens are available. Respects context
-//     cancellation while waiting for the turn.
+// See the SQLCPUHandle struct comment for the three paths (fast, noWait,
+// slow) and the synchronization invariants.
 func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	ctx context.Context, diff time.Duration, noWait bool,
 ) error {
@@ -282,6 +302,9 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 		// Got the turn. Release it when we're done.
 		defer func() { <-h.admitTurn }()
 	case <-ctx.Done():
+		// Return grabbed tokens to reservation so setClosed can return
+		// them to the granter.
+		h.reservation.Add(grabbed)
 		return ctx.Err()
 	}
 
@@ -311,6 +334,9 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	// estimate to correct, so AdmittedWorkDone is not called.
 	resp, err := h.wq.Admit(ctx, h.constructWorkInfo(h.refillHeuristic(remaining), false))
 	if err != nil {
+		// Return grabbed tokens to reservation so setClosed can return
+		// them to the granter.
+		h.reservation.Add(grabbed + grabbed2)
 		return err
 	}
 
