@@ -83,20 +83,27 @@ type CPUGrantCoordinators struct {
 
 // GetKVWorkQueue returns a WorkQueue to use for KVWork. If
 // admission.cpu_time_tokens.enabled is true, it returns a WorkQueue that
-// implements CPU time token AC. Else it returns a WorkQueue that does
-// slots-based AC. If CPU time token AC, there is one WorkQueue for system
-// tenant work and another for app tenant work. The system tenant WorkQueue
-// is backed by a granter that allows greater resource usage than the app
-// tenant WorkQueue. This is a prioritization scheme. For details regarding
-// the granters, see cpu_time_token_granter.go.
+// implements CPU time token AC. In Serverless mode, there is one
+// WorkQueue for system tenant work and another for app tenant work. In
+// Resource Manager mode, there is a single WorkQueue for all work.
+//
+// The active mode is read from an atomic that the filler goroutine
+// updates in resetInterval, so mode switches take effect atomically
+// with the corresponding bucket configuration changes at the next
+// interval boundary.
 func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
 	}
-	if isSystemTenant {
-		return coord.cpuTimeCoord.getWorkQueue(systemTenant)
+	mode := cpuTimeTokenMode(coord.cpuTimeCoord.filler.activeMode.Load())
+	if mode == serverlessMode {
+		if isSystemTenant {
+			return coord.cpuTimeCoord.getWorkQueue(systemTenant)
+		}
+		return coord.cpuTimeCoord.getWorkQueue(appTenant)
 	}
-	return coord.cpuTimeCoord.getWorkQueue(appTenant)
+	// Resource Manager mode: single queue for all work.
+	return coord.cpuTimeCoord.getWorkQueue(0)
 }
 
 // GetSQLWorkQueue returns a WorkQueue for SQLKVResponseWork or
@@ -225,6 +232,9 @@ func makeCPUTimeTokenGrantCoordinator(
 	coordinator := &cpuTimeTokenGrantCoordinator{
 		filler: filler,
 	}
+	// Initialize the filler's activeMode so GetKVWorkQueue returns the
+	// correct queue before the filler goroutine starts.
+	filler.activeMode.Store(int64(initialMode))
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		coordinator.queues[tier] = requesters[tier]
 	}

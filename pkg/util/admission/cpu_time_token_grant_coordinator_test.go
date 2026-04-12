@@ -45,10 +45,28 @@ func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
 		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
+	// Default mode is Serverless — 2 separate queues.
 	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, true)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	// System and app tenant work use different queues.
+	// In Serverless mode, system and app tenant work use different queues.
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+
+	// Switch to RM mode dynamically — single queue for all work.
+	// In production, mode changes take effect when the filler goroutine
+	// calls resetInterval and publishes the new mode. Since the filler
+	// goroutine is disabled in this test, we update the atomic directly.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
+		int64(resourceManagerMode))
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+
+	// Switch back to Serverless — 2 separate queues again.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
+		int64(serverlessMode))
 	require.NotEqual(t,
 		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
 		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
@@ -65,7 +83,7 @@ func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
 	// Disabling the kill switch restores CPU time token AC (setting is
-	// still enabled).
+	// still enabled, mode is still Serverless from above).
 	cpuTimeTokenACKillSwitch = false
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
