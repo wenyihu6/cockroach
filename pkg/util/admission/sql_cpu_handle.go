@@ -90,15 +90,44 @@ var goroutineCPUHandlePool = sync.Pool{
 //     Each uncontrolled burst is bounded by the work between two CancelChecker
 //     calls (~1024 rows), so the amount of unpermitted CPU per check is limited.
 //     The throttling does not prevent past usage but gates future usage.
+//
+// Local token reservation (optimization): admitTurn and
+// mu.reservation exist solely to reduce contention on
+// WorkQueue.mu. Without them, every measureAndAdmit call would
+// call WorkQueue.Admit directly, which is correct but acquires
+// WorkQueue.mu on every checkpoint. The reservation allows
+// lock-free CAS deductions that skip the Admit call entirely.
+//
+// INVARIANT: token conservation. All tokens obtained from
+// WorkQueue.Admit are either consumed (covering measured CPU),
+// held in reservation, or returned via AdmittedSQLWorkDone.
 type SQLCPUHandle struct {
 	workInfo  WorkInfo
 	atGateway bool
 	p         *sqlCPUProviderImpl
 	wq        *WorkQueue
 
+	// admitTurn serializes blocking Admit calls (capacity-1 channel).
+	// Send acquires the turn; deferred receive releases it.
+	// BypassAdmission calls and Close do not use admitTurn.
+	admitTurn chan struct{}
+
 	mu struct {
 		syncutil.Mutex
-		closed   bool
+
+		// INVARIANT: transitions false -> true exactly once, under mu.
+		closed bool
+
+		// reservation holds pre-paid tokens for lock-free CAS
+		// deductions. Decrements use CAS without mu. Increments (Add)
+		// in the commit step are under mu, atomically with the
+		// closed check, to prevent token leaks. Close drains via
+		// Swap(0) outside mu.
+		//
+		// INVARIANT: reservation >= 0.
+		// INVARIANT: closed == true => reservation == 0.
+		reservation atomic.Int64
+
 		gHandles []*GoroutineCPUHandle
 		// Backing for up to 2 goroutine handles, to avoid allocations in
 		// gHandles when there are 2 or fewer goroutines.
@@ -114,6 +143,7 @@ func newSQLCPUAdmissionHandle(
 		atGateway: atGateway,
 		p:         p,
 		wq:        wq,
+		admitTurn: make(chan struct{}, 1),
 	}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
@@ -129,9 +159,73 @@ func (h *SQLCPUHandle) reportCPU(diff time.Duration) {
 	}
 }
 
-// reportAndAcquireConsumedCPU updates cumulative CPU counters and, if a CTT
-// WorkQueue is attached, calls Admit to deduct the consumed CPU from the token
-// bucket. This may block until tokens are available unless noWait is true.
+// tryDeductReservation deducts up to diffNanos from reservation via
+// CAS. Returns the amount grabbed (may be less than diffNanos).
+func (h *SQLCPUHandle) tryDeductReservation(diffNanos int64) int64 {
+	for {
+		current := h.mu.reservation.Load()
+		if current <= 0 {
+			return 0
+		}
+		grab := min(current, diffNanos)
+		if h.mu.reservation.CompareAndSwap(current, current-grab) {
+			return grab
+		}
+	}
+}
+
+// maxRefillBuffer caps the reservation buffer per Admit call to
+// prevent large checkpoints from holding excessive tokens idle.
+const maxRefillBuffer = int64(10 * time.Millisecond)
+
+// refillHeuristic returns deficit + min(deficit, maxRefillBuffer). The
+// deficit covers the current shortfall; the buffer pre-pays future
+// fast-path deductions.
+//
+// TODO(wenyihu6): replace this simple 2x heuristic with an adaptive scheme
+// that adjusts the buffer size based on the interval between Admit calls:
+// grow the buffer when calls are too frequent (interval < 1ms), shrink it
+// when calls are infrequent (interval > 5ms), and keep it stable otherwise.
+// This would reduce Admit call overhead for steady workloads while avoiding
+// over-reservation for bursty ones.
+func (h *SQLCPUHandle) refillHeuristic(deficit int64) int64 {
+	buffer := min(deficit, maxRefillBuffer)
+	return deficit + buffer
+}
+
+// constructWorkInfo returns a WorkInfo copy with the given
+// RequestedCount and BypassAdmission.
+func (h *SQLCPUHandle) constructWorkInfo(reqCount int64, noWait bool) WorkInfo {
+	workInfo := h.workInfo
+	workInfo.RequestedCount = reqCount
+	workInfo.BypassAdmission = noWait
+	return workInfo
+}
+
+func (h *SQLCPUHandle) isClosed() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.mu.closed
+}
+
+// deductFromReservation deducts what it can from reservation via CAS.
+// Returns the shortfall that must be acquired from Admit.
+func (h *SQLCPUHandle) deductFromReservation(needed int64) (shortfall int64) {
+	grabbed := h.tryDeductReservation(needed)
+	return needed - grabbed
+}
+
+// reportAndAcquireConsumedCPU acquires tokens for consumed CPU.
+//
+//  1. Fast path: reservation covers the deficit via CAS. No Admit.
+//  2. noWait path: deduct what is available, account the rest via
+//     BypassAdmission.
+//  3. Slow path: take a turn via admitTurn, call Admit for the
+//     deficit plus a buffer, store the buffer in reservation.
+//
+// In winding-down cases (noWait, context cancellation, Close having
+// run), the goroutine deducts what it can and accounts the rest via
+// BypassAdmission. It never blocks and never refills the reservation.
 func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	ctx context.Context, diff time.Duration, noWait bool,
 ) error {
@@ -141,24 +235,76 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 		return nil
 	}
 
-	// RequestedCount is set to the exact CPU consumed (from grunning), so the
-	// WorkQueue's CPU time token estimator is skipped (see Admit). Because the
-	// exact amount is deducted at Admit time, there is no estimate to correct,
-	// so AdmittedWorkDone is not called. This also avoids training the KV
-	// estimator with SQL CPU data, which would corrupt its estimates.
-	//
-	// TODO(wenyi): Currently we call Admit on every measureAndAdmit invocation,
-	// which happens every ~1024 rows. This means each SQL goroutine takes the
-	// WorkQueue mutex on every check. Consider reserving more tokens than the
-	// exact amount consumed (e.g., 2x the last diff, or a smoothed estimate of
-	// upcoming usage) and tracking remaining reservation locally. This would
-	// allow subsequent measureAndAdmit calls to deduct from the local
-	// reservation without calling Admit, reducing contention on the WorkQueue.
-	workInfo := h.workInfo
-	workInfo.RequestedCount = diff.Nanoseconds()
-	workInfo.BypassAdmission = noWait
-	_, err := h.wq.Admit(ctx, workInfo)
-	return err
+	diffNanos := diff.Nanoseconds()
+
+	// Deduct from reservation (lock-free CAS).
+	remaining := h.deductFromReservation(diffNanos)
+
+	if noWait {
+		// Winding down: account the deficit without blocking.
+		if remaining > 0 {
+			_, _ = h.wq.Admit(ctx, h.constructWorkInfo(remaining, true /*noWait*/))
+		}
+		return nil
+	}
+
+	// Fast path: reservation covered the deficit.
+	if remaining == 0 {
+		return nil
+	}
+
+	// Slow path: serialize blocking Admit calls via admitTurn.
+	select {
+	case h.admitTurn <- struct{}{}:
+		defer func() { <-h.admitTurn }()
+	case <-ctx.Done():
+		// Winding down: account the deficit without blocking.
+		_, _ = h.wq.Admit(ctx, h.constructWorkInfo(remaining, true /*noWait*/))
+		return ctx.Err()
+	}
+
+	// Close may have run while waiting for the turn.
+	if h.isClosed() {
+		// Winding down: account the deficit without blocking.
+		_, _ = h.wq.Admit(ctx, h.constructWorkInfo(remaining, true /*noWait*/))
+		return nil
+	}
+
+	// The previous turn-holder may have refilled the reservation.
+	remaining = h.deductFromReservation(remaining)
+	if remaining == 0 {
+		return nil
+	}
+
+	// Request the deficit plus a buffer (see refillHeuristic). Setting
+	// RequestedCount > 0 bypasses the KV CPU time token estimator
+	// (see callerSetRequestedCount). No AdmittedWorkDone is needed
+	// since the exact amount is deducted at Admit time.
+	resp, err := h.wq.Admit(ctx, h.constructWorkInfo(h.refillHeuristic(remaining), false /*noWait*/))
+	if err != nil {
+		return err
+	}
+	if resp.Enabled {
+		buffer := resp.requestedCount - remaining
+		// Commit step: check closed and update reservation
+		// atomically under mu to prevent token leaks. Without the
+		// lock, Close's Swap(0) could run between the check and
+		// the Add, stranding tokens in reservation.
+		//   - closed=true:  return buffer via AdmittedSQLWorkDone.
+		//   - closed=false: Add to reservation; Close's later
+		//     Swap(0) captures them.
+		h.mu.Lock()
+		if h.mu.closed {
+			h.mu.Unlock()
+			if buffer > 0 {
+				h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, buffer)
+			}
+		} else {
+			h.mu.reservation.Add(buffer)
+			h.mu.Unlock()
+		}
+	}
+	return nil
 }
 
 // TODO(sumeer): see the comment
@@ -210,21 +356,38 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 	return gh
 }
 
-// Close is called when no more reporting is needed. It pools
-// GoroutineCPUHandles that have been closed. GoroutineCPUHandles that are not
-// yet closed are left for GC.
+// Close sets closed=true, drains reservation, and returns remaining
+// tokens. It never touches admitTurn, so it never blocks behind
+// in-flight Admit calls. Concurrent goroutines detect closed and
+// fall back to BypassAdmission; the commit step returns any buffer
+// via AdmittedSQLWorkDone. Closed GoroutineCPUHandles are pooled;
+// unclosed ones are left for GC.
 func (h *SQLCPUHandle) Close() {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.mu.closed = true
-	for i, gh := range h.mu.gHandles {
-		if gh.closed.Load() {
-			gh.reset()
-			goroutineCPUHandlePool.Put(gh)
+	// After this, any concurrent commit step observes closed=true.
+	func() {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.mu.closed = true
+		for i, gh := range h.mu.gHandles {
+			if gh.closed.Load() {
+				gh.reset()
+				goroutineCPUHandlePool.Put(gh)
+			}
+			h.mu.gHandles[i] = nil
 		}
-		h.mu.gHandles[i] = nil
+		h.mu.gHandles = nil
+	}()
+	if h.wq == nil {
+		return
 	}
-	h.mu.gHandles = nil
+	// Drain reservation outside the lock. Swap(0) races safely with
+	// CAS deductions (CAS retries on conflict and finds 0). No new
+	// tokens are added after this: the commit step checks closed
+	// under mu and returns tokens via AdmittedSQLWorkDone instead.
+	remaining := h.mu.reservation.Swap(0)
+	if remaining > 0 {
+		h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, remaining)
+	}
 }
 
 // GoroutineCPUHandle is used for CPU accounting on a single goroutine. It
