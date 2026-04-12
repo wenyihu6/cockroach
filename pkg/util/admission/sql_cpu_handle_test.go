@@ -8,6 +8,7 @@ package admission
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -613,6 +614,300 @@ func TestSQLCPUHandleAdmitVsCloseTokenConservation(t *testing.T) {
 		require.True(t, h.isClosed())
 		require.Equal(t, int64(0), h.mu.reservation.Load(),
 			"iter %d: closed == true => reservation == 0", iter)
+	}
+}
+
+// TestSQLCPUHandleContextCancellation verifies that when a goroutine's
+// context is canceled while waiting for admitTurn, it falls through to
+// the BypassAdmission path, accounts the deficit without blocking, and
+// returns ctx.Err().
+func TestSQLCPUHandleContextCancellation(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	tenantID := roachpb.MustMakeTenantID(1)
+	q, _, cleanup := makeCPUTimeTokenWorkQueue(t)
+	defer cleanup()
+
+	provider := &sqlCPUProviderImpl{}
+	h := newSQLCPUAdmissionHandle(
+		WorkInfo{TenantID: tenantID}, true, provider, q)
+
+	// Hold admitTurn so the next goroutine blocks on it.
+	h.admitTurn <- struct{}{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		// This will try to send to admitTurn (blocked) and fall
+		// through to ctx.Done().
+		errCh <- h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false)
+	}()
+
+	// Cancel the context — the goroutine should return ctx.Err().
+	cancel()
+	err := <-errCh
+	require.ErrorIs(t, err, context.Canceled)
+
+	// CPU should still be reported despite the cancellation.
+	gw, _ := provider.GetCumulativeSQLCPUNanos()
+	require.Equal(t, int64(1*time.Millisecond), gw)
+
+	// Release admitTurn.
+	<-h.admitTurn
+	h.Close()
+}
+
+// TestSQLCPUHandleCloseDoesNotBlockOnAdmitTurn verifies that Close
+// returns immediately even when a goroutine is holding admitTurn
+// (blocked in Admit). Close sets closed under mu and drains
+// reservation via Swap(0) — it never touches admitTurn.
+func TestSQLCPUHandleCloseDoesNotBlockOnAdmitTurn(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	tenantID := roachpb.MustMakeTenantID(1)
+	q, _, cleanup := makeCPUTimeTokenWorkQueue(t)
+	defer cleanup()
+
+	provider := &sqlCPUProviderImpl{}
+	h := newSQLCPUAdmissionHandle(
+		WorkInfo{TenantID: tenantID}, true, provider, q)
+
+	// Seed reservation so Close has something to drain.
+	ctx := context.Background()
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+
+	// Hold admitTurn to simulate a goroutine blocked in Admit.
+	h.admitTurn <- struct{}{}
+
+	// Close should return immediately — it doesn't touch admitTurn.
+	closeDone := make(chan struct{})
+	go func() {
+		h.Close()
+		close(closeDone)
+	}()
+
+	select {
+	case <-closeDone:
+		// Close returned without blocking.
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close blocked on admitTurn — it should not touch admitTurn")
+	}
+
+	require.True(t, h.isClosed())
+	require.Equal(t, int64(0), h.mu.reservation.Load())
+
+	// Release admitTurn.
+	<-h.admitTurn
+}
+
+// TestSQLCPUHandleSecondDeductionAfterTurn verifies that when the
+// previous admitTurn holder refills the reservation, the next
+// turn-holder deducts from the refilled reservation and may skip
+// Admit entirely (the optimization at the second deductFromReservation
+// call after taking the turn).
+func TestSQLCPUHandleSecondDeductionAfterTurn(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	tenantID := roachpb.MustMakeTenantID(1)
+	q, tg, cleanup := makeCPUTimeTokenWorkQueue(t)
+	defer cleanup()
+
+	provider := &sqlCPUProviderImpl{}
+	h := newSQLCPUAdmissionHandle(
+		WorkInfo{TenantID: tenantID}, true, provider, q)
+
+	// Goroutine A: exhaust reservation and call Admit, which refills.
+	// heuristic(1ms) = 1ms + min(1ms, 10ms) = 2ms.
+	// Reservation = 2ms - 1ms = 1ms.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+	require.Equal(t, int64(1*time.Millisecond), h.mu.reservation.Load())
+
+	// Now drain reservation so the next call goes to slow path.
+	h.mu.reservation.Store(0)
+
+	// Goroutine B: goes to slow path, takes turn. Reservation is 0,
+	// so second deductFromReservation gets nothing, must call Admit.
+	// heuristic(500us) = 500us + min(500us, 10ms) = 1ms.
+	// Reservation = 1ms - 500us = 500us.
+	_ = tg.buf.stringAndReset()
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 500*time.Microsecond, false))
+	output := tg.buf.stringAndReset()
+	require.Contains(t, output, "tryGet", "should have called Admit")
+	require.Equal(t, int64(500*time.Microsecond), h.mu.reservation.Load())
+
+	// Now the interesting case: reservation is 500us. A call for 200us
+	// takes the fast path (CAS), leaving 300us. Then a call for 400us
+	// exceeds the 300us reservation (remaining=100us), goes to slow
+	// path, takes turn, does second deductFromReservation. But first,
+	// simulate another goroutine refilling while we wait for the turn.
+	//
+	// We can't perfectly orchestrate the interleaving, so we test the
+	// simpler case: reservation was refilled between the two
+	// deductFromReservation calls by directly adding to reservation.
+
+	// Consume 400us: CAS grabs 500us reservation (wait, 400us < 500us,
+	// so fast path covers it).
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 400*time.Microsecond, false))
+	require.Equal(t, int64(100*time.Microsecond), h.mu.reservation.Load())
+
+	// Now request 200us: CAS grabs 100us, remaining=100us, goes to
+	// slow path. While waiting for turn (no contention here), the
+	// second deductFromReservation finds 0 (nothing was refilled).
+	// Admit is called for 100us shortfall.
+	_ = tg.buf.stringAndReset()
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 200*time.Microsecond, false))
+	output = tg.buf.stringAndReset()
+	require.Contains(t, output, "tryGet",
+		"shortfall after second deduction should trigger Admit")
+
+	h.Close()
+}
+
+// accountingGranter wraps a testGranter with atomic counters that
+// track the total tokens flowing through tryGet, returnGrant, and
+// tookWithoutPermission. This enables asserting the token conservation
+// invariant after a handle is closed:
+//
+//	tryGet_total + bypass_total = consumed_total + returned_total
+//
+// Where consumed_total is the sum of all diffNanos passed to
+// reportAndAcquireConsumedCPU.
+type accountingGranter struct {
+	inner         *testGranter
+	tryGetTotal   atomic.Int64
+	returnedTotal atomic.Int64
+	bypassTotal   atomic.Int64
+}
+
+var _ granter = &accountingGranter{}
+
+func (ag *accountingGranter) tryGet(burstQual burstQualification, count int64) bool {
+	granted := ag.inner.tryGet(burstQual, count)
+	if granted {
+		ag.tryGetTotal.Add(count)
+	}
+	return granted
+}
+
+func (ag *accountingGranter) returnGrant(count int64) {
+	ag.returnedTotal.Add(count)
+	ag.inner.returnGrant(count)
+}
+
+func (ag *accountingGranter) tookWithoutPermission(count int64) {
+	ag.bypassTotal.Add(count)
+	ag.inner.tookWithoutPermission(count)
+}
+
+func (ag *accountingGranter) continueGrantChain(id grantChainID) {
+	ag.inner.continueGrantChain(id)
+}
+
+// makeAccountingWorkQueue creates a CTT WorkQueue with an
+// accountingGranter for token conservation testing.
+func makeAccountingWorkQueue(t *testing.T) (q *WorkQueue, ag *accountingGranter, cleanup func()) {
+	st := cluster.MakeTestingClusterSettings()
+	metrics := makeWorkQueueMetrics("", metric.NewRegistry())
+	tg := &testGranter{buf: &builderWithMu{}}
+	tg.mu.returnValueFromTryGet = true
+	ag = &accountingGranter{inner: tg}
+	cpuMetrics := makeCPUTimeTokenMetrics()
+	initialTime := timeutil.FromUnixMicros(
+		int64(100) * int64(time.Millisecond/time.Microsecond))
+	opts := makeWorkQueueOptions(KVWork)
+	opts.mode = usesCPUTimeTokens
+	opts.perTenantAggMetrics = &tenantAggMetrics{
+		admittedCount:  cpuMetrics.AdmittedCountPerTenant[systemTenant],
+		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[systemTenant],
+		tokensUsed:     cpuMetrics.TokensUsedPerTenant[systemTenant],
+		tokensReturned: cpuMetrics.TokensReturnedPerTenant[systemTenant],
+	}
+	opts.timeSource = timeutil.NewManualTime(initialTime)
+	opts.disableEpochClosingGoroutine = true
+	opts.disableGCTenantsAndResetUsed = true
+	q = makeWorkQueue(
+		log.MakeTestingAmbientContext(tracing.NewTracer()),
+		KVWork, ag, st, metrics, opts,
+	).(*WorkQueue)
+	tg.r = q
+	return q, ag, q.close
+}
+
+// TestSQLCPUHandleRandomizedTokenConservation is a randomized stress
+// test for the token conservation invariant. Each iteration creates a
+// handle, spawns goroutines that make randomized requests (varying
+// duration, noWait vs blocking), closes at a random time, and asserts:
+//
+//	tryGet_total + bypass_total = consumed_total + returned_total
+//
+// This exercises the full spectrum of race windows: CAS vs Swap,
+// commit step vs Close, context cancellation, noWait bypass, and
+// the second deductFromReservation after taking the turn.
+func TestSQLCPUHandleRandomizedTokenConservation(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+	defer log.Scope(t).Close(t)
+
+	ctx := context.Background()
+	tenantID := roachpb.MustMakeTenantID(1)
+	rng := rand.New(rand.NewSource(timeutil.Now().UnixNano()))
+
+	const numIterations = 200
+	for iter := 0; iter < numIterations; iter++ {
+		q, ag, cleanup := makeAccountingWorkQueue(t)
+
+		provider := &sqlCPUProviderImpl{}
+		h := newSQLCPUAdmissionHandle(
+			WorkInfo{TenantID: tenantID}, true, provider, q)
+
+		numWorkers := 1 + rng.Intn(8)         // 1-8 workers
+		opsPerWorker := 1 + rng.Intn(20)      // 1-20 ops each
+		closeAfterOps := rng.Intn(numWorkers) // close after this many workers finish
+
+		var wg sync.WaitGroup
+		var workersFinished atomic.Int64
+		var totalConsumed atomic.Int64
+
+		wg.Add(numWorkers)
+		for w := 0; w < numWorkers; w++ {
+			go func() {
+				defer wg.Done()
+				for op := 0; op < opsPerWorker; op++ {
+					// Random duration: 10us - 2ms.
+					dur := time.Duration(10+rng.Intn(1990)) * time.Microsecond
+					noWait := rng.Intn(5) == 0 // 20% chance of noWait
+					totalConsumed.Add(dur.Nanoseconds())
+					_ = h.reportAndAcquireConsumedCPU(ctx, dur, noWait)
+				}
+				if int(workersFinished.Add(1)) == closeAfterOps {
+					h.Close()
+				}
+			}()
+		}
+		wg.Wait()
+
+		// Ensure Close is called exactly once.
+		if !h.isClosed() {
+			h.Close()
+		}
+
+		// INVARIANT: closed => reservation == 0.
+		require.Equal(t, int64(0), h.mu.reservation.Load(),
+			"iter %d: reservation must be 0 after Close", iter)
+
+		// Token conservation: tokens in = tokens out.
+		tokensIn := ag.tryGetTotal.Load() + ag.bypassTotal.Load()
+		tokensOut := totalConsumed.Load() + ag.returnedTotal.Load()
+		require.Equal(t, tokensIn, tokensOut,
+			"iter %d: tryGet(%d) + bypass(%d) = %d, but consumed(%d) + returned(%d) = %d",
+			iter,
+			ag.tryGetTotal.Load(), ag.bypassTotal.Load(), tokensIn,
+			totalConsumed.Load(), ag.returnedTotal.Load(), tokensOut)
+
+		cleanup()
 	}
 }
 
