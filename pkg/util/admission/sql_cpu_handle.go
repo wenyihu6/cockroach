@@ -98,10 +98,10 @@ type SQLCPUHandle struct {
 	wq        *WorkQueue
 
 	// admitTurn is a capacity-1 channel for serializing slow-path Admit
-	// calls. Pre-filled with one token in the constructor. A goroutine
-	// reads from it to take a turn and writes back when done. Using a
-	// channel (rather than a mutex) allows the slow path to respect
-	// context cancellation via select.
+	// calls. Starts empty. A goroutine writes to it to take a turn
+	// (blocks if full, i.e. another goroutine holds the turn) and reads
+	// from it when done. Using a channel (rather than a mutex) allows
+	// the slow path to respect context cancellation via select.
 	admitTurn chan struct{}
 
 	// reservation is the only atomic field. It is accessed via CAS on
@@ -144,8 +144,6 @@ func newSQLCPUAdmissionHandle(
 		wq:        wq,
 		admitTurn: make(chan struct{}, 1),
 	}
-	// Pre-fill the turn so the first slow-path entrant can proceed.
-	h.admitTurn <- struct{}{}
 	h.mu.gHandles = h.mu.handlesBacking[:0]
 	return h
 }
@@ -280,9 +278,9 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	// Slow path: take a turn to serialize Admit calls. Respects context
 	// cancellation while waiting for the turn.
 	select {
-	case <-h.admitTurn:
+	case h.admitTurn <- struct{}{}:
 		// Got the turn. Release it when we're done.
-		defer func() { h.admitTurn <- struct{}{} }()
+		defer func() { <-h.admitTurn }()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
