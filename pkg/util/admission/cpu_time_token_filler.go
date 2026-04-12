@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync/atomic"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
@@ -102,6 +103,12 @@ type cpuTimeTokenFiller struct {
 	allocator  cpuTimeTokenAllocatorI
 	timeSource timeutil.TimeSource
 	closeCh    chan struct{}
+	// activeMode is the cpuTimeTokenMode after the most recent
+	// resetInterval. Written by the filler goroutine, read by
+	// GetKVWorkQueue via cpuTimeTokenGrantCoordinator. This ensures
+	// routing and bucket configuration change together at interval
+	// boundaries.
+	activeMode atomic.Int64
 	// Used only in unit tests.
 	tickCh *chan struct{}
 }
@@ -109,7 +116,7 @@ type cpuTimeTokenFiller struct {
 func (f *cpuTimeTokenFiller) start(ctx context.Context) {
 	// The token buckets should start full. The first call to resetInterval will
 	// fill the buckets.
-	f.allocator.resetInterval(ctx)
+	f.activeMode.Store(int64(f.allocator.resetInterval(ctx)))
 
 	ticker := f.timeSource.NewTicker(timePerTick)
 	intervalStart := f.timeSource.Now()
@@ -125,7 +132,8 @@ func (f *cpuTimeTokenFiller) start(ctx context.Context) {
 						f.allocator.allocateTokens(1)
 					}
 					intervalStart = t
-					f.allocator.resetInterval(ctx)
+					f.activeMode.Store(
+						int64(f.allocator.resetInterval(ctx)))
 					remainingTicks = int64(time.Second / timePerTick)
 				} else {
 					remainingSinceIntervalStart := time.Second - elapsedSinceIntervalStart
@@ -157,7 +165,7 @@ func (f *cpuTimeTokenFiller) close() {
 // cpuTimeTokenAllocatorI abstracts cpuTimeTokenAllocator for testing.
 type cpuTimeTokenAllocatorI interface {
 	allocateTokens(expectedRemainingTicksInInterval int64)
-	resetInterval(context.Context)
+	resetInterval(context.Context) cpuTimeTokenMode
 }
 
 var _ cpuTimeTokenAllocatorI = &cpuTimeTokenAllocator{}
@@ -182,9 +190,6 @@ type cpuTimeTokenAllocator struct {
 	// run on the same filler goroutine, no synchronization is needed.
 	mode           cpuTimeTokenMode
 	numActiveTiers int
-	// prevMode tracks the previous mode to detect transitions and
-	// update per-queue defaultBurstLimitFrac accordingly.
-	prevMode cpuTimeTokenMode
 
 	// refillRates stores the number of CPU time tokens to add to each bucket
 	// per interval (1s).
@@ -330,9 +335,12 @@ func (a *cpuTimeTokenAllocator) refillBurstBuckets(
 
 // resetInterval is called to signal the beginning of a new interval.
 // allocateTokens adds the desired number of tokens every interval.
-func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
+// It returns the active cpuTimeTokenMode after processing any mode
+// transition, so the caller can publish it for GetKVWorkQueue.
+func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenMode {
 	// Re-read mode from cluster setting. This runs on the filler
 	// goroutine, so no synchronization needed with allocateTokens.
+	prevMode := a.mode
 	a.mode = cpuTimeTokenMode(
 		KVCPUTimeTokenACMode.Get(&a.settings.SV))
 	if a.mode == resourceManagerMode {
@@ -341,13 +349,12 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 		a.numActiveTiers = int(numResourceTiers)
 	}
 	// Handle mode transitions.
-	if a.mode != a.prevMode {
+	if a.mode != prevMode {
 		if a.mode == resourceManagerMode {
 			a.queues[0].setDefaultBurstLimitFrac(1.0)
 		} else {
 			a.queues[0].setDefaultBurstLimitFrac(0.0)
 		}
-		a.prevMode = a.mode
 	}
 
 	var targets targetUtilizations
@@ -399,6 +406,7 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 			a.allocated[tier][qual] = 0
 		}
 	}
+	return a.mode
 }
 
 // refillBurstBucketsDelta applies burst bucket refill for the resetInterval

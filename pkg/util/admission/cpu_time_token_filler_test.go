@@ -82,8 +82,9 @@ type testTokenAllocator struct {
 
 func (m *testTokenAllocator) init() {}
 
-func (a *testTokenAllocator) resetInterval(context.Context) {
+func (a *testTokenAllocator) resetInterval(context.Context) cpuTimeTokenMode {
 	fmt.Fprintf(a.buf, "resetInterval()\n")
+	return serverlessMode
 }
 
 func (a *testTokenAllocator) allocateTokens(remainingTicks int64) {
@@ -163,7 +164,6 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		granter:        granter,
 		numActiveTiers: 1,
 		mode:           resourceManagerMode,
-		prevMode:       resourceManagerMode,
 		settings:       st,
 		model:          model,
 		metrics:        metrics,

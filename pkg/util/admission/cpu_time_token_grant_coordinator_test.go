@@ -55,14 +55,17 @@ func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
 	// Switch to RM mode dynamically — single queue for all work.
-	KVCPUTimeTokenACMode.Override(ctx, &settings.SV,
+	// In production, mode changes take effect when the filler goroutine
+	// calls resetInterval and publishes the new mode. Since the filler
+	// goroutine is disabled in this test, we update the atomic directly.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
 		int64(resourceManagerMode))
 	require.Equal(t,
 		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
 		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
 	// Switch back to Serverless — 2 separate queues again.
-	KVCPUTimeTokenACMode.Override(ctx, &settings.SV,
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
 		int64(serverlessMode))
 	require.NotEqual(t,
 		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),

@@ -84,13 +84,15 @@ type CPUGrantCoordinators struct {
 // WorkQueue for system tenant work and another for app tenant work. In
 // Resource Manager mode, there is a single WorkQueue for all work.
 //
-// The mode is read from the cluster setting on every call, so switching
-// modes takes effect immediately for new requests.
+// The active mode is read from an atomic that the filler goroutine
+// updates in resetInterval, so mode switches take effect atomically
+// with the corresponding bucket configuration changes at the next
+// interval boundary.
 func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
 	}
-	mode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&coord.st.SV))
+	mode := cpuTimeTokenMode(coord.cpuTimeCoord.filler.activeMode.Load())
 	if mode == serverlessMode {
 		if isSystemTenant {
 			return coord.cpuTimeCoord.getWorkQueue(systemTenant)
@@ -188,7 +190,6 @@ func makeCPUTimeTokenGrantCoordinator(
 		granter:        granter,
 		numActiveTiers: initialActiveTiers,
 		mode:           initialMode,
-		prevMode:       initialMode,
 		settings:       settings,
 		metrics:        metrics,
 	}
@@ -209,9 +210,6 @@ func makeCPUTimeTokenGrantCoordinator(
 		}
 	}
 
-	// All queues start with defaultBurstLimitFrac=0.0 (Serverless
-	// default). In RM mode, the allocator's first resetInterval call
-	// will set queue[0].defaultBurstLimitFrac to 1.0.
 	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
 	for tier := 0; tier < int(numResourceTiers); tier++ {
@@ -229,10 +227,18 @@ func makeCPUTimeTokenGrantCoordinator(
 		granter.requester[tier] = requesters[tier]
 		allocator.queues[tier] = requesters[tier].(*WorkQueue)
 	}
+	// In RM mode, all tenants can burst by default (frac=1.0).
+	// Serverless mode uses 0.0 which is the WorkQueue zero-value.
+	if initialMode == resourceManagerMode {
+		allocator.queues[0].setDefaultBurstLimitFrac(1.0)
+	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
 		filler: filler,
 	}
+	// Initialize the filler's activeMode so GetKVWorkQueue returns the
+	// correct queue before the filler goroutine starts.
+	filler.activeMode.Store(int64(initialMode))
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		coordinator.queues[tier] = requesters[tier]
 	}
