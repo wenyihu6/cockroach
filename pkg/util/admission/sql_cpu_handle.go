@@ -105,10 +105,12 @@ type SQLCPUHandle struct {
 	// slow path can select on both admitTurn and ctx.Done().
 	//
 	// mu protects closed and gHandles. It is held briefly (never
-	// during Admit). The post-Admit commit step (check closed + Add
-	// to reservation) and setClosed (set closed + Swap reservation)
-	// both acquire mu, serializing them and preventing the race where
-	// setClosed's Swap(0) misses a concurrent Add.
+	// during Admit). Every path that adds tokens to reservation
+	// (post-Admit commit, ctx cancellation, Admit error) checks
+	// closed under mu first — if closed, tokens are returned via
+	// AdmittedSQLWorkDone instead of Add. setClosed sets closed=true
+	// under mu then does Swap(0), so Swap(0) is guaranteed to see
+	// any prior Add.
 	//
 	// Invariants:
 	//
@@ -284,9 +286,18 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 		// Got the turn. Release it when we're done.
 		defer func() { <-h.admitTurn }()
 	case <-ctx.Done():
-		// Return grabbed tokens to reservation so setClosed can return
-		// them to the granter.
-		h.reservation.Add(grabbed)
+		// Return grabbed tokens. Check closed under mu to avoid
+		// stranding tokens after setClosed's Swap(0).
+		if grabbed > 0 {
+			h.mu.Lock()
+			if h.mu.closed {
+				h.mu.Unlock()
+				h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, grabbed)
+			} else {
+				h.reservation.Add(grabbed)
+				h.mu.Unlock()
+			}
+		}
 		return ctx.Err()
 	}
 
@@ -316,9 +327,19 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 	// estimate to correct, so AdmittedWorkDone is not called.
 	resp, err := h.wq.Admit(ctx, h.constructWorkInfo(h.refillHeuristic(remaining), false))
 	if err != nil {
-		// Return grabbed tokens to reservation so setClosed can return
-		// them to the granter.
-		h.reservation.Add(grabbed + grabbed2)
+		// Return grabbed tokens. Check closed under mu to avoid
+		// stranding tokens after setClosed's Swap(0).
+		returned := grabbed + grabbed2
+		if returned > 0 {
+			h.mu.Lock()
+			if h.mu.closed {
+				h.mu.Unlock()
+				h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, returned)
+			} else {
+				h.reservation.Add(returned)
+				h.mu.Unlock()
+			}
+		}
 		return err
 	}
 
@@ -394,10 +415,12 @@ func (h *SQLCPUHandle) RegisterGoroutine() *GoroutineCPUHandle {
 
 // setClosed marks the handle as closed and returns any remaining reservation
 // tokens to the granter. It sets mu.closed=true under mu.Lock() to serialize
-// with the slow path's post-Admit commit step, then atomically swaps the
-// reservation to 0 and returns any tokens. This is non-blocking: if a
-// goroutine is in the slow path (blocked in Admit), it will see mu.closed
-// when Admit returns and return its buffer tokens via AdmittedSQLWorkDone.
+// with all token-return paths (post-Admit commit, ctx cancellation, Admit
+// error), then atomically swaps the reservation to 0 and returns any tokens.
+// This is non-blocking: if a goroutine is in the slow path, it will see
+// mu.closed and return its tokens via AdmittedSQLWorkDone rather than adding
+// them to reservation. Invariant: after setClosed returns, no tokens are
+// stranded in reservation.
 func (h *SQLCPUHandle) setClosed() {
 	h.mu.Lock()
 	h.mu.closed = true
