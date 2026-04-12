@@ -16,7 +16,6 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/ctxutil"
 	"github.com/cockroachdb/cockroach/pkg/util/grunning"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
-	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/petermattis/goid"
 )
 
@@ -139,14 +138,13 @@ type SQLCPUHandle struct {
 	// while holding the turn or under mu.
 	reservation atomic.Int64
 
-	// lastRefillTime is the wall-clock time of the last Admit call,
-	// used to compute the interval for adaptive sizing. Accessed only
-	// while holding the turn.
-	lastRefillTime time.Time
-	// lastHeuristic is the adaptive buffer size (in nanoseconds) to
-	// request beyond the consumed CPU on the next Admit call. Accessed
-	// only while holding the turn.
-	lastHeuristic int64
+	// bufferNanos is the adaptive buffer (in nanoseconds) to request
+	// beyond the consumed CPU on the next slow-path Admit call. The
+	// buffer portion goes into reservation for future fast-path CAS
+	// deductions. Starts at 0 (first call requests exactly what's
+	// needed), then grows exponentially up to maxBufferNanos.
+	// Accessed only while holding the turn.
+	bufferNanos int64
 
 	mu struct {
 		syncutil.Mutex
@@ -202,51 +200,35 @@ func (h *SQLCPUHandle) tryDeductReservation(diffNanos int64) int64 {
 }
 
 const (
-	// refillGrowThreshold is the wall-clock duration below which we
-	// consider refills too frequent and double the heuristic. Below this
-	// threshold, contention on the WorkQueue mutex is the primary concern.
-	refillGrowThreshold = time.Millisecond
-	// refillDecayThreshold is the wall-clock duration above which we
-	// consider the heuristic too large and halve it. Above this threshold,
-	// overcounting in tenant.used is the primary concern. Between
-	// refillGrowThreshold and refillDecayThreshold is the acceptable
-	// deadband where the heuristic is stable.
-	refillDecayThreshold = 5 * time.Millisecond
-	// maxRefillHeuristic caps the buffer portion of the heuristic to
-	// bound overcounting. 10ms of CPU buffer per handle.
-	maxRefillHeuristic = int64(10 * time.Millisecond)
+	// maxBufferNanos caps the buffer portion of the heuristic to bound
+	// overcounting in tenant.used. 1ms of CPU buffer per handle is
+	// sufficient — even kv95 requests consume well under 1ms of CPU,
+	// so calling into the WorkQueue every 1ms of CPU time is fine.
+	maxBufferNanos = int64(time.Millisecond)
 )
 
 // refillHeuristic returns the total RequestedCount to pass to Admit:
 // the consumed CPU (diffNanos) plus an adaptive buffer for future
-// fast-path CAS deductions. The buffer (lastHeuristic) is adjusted
-// based on the interval between Admit calls: doubled when calls are too
-// frequent (< 1ms), halved when too infrequent (> 5ms), and stable
-// otherwise. The buffer is capped at maxRefillHeuristic. The return
-// value is always >= diffNanos, so (resp.requestedCount - diffNanos) is
-// non-negative.
+// fast-path CAS deductions. The buffer grows exponentially from 0 to
+// maxBufferNanos based on CPU consumed (not wall-time intervals).
 //
-// Must be called while holding the turn (after reading from admitTurn).
+// On the first call, exactly diffNanos is requested (no buffer). Each
+// subsequent call requests diffNanos + bufferNanos, then doubles the
+// buffer for next time. This amortizes admission overhead over larger
+// chunks of CPU work. The return value is always >= diffNanos.
+//
+// Must be called while holding the turn (after writing to admitTurn).
 func (h *SQLCPUHandle) refillHeuristic(diffNanos int64) int64 {
-	now := timeutil.Now()
-	if h.lastHeuristic == 0 {
-		// Bootstrap: seed buffer equal to consumed.
-		h.lastHeuristic = diffNanos
-	} else {
-		elapsed := now.Sub(h.lastRefillTime)
-		if elapsed < refillGrowThreshold {
-			// Came back too soon — double to reduce call frequency.
-			h.lastHeuristic *= 2
-		} else if elapsed > refillDecayThreshold {
-			// Buffer lasted too long — halve to reduce overcounting.
-			h.lastHeuristic /= 2
-		}
-		// else: in [1ms, 5ms] deadband — no change.
+	if h.bufferNanos == 0 {
+		// First call: request exactly what's needed. Seed the buffer
+		// for future calls so the next slow-path entry gets a buffer.
+		h.bufferNanos = min(diffNanos, maxBufferNanos)
+		return diffNanos
 	}
-	// Cap buffer at maxRefillHeuristic.
-	h.lastHeuristic = min(h.lastHeuristic, maxRefillHeuristic)
-	h.lastRefillTime = now
-	return diffNanos + h.lastHeuristic
+	total := diffNanos + h.bufferNanos
+	// Grow exponentially for next time, capped at maxBufferNanos.
+	h.bufferNanos = min(h.bufferNanos*2, maxBufferNanos)
+	return total
 }
 
 // constructWorkInfo returns a copy of the handle's WorkInfo with the given

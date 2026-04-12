@@ -1,104 +1,100 @@
-# Bootstrap: first call seeds buffer equal to consumed.
+# Bootstrap: first call requests exactly what's needed (no buffer).
+# bufferNanos seeded to min(100µs, 1ms) = 100µs for next time.
 refill diff=100µs
 ----
-buffer: 100µs, total: 200µs
+buffer: 100µs, total: 100µs
 
-# Grow: elapsed < 1ms (immediate successive call) → double buffer.
+# Second call: requests diff + buffer. bufferNanos doubled to 200µs.
 refill diff=100µs
 ----
-buffer: 200µs, total: 300µs
+buffer: 200µs, total: 200µs
 
-# Grow again.
+# Third call: buffer=200µs. bufferNanos doubled to 400µs.
 refill diff=100µs
 ----
-buffer: 400µs, total: 500µs
+buffer: 400µs, total: 300µs
 
-# Decay: set age > 5ms → halve buffer.
-set-age age=10ms
-----
-ok
-
+# Fourth call: buffer=400µs. bufferNanos doubled to 800µs.
 refill diff=100µs
 ----
-buffer: 200µs, total: 300µs
+buffer: 800µs, total: 500µs
 
-# Deadband: set age in [1ms, 5ms] → no change.
-set-age age=3ms
-----
-ok
-
+# Converge to cap (maxBufferNanos = 1ms).
 refill diff=100µs
 ----
-buffer: 200µs, total: 300µs
+buffer: 1ms, total: 900µs
 
-# Ceiling: grow from 8ms → 16ms, capped at 10ms.
-set-buffer val=8ms
-----
-ok
-
+# At cap: buffer stays at 1ms.
 refill diff=100µs
 ----
-buffer: 10ms, total: 10.1ms
+buffer: 1ms, total: 1.1ms
 
-# Large diff: buffer capped at maxRefillHeuristic, total still >= diff.
+# Large diff: buffer still capped, total = diff + buffer.
+refill diff=50ms
+----
+buffer: 1ms, total: 51ms
+
+# Reset buffer to 0 to test re-bootstrap.
 set-buffer val=0
 ----
 ok
 
-refill diff=50ms
+# Re-bootstrap: first call after reset requests exactly what's needed.
+refill diff=200µs
 ----
-buffer: 10ms, total: 60ms
+buffer: 200µs, total: 200µs
 
-# Decay to zero re-bootstraps: buffer=1ns halved to 0, next call bootstraps.
-set-buffer val=1ns
+# Growth resumes from seeded value.
+refill diff=200µs
 ----
-ok
-
-set-age age=10ms
-----
-ok
+buffer: 400µs, total: 400µs
 
 refill diff=200µs
 ----
-buffer: 0s, total: 200µs
+buffer: 800µs, total: 600µs
 
 refill diff=200µs
 ----
-buffer: 200µs, total: 400µs
+buffer: 1ms, total: 1ms
 
-# Repeated grow converges to cap.
-set-buffer val=100µs
+# Small buffer, small diff: exponential growth from small values.
+set-buffer val=10µs
 ----
 ok
 
 refill diff=50µs
 ----
-buffer: 200µs, total: 250µs
+buffer: 20µs, total: 60µs
 
 refill diff=50µs
 ----
-buffer: 400µs, total: 450µs
+buffer: 40µs, total: 70µs
 
 refill diff=50µs
 ----
-buffer: 800µs, total: 850µs
+buffer: 80µs, total: 90µs
 
 refill diff=50µs
 ----
-buffer: 1.6ms, total: 1.65ms
+buffer: 160µs, total: 130µs
 
 refill diff=50µs
 ----
-buffer: 3.2ms, total: 3.25ms
+buffer: 320µs, total: 210µs
 
 refill diff=50µs
 ----
-buffer: 6.4ms, total: 6.45ms
+buffer: 640µs, total: 370µs
 
 refill diff=50µs
 ----
-buffer: 10ms, total: 10.05ms
+buffer: 1ms, total: 690µs
+
+# At cap, stays at cap.
+refill diff=50µs
+----
+buffer: 1ms, total: 1.05ms
 
 refill diff=50µs
 ----
-buffer: 10ms, total: 10.05ms
+buffer: 1ms, total: 1.05ms

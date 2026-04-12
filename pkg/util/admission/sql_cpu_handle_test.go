@@ -40,17 +40,23 @@ func TestSQLCPUHandleFastPath(t *testing.T) {
 	h := newSQLCPUAdmissionHandle(
 		WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
 
-	// First call exhausts reservation (0) and goes through slow path,
-	// which calls Admit and refills reservation with heuristic buffer.
 	tg.mu.Lock()
 	tg.mu.returnValueFromTryGet = true
 	tg.mu.Unlock()
-	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
 
-	// Reservation should now be diffNanos (heuristic=2*diff, minus diff consumed).
+	// First call: reservation=0, slow path. Bootstrap: requests exactly
+	// 1ms (no buffer). bufferNanos seeded to 1ms for next time.
+	// Reservation = 1ms - 1ms = 0.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+	require.Equal(t, int64(0), h.reservation.Load(),
+		"first call should request exactly what's needed, no buffer")
+
+	// Second call: reservation=0, slow path again. Requests 1ms + 1ms
+	// buffer = 2ms. Reservation = 2ms - 1ms = 1ms.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
 	reservationBefore := h.reservation.Load()
 	require.Equal(t, int64(1*time.Millisecond), reservationBefore,
-		"reservation should be heuristic(2*diff) - diff = diff")
+		"second call should add buffer to reservation")
 
 	// Second call should deduct via fast path CAS without calling Admit.
 	// Clear the testGranter buffer to verify no new Admit call is made.
@@ -64,9 +70,9 @@ func TestSQLCPUHandleFastPath(t *testing.T) {
 	output := tg.buf.stringAndReset()
 	require.Empty(t, output, "fast path should not call Admit")
 
-	// CPU should still be reported.
+	// CPU should still be reported (1ms + 1ms + 500us).
 	gw, _ := provider.GetCumulativeSQLCPUNanos()
-	require.Equal(t, int64(1*time.Millisecond+500*time.Microsecond), gw)
+	require.Equal(t, int64(2*time.Millisecond+500*time.Microsecond), gw)
 }
 
 // TestSQLCPUHandleSlowPath verifies that when reservation is exhausted,
@@ -88,20 +94,16 @@ func TestSQLCPUHandleSlowPath(t *testing.T) {
 	tg.mu.returnValueFromTryGet = true
 	tg.mu.Unlock()
 
-	// First call: reservation is 0, so slow path is taken.
+	// First call: reservation=0, slow path. Bootstrap: requests exactly
+	// 2ms, bufferNanos seeded to min(2ms, 1ms) = 1ms. Reservation = 0.
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 2*time.Millisecond, false))
+	require.Equal(t, int64(0), h.reservation.Load())
 
-	// heuristic = 2 * 2ms = 4ms requested. 2ms consumed, so reservation = 2ms.
-	require.Equal(t, int64(2*time.Millisecond), h.reservation.Load())
-
-	// Request more than reservation: partial deduction grabs 2ms from
-	// reservation, remaining 3ms goes through slow path.
+	// Second call: diff=5ms, reservation=0. Slow path: requests
+	// 5ms + 1ms buffer = 6ms. bufferNanos doubled to min(2ms, 1ms) = 1ms.
+	// Reservation = 6ms - 5ms = 1ms.
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 5*time.Millisecond, false))
-
-	// 5ms diff, reservation=2ms. Fast path grabs 2ms (partial), remaining=3ms.
-	// Slow path: elapsed < 1ms (grow), buffer = 2ms * 2 = 4ms.
-	// Total = 3ms + 4ms = 7ms. Reservation = 0 + (7ms - 3ms) = 4ms.
-	require.Equal(t, int64(4*time.Millisecond), h.reservation.Load())
+	require.Equal(t, int64(1*time.Millisecond), h.reservation.Load())
 }
 
 // TestSQLCPUHandlePartialDeduction verifies that when reservation has fewer
@@ -125,11 +127,10 @@ func TestSQLCPUHandlePartialDeduction(t *testing.T) {
 	tg.mu.returnValueFromTryGet = true
 	tg.mu.Unlock()
 
-	// Seed the reservation with a known amount. First call: diff=10ms,
-	// bootstrap heuristic=10ms (capped at maxRefillHeuristic=10ms),
-	// total=20ms. Reservation = 20ms - 10ms = 10ms.
-	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Millisecond, false))
-	require.Equal(t, int64(10*time.Millisecond), h.reservation.Load())
+	// Seed the reservation. First call: diff=1ms, bootstrap requests
+	// exactly 1ms. bufferNanos=1ms. Reservation=0.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+	require.Equal(t, int64(0), h.reservation.Load())
 
 	// Set reservation to exactly 3ms to test partial deduction.
 	h.reservation.Store(int64(3 * time.Millisecond))
@@ -151,9 +152,9 @@ func TestSQLCPUHandlePartialDeduction(t *testing.T) {
 	require.Contains(t, output, "tryGet",
 		"slow path should have called Admit for the remaining amount")
 
-	// All CPU should be reported.
+	// All CPU should be reported (1ms seed + 10ms).
 	gw, _ := provider.GetCumulativeSQLCPUNanos()
-	require.Equal(t, int64(20*time.Millisecond), gw)
+	require.Equal(t, int64(11*time.Millisecond), gw)
 }
 
 // TestSQLCPUHandleCloseDoesNotBlockOnAdmit verifies that Close returns
@@ -177,16 +178,15 @@ func TestSQLCPUHandleCloseDoesNotBlockOnAdmit(t *testing.T) {
 	h := newSQLCPUAdmissionHandle(
 		WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
 
-	// Seed reservation.
+	// Initialize internal state via a slow-path call.
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
-	require.Greater(t, h.reservation.Load(), int64(0))
 
 	// Now make tryGet return false so the next slow-path Admit blocks.
 	tg.mu.Lock()
 	tg.mu.returnValueFromTryGet = false
 	tg.mu.Unlock()
 
-	// Drain reservation so the next call goes to the slow path.
+	// Ensure reservation is 0 so the next call goes to the slow path.
 	h.reservation.Store(0)
 
 	// Start a goroutine that will block in Admit (holding the turn).
@@ -248,7 +248,11 @@ func TestSQLCPUHandleCloseReturnsTokens(t *testing.T) {
 	tg.mu.returnValueFromTryGet = true
 	tg.mu.Unlock()
 
-	// Acquire tokens so reservation has a buffer.
+	// Acquire tokens so reservation has a buffer. First call: bootstrap,
+	// requests exactly 1ms (no buffer). Second call: requests 1ms + 1ms
+	// buffer = 2ms, reservation = 2ms - 1ms = 1ms.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+	require.Equal(t, int64(0), h.reservation.Load())
 	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
 	remaining := h.reservation.Load()
 	require.Equal(t, int64(1*time.Millisecond), remaining)
@@ -415,16 +419,15 @@ func TestSQLCPUHandleConcurrentFastPath(t *testing.T) {
 	h := newSQLCPUAdmissionHandle(
 		WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
 
-	// Seed the reservation by calling the slow path. With 50ms diff,
-	// buffer = min(50ms, maxRefillHeuristic=10ms) = 10ms. Total =
-	// 50ms + 10ms = 60ms. Reservation = 60ms - 50ms = 10ms.
-	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 50*time.Millisecond, false))
-	require.Equal(t, int64(10*time.Millisecond), h.reservation.Load())
+	// Seed reservation via the slow path, then set to a known value.
+	require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+	h.reservation.Store(int64(10 * time.Millisecond))
 
 	// Clear the buffer so we can check if any slow-path Admit calls happen.
 	_ = tg.buf.stringAndReset()
 
 	// Launch N goroutines that each deduct a small amount via fast path.
+	// Total = 20 * 100us = 2ms, well within the 10ms reservation.
 	const numGoroutines = 20
 	const perGoroutine = 100 * time.Microsecond // 100us each = 2ms total
 	var wg sync.WaitGroup
@@ -588,8 +591,10 @@ func TestSQLCPUHandleConcurrentCASAndSwap(t *testing.T) {
 		h := newSQLCPUAdmissionHandle(
 			WorkInfo{TenantID: tenantID}, true /* atGateway */, provider, q)
 
-		// Seed a large reservation.
-		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 10*time.Millisecond, false))
+		// Seed a large reservation. Use the slow path to initialize
+		// internal state, then set reservation to a known value.
+		require.NoError(t, h.reportAndAcquireConsumedCPU(ctx, 1*time.Millisecond, false))
+		h.reservation.Store(int64(10 * time.Millisecond))
 
 		var wg sync.WaitGroup
 		var casDeducted atomic.Int64
@@ -795,7 +800,7 @@ func TestRefillHeuristic(t *testing.T) {
 	h := &SQLCPUHandle{}
 	callHeuristic := func(diffNanos int64) (buffer, total int64) {
 		total = h.refillHeuristic(diffNanos)
-		buffer = h.lastHeuristic
+		buffer = h.bufferNanos
 		return buffer, total
 	}
 
@@ -811,20 +816,12 @@ func TestRefillHeuristic(t *testing.T) {
 				return fmt.Sprintf("buffer: %s, total: %s\n",
 					time.Duration(buffer), time.Duration(total))
 
-			case "set-age":
-				var ageStr string
-				d.ScanArgs(t, "age", &ageStr)
-				age, err := time.ParseDuration(ageStr)
-				require.NoError(t, err)
-				h.lastRefillTime = timeutil.Now().Add(-age)
-				return "ok\n"
-
 			case "set-buffer":
 				var valStr string
 				d.ScanArgs(t, "val", &valStr)
 				val, err := time.ParseDuration(valStr)
 				require.NoError(t, err)
-				h.lastHeuristic = val.Nanoseconds()
+				h.bufferNanos = val.Nanoseconds()
 				return "ok\n"
 
 			default:
