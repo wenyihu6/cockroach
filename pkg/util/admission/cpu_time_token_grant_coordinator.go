@@ -118,6 +118,26 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setTenantWeights(weights)
 }
 
+// ResourceGroupConfig holds per-resource-group configuration.
+type ResourceGroupConfig struct {
+	Weight         uint32
+	BurstLimitFrac float64
+}
+
+// SetResourceGroupConfig sets per-resource-group weights and burst limits.
+// Only meaningful in Resource Manager mode.
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	weights := make(map[uint64]uint32, len(config))
+	burstLimits := make(map[uint64]float64, len(config))
+	for id, cfg := range config {
+		weights[id] = cfg.Weight
+		burstLimits[id] = cfg.BurstLimitFrac
+	}
+	coord.SetTenantWeights(weights)
+	// In RM mode, there's only one queue (tier 0).
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetBurstLimits(burstLimits)
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
@@ -142,23 +162,24 @@ func makeCPUTimeTokenGrantCoordinator(
 	registry *metric.Registry,
 	knobs *TestingKnobs,
 ) *cpuTimeTokenGrantCoordinator {
+	// Always create 2 tiers. In RM mode, tier-1 sits idle (no work
+	// routed, zero refill rates). This enables dynamic mode switching
+	// at runtime without rebuilding queues.
+	initialMode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&settings.SV))
+
 	metrics := makeCPUTimeTokenMetrics()
 	registry.AddMetricStruct(metrics)
 	timeSource := timeutil.DefaultTimeSource{}
 	granter := newCPUTimeTokenGranter(metrics, timeSource)
-	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
-	for tier := 0; tier < int(numResourceTiers); tier++ {
-		childGranters[tier] = cpuTimeTokenChildGranter{
-			tier:   resourceTier(tier),
-			parent: granter,
-		}
-	}
+
 	filler := &cpuTimeTokenFiller{
 		timeSource: timeSource,
 		closeCh:    make(chan struct{}),
 	}
+
 	allocator := &cpuTimeTokenAllocator{
 		granter:  granter,
+		mode:     initialMode,
 		settings: settings,
 		metrics:  metrics,
 	}
@@ -170,6 +191,14 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 	allocator.model = model
 	filler.allocator = allocator
+
+	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
+	for tier := 0; tier < int(numResourceTiers); tier++ {
+		childGranters[tier] = cpuTimeTokenChildGranter{
+			tier:   resourceTier(tier),
+			parent: granter,
+		}
+	}
 
 	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
@@ -186,6 +215,11 @@ func makeCPUTimeTokenGrantCoordinator(
 			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, wqOpts)
 		granter.requester[tier] = requesters[tier]
 		allocator.queues[tier] = requesters[tier].(*WorkQueue)
+	}
+	// In RM mode, all tenants can burst by default (frac=1.0).
+	// Serverless mode uses 0.0 which is the WorkQueue zero-value.
+	if initialMode == resourceManagerMode {
+		allocator.queues[0].setDefaultBurstLimitFrac(1.0)
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
