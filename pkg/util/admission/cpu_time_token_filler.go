@@ -461,6 +461,7 @@ func (a *cpuTimeTokenAllocator) refill(
 // to enable unit testing.
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
+	setDefaultBurstLimitFrac(frac float64)
 }
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.

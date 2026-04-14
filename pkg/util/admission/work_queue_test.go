@@ -430,9 +430,14 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				opts.disableEpochClosingGoroutine = true
 				opts.disableGCTenantsAndResetUsed = true
 				opts.mode = usesCPUTimeTokens
+				opts.defaultBurstLimitFrac = 1.0
 				cpuMetrics := makeCPUTimeTokenMetrics()
-				opts.admittedCountPerTenant = cpuMetrics.AdmittedCountPerTenant
-				opts.waitTimeNanosPerTenant = cpuMetrics.WaitTimeNanosPerTenant
+				opts.perTenantAggMetrics = &tenantAggMetrics{
+					admittedCount:  cpuMetrics.AdmittedCountPerTenant[0],
+					waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[0],
+					tokensUsed:     cpuMetrics.TokensUsedPerTenant[0],
+					tokensReturned: cpuMetrics.TokensReturnedPerTenant[0],
+				}
 				q = makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
 					workKind, tg, st, metrics, opts).(*WorkQueue)
 				q.knobs.DisableCPUTimeTokenEstimation = true
@@ -547,6 +552,26 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				q.gcTenantsResetUsedAndUpdateEstimators()
 				return ""
 
+			case "set-burst-limits":
+				var limitsStr string
+				d.ScanArgs(t, "limits", &limitsStr)
+				fields := strings.FieldsFunc(limitsStr, func(r rune) bool {
+					return r == ':' || r == ',' || unicode.IsSpace(r)
+				})
+				if len(fields)%2 != 0 {
+					return "id and frac are not paired"
+				}
+				limits := make(map[uint64]float64)
+				for i := 0; i < len(fields); i += 2 {
+					id, err := strconv.Atoi(fields[i])
+					require.NoError(t, err)
+					frac, err := strconv.ParseFloat(fields[i+1], 64)
+					require.NoError(t, err)
+					limits[uint64(id)] = frac
+				}
+				q.SetBurstLimits(limits)
+				return ""
+
 			default:
 				return fmt.Sprintf("unknown command: %s", d.Cmd)
 			}
@@ -584,9 +609,14 @@ func TestCPUTimeTokenEstimation(t *testing.T) {
 	tg.mu.returnValueFromTryGet = true
 	opts := makeWorkQueueOptions(KVWork)
 	opts.mode = usesCPUTimeTokens
+	opts.defaultBurstLimitFrac = 1.0
 	cpuMetrics := makeCPUTimeTokenMetrics()
-	opts.admittedCountPerTenant = cpuMetrics.AdmittedCountPerTenant
-	opts.waitTimeNanosPerTenant = cpuMetrics.WaitTimeNanosPerTenant
+	opts.perTenantAggMetrics = &tenantAggMetrics{
+		admittedCount:  cpuMetrics.AdmittedCountPerTenant[0],
+		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[0],
+		tokensUsed:     cpuMetrics.TokensUsedPerTenant[0],
+		tokensReturned: cpuMetrics.TokensReturnedPerTenant[0],
+	}
 	timeSource = timeutil.NewManualTime(initialTime)
 	opts.timeSource = timeSource
 	opts.disableEpochClosingGoroutine = true

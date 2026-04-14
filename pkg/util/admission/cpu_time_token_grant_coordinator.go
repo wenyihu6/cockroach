@@ -176,8 +176,12 @@ func makeCPUTimeTokenGrantCoordinator(
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		wqOpts := makeWorkQueueOptions(KVWork)
 		wqOpts.mode = usesCPUTimeTokens
-		wqOpts.admittedCountPerTenant = metrics.AdmittedCountPerTenant
-		wqOpts.waitTimeNanosPerTenant = metrics.WaitTimeNanosPerTenant
+		wqOpts.perTenantAggMetrics = &tenantAggMetrics{
+			admittedCount:  metrics.AdmittedCountPerTenant[tier],
+			waitTimeNanos:  metrics.WaitTimeNanosPerTenant[tier],
+			tokensUsed:     metrics.TokensUsedPerTenant[tier],
+			tokensReturned: metrics.TokensReturnedPerTenant[tier],
+		}
 		requesters[tier] = makeWorkQueue(
 			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, wqOpts)
 		granter.requester[tier] = requesters[tier]
