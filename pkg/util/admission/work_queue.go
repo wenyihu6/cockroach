@@ -287,11 +287,8 @@ type WorkQueue struct {
 		tenantHeap tenantHeap
 		// All resource groups, including those without waiting work.
 		// Keyed by resource group ID. Periodically cleaned.
-		tenants map[uint64]*tenantInfo
-		// tenantToResourceGroup maps tenantID to resource group ID.
-		// nil means default mapping (tenantID == resourceGroupID).
-		tenantToResourceGroup map[uint64]uint64
-		tenantWeights         struct {
+		tenants       map[uint64]*tenantInfo
+		tenantWeights struct {
 			mu syncutil.Mutex
 			// active refers to the currently active weights. mu is held for updates
 			// to the inactive weights, to prevent concurrent updates. After
@@ -311,17 +308,15 @@ type WorkQueue struct {
 		maxQueueDelayToSwitchToLifo time.Duration
 		// Only used if mode == usesCPUTimeTokens.
 		defaultCPUTimeTokenEstimator cpuTimeTokenEstimator
-		// burstBucketCapacity is the base capacity for burst buckets,
-		// representing the 100% CPU rate (normalized by dividing out
-		// canBurstTarget in the allocator). Per-tenant capacity is derived
-		// by scaling this by burstLimitFrac. Updated by refillBurstBuckets.
-		// Also used as the initial capacity for newly created tenants
-		// (buckets init full). Only used if mode == usesCPUTimeTokens.
+		// burstBucketCapacity is the base capacity for burst buckets.
+		// Updated by refillBurstBuckets. Also used as the initial capacity
+		// for newly created tenants (buckets init full). Only used if
+		// mode == usesCPUTimeTokens.
 		burstBucketCapacity int64
-		// burstLimits maps resource group ID to a per-group burst limit
-		// fraction. See cpuTimeBurstBucket.burstLimitFrac for semantics.
-		// Only used if mode == usesCPUTimeTokens.
-		burstLimits map[uint64]float64
+		// fullyUtilizeGroups maps resource group ID to whether that group
+		// always qualifies for burst (FULLY_UTILIZE). Only used if
+		// mode == usesCPUTimeTokens.
+		fullyUtilizeGroups map[uint64]bool
 		// overrideAllToBypassAdmission, when true, causes all work to bypass
 		// admission control. Used by CPU time token AC.
 		overrideAllToBypassAdmission bool
@@ -333,12 +328,16 @@ type WorkQueue struct {
 	// perTenantAggMetrics holds the parent AggCounters for per-tenant
 	// metrics. Only set when mode == usesCPUTimeTokens.
 	perTenantAggMetrics *tenantAggMetrics
-	// defaultBurstLimitFrac is the burst limit fraction for tenants not
-	// explicitly configured via SetBurstLimits.
-	//   - Serverless: 0.0 (disables FULLY_UTILIZE short-circuit, matching
-	//     master's 90%-fullness burst check)
-	//   - RM: 1.0 (unconfigured groups are FULLY_UTILIZE by default)
-	defaultBurstLimitFrac float64
+	// defaultFullyUtilize is the default fullyUtilize value for tenants
+	// not explicitly configured via SetFullyUtilizeGroups.
+	//   - Serverless: false (uses 90%-fullness burst check)
+	//   - RM: true (unconfigured groups are FULLY_UTILIZE by default)
+	defaultFullyUtilize bool
+	// usePriorityBasedGroups, when true, derives the resource group ID
+	// from WorkInfo.Priority instead of WorkInfo.TenantID. Used in
+	// Resource Manager mode to split work into foreground (priority >=
+	// NormalPri) and background (priority < NormalPri) groups.
+	usePriorityBasedGroups bool
 
 	timeSource timeutil.TimeSource
 	knobs      *TestingKnobs
@@ -362,12 +361,12 @@ type workQueueOptions struct {
 	usesAsyncAdmit bool
 	// Per-tenant admission metrics. Only set when mode == usesCPUTimeTokens.
 	perTenantAggMetrics *tenantAggMetrics
-	// defaultBurstLimitFrac is the default burst limit fraction for
-	// tenants not explicitly configured via SetBurstLimits.
-	//   - Serverless: 0.0 (preserves master's 90%-fullness burst check)
-	//   - RM: 1.0 (unconfigured groups are FULLY_UTILIZE by default)
+	// defaultFullyUtilize is the default fullyUtilize value for tenants
+	// not explicitly configured via SetFullyUtilizeGroups.
+	//   - Serverless: false (uses 90%-fullness burst check)
+	//   - RM: true (unconfigured groups are FULLY_UTILIZE by default)
 	// Only meaningful when mode == usesCPUTimeTokens.
-	defaultBurstLimitFrac float64
+	defaultFullyUtilize bool
 
 	// timeSource can be set to non-nil for tests. If nil,
 	// the timeutil.DefaultTimeSource will be used.
@@ -449,7 +448,7 @@ func initWorkQueue(
 	q.metrics = metrics
 	q.stopCh = stopCh
 	q.perTenantAggMetrics = opts.perTenantAggMetrics
-	q.defaultBurstLimitFrac = opts.defaultBurstLimitFrac
+	q.defaultFullyUtilize = opts.defaultFullyUtilize
 	q.timeSource = timeSource
 	q.knobs = knobs
 	q.mu.defaultCPUTimeTokenEstimator = cpuTimeTokenEstimator{}
@@ -665,6 +664,11 @@ type AdmitResponse struct {
 	Enabled bool
 
 	tenantID roachpb.TenantID
+	// resourceGroupID is the resource group ID under which this work
+	// was admitted. Used by AdmittedWorkDone to look up the correct
+	// tenantInfo entry (which is keyed by resource group ID, not
+	// tenant ID).
+	resourceGroupID uint64
 	// requestedCount is the number of slots or tokens taken at Admit time.
 	// It is useful to return, so that in AdmittedWorkDone, we can adjust
 	// the deduction, in cases where we have more information, such as in
@@ -712,17 +716,22 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// When changing the code, be careful in making sure the mutex is properly
 	// unlocked on all code paths.
 	q.mu.Lock()
-	rgID := q.getResourceGroupIDLocked(tenantID)
+	var rgID uint64
+	if q.usePriorityBasedGroups {
+		rgID = priorityToResourceGroup(info.Priority)
+	} else {
+		rgID = tenantID
+	}
 	tenant, ok := q.mu.tenants[rgID]
 	if !ok {
 		// See comment below about CPU time token estimation. If no tenantInfo
 		// struct exists for a resource group, then there is no
 		// cpuTimeTokenEstimator dedicated to it yet. We init the estimator
 		// using a global estimator that sees workload across all groups.
-		burstLimitFrac := q.getBurstLimitFracLocked(rgID)
+		fullyUtilize := q.getFullyUtilizeLocked(rgID)
 		tenant = newTenantInfo(rgID, q.getTenantWeightLocked(rgID),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
-			q.mu.burstBucketCapacity, burstLimitFrac,
+			q.mu.burstBucketCapacity, fullyUtilize,
 			q.perTenantAggMetrics)
 		q.mu.tenants[rgID] = tenant
 	}
@@ -737,8 +746,9 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		info.RequestedCount = tenant.cpuTimeTokenEstimator.estimateTokensToBeUsed()
 	}
 	admitResponse := AdmitResponse{
-		tenantID:       info.TenantID,
-		requestedCount: info.RequestedCount,
+		tenantID:        info.TenantID,
+		resourceGroupID: rgID,
+		requestedCount:  info.RequestedCount,
 	}
 
 	if info.ReplicatedWorkInfo.Enabled {
@@ -853,13 +863,17 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		q.mu.Lock()
 		// The resource group entry could have been removed. See the comment
 		// where the tenantInfo struct is declared.
-		rgID = q.getResourceGroupIDLocked(tenantID)
+		if q.usePriorityBasedGroups {
+			rgID = priorityToResourceGroup(info.Priority)
+		} else {
+			rgID = tenantID
+		}
 		tenant, ok = q.mu.tenants[rgID]
 		if !ok {
-			burstLimitFrac := q.getBurstLimitFracLocked(rgID)
+			fullyUtilize := q.getFullyUtilizeLocked(rgID)
 			tenant = newTenantInfo(rgID, q.getTenantWeightLocked(rgID),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
-				q.mu.burstBucketCapacity, burstLimitFrac,
+				q.mu.burstBucketCapacity, fullyUtilize,
 				q.perTenantAggMetrics)
 			q.mu.tenants[rgID] = tenant
 		}
@@ -1061,7 +1075,7 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 		// NB: additionalUsed can be negative here (in case the initial estimate was
 		// too pessimistic).
 		if additionalUsed != 0 {
-			tenant, ok := q.mu.tenants[resp.tenantID.ToUint64()]
+			tenant, ok := q.mu.tenants[resp.resourceGroupID]
 			if ok {
 				q.adjustTenantUsedLocked(tenant, additionalUsed)
 			}
@@ -1076,7 +1090,7 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 		// in this code path, that is, at admission time.
 		if q.mode == usesCPUTimeTokens {
 			q.mu.defaultCPUTimeTokenEstimator.workDone(cpuTime.Nanoseconds())
-			tenant, ok := q.mu.tenants[resp.tenantID.ToUint64()]
+			tenant, ok := q.mu.tenants[resp.resourceGroupID]
 			// If the tenant struct doesn't exist, it has been GCed due to a lack of
 			// activity. In this case, we do not leverage the grunning measurement
 			// for future estimates.
@@ -1233,8 +1247,7 @@ func (q *WorkQueue) gcTenantsResetUsedAndUpdateEstimators() {
 func (q *WorkQueue) adjustTenantUsed(tenantID roachpb.TenantID, delta int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	rgID := q.getResourceGroupIDLocked(tenantID.ToUint64())
-	tenant, ok := q.mu.tenants[rgID]
+	tenant, ok := q.mu.tenants[tenantID.ToUint64()]
 	if !ok {
 		return
 	}
@@ -1271,35 +1284,54 @@ func (q *WorkQueue) adjustTenantUsedLocked(tenant *tenantInfo, delta int64) {
 	}
 }
 
-// refillBurstBuckets adds tokens to all resource group burst buckets
-// and updates their capacity. This is called by cpuTimeTokenAllocator
-// periodically (every 1ms). toAdd and capacity represent the 100% CPU
-// rate (normalized by dividing out canBurstTarget in the allocator).
-// These are scaled per-group by burstLimitFrac.
+// refillBurstBuckets adds tokens to all tenant burst buckets and updates
+// their capacity. This is called by serverlessStrategy.refillBurst
+// periodically (every 1ms). toAdd and capacity are passed uniformly to
+// all tenants with no per-tenant scaling.
 //
-// The per-group scaling ensures that each resource group's burst bucket
-// break-even point (where refill = drain) corresponds to their CPU_MIN
-// fraction of node CPU. For example, a group with burstLimitFrac=0.1
-// (CPU_MIN=10%) gets 10% of the 100% CPU refill rate, so its burst
-// bucket drains when the group exceeds ~10% of node CPU.
-//
-// If a group's burst qualification changes as a result of the refill,
-// the group's position in the tenantHeap is updated to maintain correct
+// If a tenant's burst qualification changes as a result of the refill,
+// the tenant's position in the tenantHeap is updated to maintain correct
 // priority ordering.
 func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.mu.burstBucketCapacity = capacity
-	for id, tenant := range q.mu.tenants {
-		burstLimitFrac := q.getBurstLimitFracLocked(id)
-		scaledAdd := int64(float64(toAdd) * burstLimitFrac)
-		scaledCapacity := int64(float64(capacity) * burstLimitFrac)
+	for _, tenant := range q.mu.tenants {
 		prevBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
-		tenant.cpuTimeBurstBucket.refill(scaledAdd, scaledCapacity)
+		tenant.cpuTimeBurstBucket.refill(toAdd, capacity)
 		curBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
 		if prevBurstQual != curBurstQual && isInTenantHeap(tenant) {
 			q.mu.tenantHeap.fix(tenant)
 		}
+	}
+}
+
+// refillBurstBucketForGroup adds tokens to a specific resource group's
+// burst bucket and updates its capacity. This is called by
+// rmStrategy.refillBurst with pre-scaled per-group amounts. For example,
+// a group with CPU_MIN=10% gets toAdd and capacity equal to 10% of the
+// 100% CPU rate, so its burst bucket breaks even when the group uses
+// ~10% of node CPU.
+//
+// If the group's burst qualification changes, its position in the
+// tenantHeap is updated.
+func (q *WorkQueue) refillBurstBucketForGroup(rgID uint64, toAdd int64, capacity int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	tenant, ok := q.mu.tenants[rgID]
+	if !ok {
+		return
+	}
+	// Update burstBucketCapacity to the latest value seen. In RM mode,
+	// the last group refilled sets this, which is fine since
+	// burstBucketCapacity is only used as the initial capacity for
+	// newly created tenants and will be overwritten on the next refill.
+	q.mu.burstBucketCapacity = capacity
+	prevBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
+	tenant.cpuTimeBurstBucket.refill(toAdd, capacity)
+	curBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
+	if prevBurstQual != curBurstQual && isInTenantHeap(tenant) {
+		q.mu.tenantHeap.fix(tenant)
 	}
 }
 
@@ -1484,19 +1516,18 @@ func (q *WorkQueue) SetTenantWeights(tenantWeights map[uint64]uint32) {
 	}
 }
 
-// SetBurstLimits sets per-resource-group burst limit fractions, using the
-// provided resource group ID => burstLimitFrac map. Existing groups have
-// their burst buckets updated; new groups will pick up their limit when
-// created.
-func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
+// SetFullyUtilizeGroups sets per-resource-group fullyUtilize flags, using
+// the provided resource group ID => bool map. Existing groups have their
+// burst buckets updated; new groups will pick up their flag when created.
+func (q *WorkQueue) SetFullyUtilizeGroups(groups map[uint64]bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.mu.burstLimits = burstLimits
+	q.mu.fullyUtilizeGroups = groups
 	for id, tenant := range q.mu.tenants {
-		frac := q.getBurstLimitFracLocked(id)
-		if tenant.cpuTimeBurstBucket.burstLimitFrac != frac {
+		fu := q.getFullyUtilizeLocked(id)
+		if tenant.cpuTimeBurstBucket.fullyUtilize != fu {
 			prevQual := tenant.cpuTimeBurstBucket.burstQualification()
-			tenant.cpuTimeBurstBucket.burstLimitFrac = frac
+			tenant.cpuTimeBurstBucket.fullyUtilize = fu
 			curQual := tenant.cpuTimeBurstBucket.burstQualification()
 			if prevQual != curQual && isInTenantHeap(tenant) {
 				q.mu.tenantHeap.fix(tenant)
@@ -1505,53 +1536,58 @@ func (q *WorkQueue) SetBurstLimits(burstLimits map[uint64]float64) {
 	}
 }
 
-// setDefaultBurstLimitFrac dynamically updates the default burst limit
-// fraction for tenants not explicitly configured via SetBurstLimits.
-// Called by the allocator on mode transitions (e.g., Serverless → RM
-// sets 1.0, RM → Serverless sets 0.0).
-func (q *WorkQueue) setDefaultBurstLimitFrac(frac float64) {
+// setDefaultFullyUtilize dynamically updates the default fullyUtilize
+// value for tenants not explicitly configured via SetFullyUtilizeGroups.
+// Called by the allocator on mode transitions (e.g., Serverless sets
+// false, RM sets true).
+func (q *WorkQueue) setDefaultFullyUtilize(fullyUtilize bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	q.defaultBurstLimitFrac = frac
+	q.defaultFullyUtilize = fullyUtilize
 }
 
-// getBurstLimitFracLocked returns the burst limit fraction for the given
-// resource group. If no override exists, returns q.defaultBurstLimitFrac
-// which is set per-queue during construction (0.0 for Serverless, 1.0
-// for Resource Manager).
+// getFullyUtilizeLocked returns the fullyUtilize flag for the given
+// resource group. If no override exists, returns q.defaultFullyUtilize
+// which is set per-queue during construction (false for Serverless,
+// true for Resource Manager).
 //
 // REQUIRES: q.mu is held.
-func (q *WorkQueue) getBurstLimitFracLocked(rgID uint64) float64 {
-	if q.mu.burstLimits != nil {
-		if frac, ok := q.mu.burstLimits[rgID]; ok {
-			return frac
+func (q *WorkQueue) getFullyUtilizeLocked(rgID uint64) bool {
+	if q.mu.fullyUtilizeGroups != nil {
+		if fu, ok := q.mu.fullyUtilizeGroups[rgID]; ok {
+			return fu
 		}
 	}
-	return q.defaultBurstLimitFrac
+	return q.defaultFullyUtilize
 }
 
-// getResourceGroupIDLocked returns the resource group ID for the given
-// tenant. Default: tenantID is its own resource group.
-//
-// REQUIRES: q.mu is held.
-func (q *WorkQueue) getResourceGroupIDLocked(tenantID uint64) uint64 {
-	if q.mu.tenantToResourceGroup != nil {
-		if rgID, ok := q.mu.tenantToResourceGroup[tenantID]; ok {
-			return rgID
-		}
+// Resource group IDs used in Resource Manager mode when
+// usePriorityBasedGroups is true. Work is split into two groups
+// based on WorkInfo.Priority.
+const (
+	// foregroundResourceGroupID is used for work with priority >=
+	// NormalPri (regular user transactions, reads).
+	foregroundResourceGroupID uint64 = 1
+	// backgroundResourceGroupID is used for work with priority <
+	// NormalPri (lower-priority work that isn't routed to elastic
+	// CPU control).
+	backgroundResourceGroupID uint64 = 2
+)
+
+// priorityToResourceGroup maps a WorkPriority to one of the two
+// hardcoded resource groups. Used in Resource Manager mode.
+func priorityToResourceGroup(pri admissionpb.WorkPriority) uint64 {
+	if pri >= admissionpb.NormalPri {
+		return foregroundResourceGroupID
 	}
-	return tenantID
+	return backgroundResourceGroupID
 }
 
-// SetTenantToResourceGroupMapping sets the mapping from tenant IDs to
-// resource group IDs. A nil map means default mapping (each tenant is
-// its own resource group). Multiple tenants can map to the same resource
-// group — their work will share a single burst bucket and compete in
-// the same waitingWorkHeap, ordered by priority then createTime.
-func (q *WorkQueue) SetTenantToResourceGroupMapping(mapping map[uint64]uint64) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.mu.tenantToResourceGroup = mapping
+// setPriorityBasedGroups enables or disables priority-based resource
+// group derivation. When enabled, the resource group ID is derived
+// from WorkInfo.Priority instead of WorkInfo.TenantID.
+func (q *WorkQueue) setPriorityBasedGroups(enabled bool) {
+	q.usePriorityBasedGroups = enabled
 }
 
 // close tells the gc goroutine to stop.
@@ -1701,9 +1737,10 @@ func (ps *priorityStates) getFIFOPriorityThresholdAndReset(
 }
 
 // tenantInfo represents a resource group in the tenantHeap. Despite the
-// name, each entry corresponds to a resource group (which may aggregate
-// multiple tenants via SetTenantToResourceGroupMapping). The id field
-// is the resource group ID.
+// name, each entry corresponds to a resource group. In Serverless mode,
+// the resource group ID is the tenant ID. In RM mode with
+// usePriorityBasedGroups, the resource group ID is derived from the
+// work's priority (see priorityToResourceGroup).
 type tenantInfo struct {
 	id uint64
 	// The weight assigned to the resource group. Must be > 0. For
@@ -1772,9 +1809,7 @@ type tenantInfo struct {
 
 // tenantHeap is a heap of resource groups with waiting work, ordered by
 // burst qualification (canBurst before noBurst) then by
-// used/weight (lower ratio first). Each entry represents a resource
-// group — multiple tenants can map to the same entry via
-// SetTenantToResourceGroupMapping.
+// used/weight (lower ratio first).
 type tenantHeap []*tenantInfo
 
 var _ heap.Interface = (*tenantHeap)(nil)
@@ -1791,7 +1826,7 @@ func newTenantInfo(
 	mode workQueueMode,
 	cpuTimeTokenEstimate int64,
 	burstBucketCapacity int64,
-	burstLimitFrac float64,
+	fullyUtilize bool,
 	aggMetrics *tenantAggMetrics,
 ) *tenantInfo {
 	ti := tenantInfoPool.Get().(*tenantInfo)
@@ -1809,9 +1844,8 @@ func newTenantInfo(
 	// If mode != usesCPUTimeTokens, cpuTimeBurstBucket.burstQualification
 	// always returns noBurst. This effectively disables the
 	// burstQualification functionality.
-	scaledCapacity := int64(float64(burstBucketCapacity) * burstLimitFrac)
 	ti.cpuTimeBurstBucket.init(
-		scaledCapacity, mode != usesCPUTimeTokens /* disable */, burstLimitFrac)
+		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */, fullyUtilize)
 	if aggMetrics != nil {
 		tid := strconv.FormatUint(id, 10)
 		ti.admittedCount = aggMetrics.admittedCount.AddChild(tid)

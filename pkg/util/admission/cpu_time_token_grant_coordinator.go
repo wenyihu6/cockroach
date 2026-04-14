@@ -12,6 +12,7 @@ import (
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"github.com/cockroachdb/cockroach/pkg/util/goschedstats"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -127,22 +128,22 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 
 // ResourceGroupConfig holds per-resource-group configuration.
 type ResourceGroupConfig struct {
-	Weight         uint32
-	BurstLimitFrac float64
+	Weight       uint32
+	FullyUtilize bool
 }
 
-// SetResourceGroupConfig sets per-resource-group weights and burst limits.
-// Only meaningful in Resource Manager mode.
+// SetResourceGroupConfig sets per-resource-group weights and fullyUtilize
+// flags. Only meaningful in Resource Manager mode.
 func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
 	weights := make(map[uint64]uint32, len(config))
-	burstLimits := make(map[uint64]float64, len(config))
+	fullyUtilize := make(map[uint64]bool, len(config))
 	for id, cfg := range config {
 		weights[id] = cfg.Weight
-		burstLimits[id] = cfg.BurstLimitFrac
+		fullyUtilize[id] = cfg.FullyUtilize
 	}
 	coord.SetTenantWeights(weights)
 	// In RM mode, there's only one queue (tier 0).
-	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetBurstLimits(burstLimits)
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetFullyUtilizeGroups(fullyUtilize)
 }
 
 // GetRunnableCountCallback returns a callback of type
@@ -260,6 +261,13 @@ func makeCPUTimeTokenGrantCoordinator(
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue(tier resourceTier) *WorkQueue {
+	if buildutil.CrdbTestBuild {
+		mode := cpuTimeTokenMode(coord.filler.activeMode.Load())
+		if mode == resourceManagerMode && tier != 0 {
+			panic(fmt.Sprintf(
+				"queue[%d] accessed in resource manager mode", tier))
+		}
+	}
 	return coord.queues[tier].(*WorkQueue)
 }
 

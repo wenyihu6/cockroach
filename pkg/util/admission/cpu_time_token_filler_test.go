@@ -110,7 +110,17 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 	}
 }
 
-func (m *testBurstManager) setDefaultBurstLimitFrac(_ float64) {}
+func (m *testBurstManager) refillBurstBucketForGroup(_ uint64, toAdd int64, _ int64) {
+	// Just accumulate across all groups. Per-group capping doesn't
+	// make sense for a single-counter mock.
+	m.tokens += toAdd
+}
+
+func (m *testBurstManager) setDefaultFullyUtilize(_ bool) {}
+
+func (m *testBurstManager) setPriorityBasedGroups(_ bool) {}
+
+func (m *testBurstManager) SetFullyUtilizeGroups(_ map[uint64]bool) {}
 
 func (m *testModel) init() {}
 
@@ -166,7 +176,13 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		settings: st,
 		model:    model,
 		metrics:  metrics,
-		strategy: &rmStrategy{queue: burstMgr},
+		strategy: &rmStrategy{
+			queue: burstMgr,
+			groupBurstFracs: map[uint64]float64{
+				foregroundResourceGroupID: 1.0,
+				backgroundResourceGroupID: 0.25,
+			},
+		},
 	}
 	printBurstMgr = func() string {
 		var b strings.Builder

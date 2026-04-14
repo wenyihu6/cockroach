@@ -25,64 +25,62 @@ import "github.com/cockroachdb/redact"
 //   - Tokens are added periodically via refill(), called by
 //     cpuTimeTokenAllocator.
 //   - Tokens are deducted when work is admitted, etc. via adjust().
-//   - Burst qualification depends on burstLimitFrac (see burstQualification).
+//   - Burst qualification depends on fullyUtilize (see burstQualification).
 //   - The bucket can go negative (down to -capacity/4) to allow recovery.
 //
-// The bucket capacity and refill rate are derived from the 100% CPU rate
-// (canBurstRate / canBurstTarget), scaled per-tenant by burstLimitFrac
-// (= CPU_MIN fraction) in refillBurstBuckets. A tenant with CPU_MIN=10%
-// gets 10% of the 100% CPU rate, so its burst bucket breaks even at
-// exactly 10% CPU usage, regardless of the configured utilization targets.
+// Refill rate and capacity scaling differ by mode:
+//   - Serverless: refillBurstBuckets passes uniform toAdd/capacity to all
+//     tenants (noBurst/4 of that tier's allocation).
+//   - Resource Manager: the strategy pre-scales per-group amounts and calls
+//     refillBurstBucketForGroup with group-specific toAdd/capacity.
 type cpuTimeBurstBucket struct {
 	tokens   int64
 	capacity int64
-	// burstLimitFrac controls burst qualification:
-	//   >= 1.0: always canBurst (FULLY_UTILIZE resource groups)
-	//   < 1.0:  canBurst only when tokens > burstLimitFrac × capacity
-	// Default is workQueueOptions.defaultBurstLimitFrac, which is 0.0
-	// for Serverless (preserves 90%-fullness check) and 1.0 for RM
+	// fullyUtilize controls burst qualification:
+	//   true:  always canBurst (FULLY_UTILIZE resource groups in RM mode)
+	//   false: canBurst only when tokens > 90% of capacity
+	// Default is workQueueOptions.defaultFullyUtilize, which is false
+	// for Serverless (preserves 90%-fullness check) and true for RM
 	// (unconfigured groups are FULLY_UTILIZE).
-	burstLimitFrac float64
+	fullyUtilize bool
 	// disabled is true when mode != usesCPUTimeTokens, causing
 	// burstQualification to always return noBurst. This effectively
 	// disables the burstQualification functionality.
 	disabled bool
 }
 
-func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool, burstLimitFrac float64) {
+func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool, fullyUtilize bool) {
 	// The bucket of a new tenant is inited full. This implies that
 	// a tenant can burst when its work first appears on a KV node.
 	// After <= 1s, the bucket state should track the usage of the
 	// tenant accurately.
 	*m = cpuTimeBurstBucket{
-		tokens:         capacity,
-		capacity:       capacity,
-		burstLimitFrac: burstLimitFrac,
-		disabled:       disabled,
+		tokens:       capacity,
+		capacity:     capacity,
+		fullyUtilize: fullyUtilize,
+		disabled:     disabled,
 	}
 }
 
 // burstQualification returns whether this tenant qualifies for burst
 // priority. See the comments above cpuTimeBurstBucket for more.
 //
-// The qualification depends on burstLimitFrac:
-//   - burstLimitFrac >= 1.0: always canBurst (FULLY_UTILIZE groups)
-//   - burstLimitFrac < 1.0: canBurst when tokens > 90% of capacity
+// The qualification depends on fullyUtilize:
+//   - fullyUtilize == true: always canBurst (FULLY_UTILIZE groups)
+//   - fullyUtilize == false: canBurst when tokens > 90% of capacity
 //
-// The per-tenant burst threshold is achieved via per-tenant scaling of
-// the refill rate and capacity in refillBurstBuckets, NOT via the
-// threshold check here. A tenant with burstLimitFrac=0.1 gets a
-// capacity and refill rate that are 10% of the base rate. This means
-// the bucket breaks even when the tenant uses ~10% of node CPU
-// (drain rate = scaled refill rate). The 90% fullness check here is
-// the same for all tenants — the per-tenant behavior comes from the
-// scaled capacity.
+// In RM mode, per-group burst behavior is achieved via per-group scaling
+// of the refill rate and capacity in refillBurstBucketForGroup (called
+// by rmStrategy.refillBurst). A group with CPU_MIN=10% gets 10% of the
+// 100% CPU rate, so its burst bucket breaks even when the group uses
+// ~10% of node CPU. The 90% fullness check here is the same for all
+// groups -- the per-group behavior comes from the scaled capacity.
 func (m *cpuTimeBurstBucket) burstQualification() burstQualification {
 	if m.disabled {
 		return noBurst
 	}
 	// FULLY_UTILIZE resource groups always qualify for burst.
-	if m.burstLimitFrac >= 1.0 {
+	if m.fullyUtilize {
 		return canBurst
 	}
 	// Note that at CRDB startup time, the capacity that is passed into
@@ -130,6 +128,6 @@ func (m *cpuTimeBurstBucket) SafeFormat(s redact.SafePrinter, _ rune) {
 	if m.capacity > 0 {
 		fullness = float64(m.tokens) / float64(m.capacity) * 100
 	}
-	s.Printf("fullness=%.1f%% tokens=%d capacity=%d burstLimitFrac=%.2f qual=%s",
-		fullness, m.tokens, m.capacity, m.burstLimitFrac, m.burstQualification())
+	s.Printf("fullness=%.1f%% tokens=%d capacity=%d fullyUtilize=%t qual=%s",
+		fullness, m.tokens, m.capacity, m.fullyUtilize, m.burstQualification())
 }

@@ -249,15 +249,20 @@ func (s *serverlessStrategy) refillBurst(tokens tokenCounts, refillRates rates) 
 
 // rmStrategy implements modeStrategy for Resource Manager mode, which
 // uses a single WorkQueue with N resource groups and a single
-// utilization target. Burst bucket refill is normalized to 100% CPU
-// by dividing out canBurstTarget; per-tenant scaling by burstLimitFrac
-// happens inside WorkQueue.refillBurstBuckets.
+// utilization target. Burst bucket refill normalizes to 100% CPU by
+// dividing out canBurstTarget, then pre-scales per-group amounts
+// by that group's CPU_MIN fraction before calling
+// refillBurstBucketForGroup.
 type rmStrategy struct {
 	queue workQueueIForAllocator
 	// canBurstTarget stores the canBurst utilization target (e.g., 1.0
 	// when KVCPUTimeUtilGoal=0.75 + KVCPUTimeUtilBurstDelta=0.25).
 	// Updated by computeTargets every interval.
 	canBurstTarget float64
+	// groupBurstFracs maps resource group ID to its CPU_MIN fraction
+	// for burst bucket refill scaling. For example, foreground=1.0
+	// (gets 100% of the 100% CPU rate) and background=0.25 (gets 25%).
+	groupBurstFracs map[uint64]float64
 }
 
 func (s *rmStrategy) mode() cpuTimeTokenMode {
@@ -282,12 +287,16 @@ func (s *rmStrategy) computeTargets(sv *settings.Values, burstDelta float64) tar
 }
 
 func (s *rmStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
-	if s.canBurstTarget > 0 {
-		toAdd := int64(
-			float64(tokens[0][canBurst]) / s.canBurstTarget)
-		burstCapacity := int64(
-			float64(refillRates[0][canBurst]) / s.canBurstTarget)
-		s.queue.refillBurstBuckets(toAdd, burstCapacity)
+	if s.canBurstTarget <= 0 {
+		return
+	}
+	// Normalize to the 100% CPU rate by dividing out canBurstTarget.
+	rate100 := float64(tokens[0][canBurst]) / s.canBurstTarget
+	cap100 := float64(refillRates[0][canBurst]) / s.canBurstTarget
+	// Pre-scale per-group and call refillBurstBucketForGroup directly.
+	for rgID, frac := range s.groupBurstFracs {
+		s.queue.refillBurstBucketForGroup(
+			rgID, int64(rate100*frac), int64(cap100*frac))
 	}
 }
 
@@ -449,7 +458,7 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenM
 }
 
 // newStrategy constructs the modeStrategy for the given mode and
-// configures the burst limit fraction on queue[0].
+// configures the queue's fullyUtilize and priority-based group settings.
 //
 // No explicit bucket reset is needed on mode switch. The granter's
 // tier-1 buckets stay alive across transitions, and the delta
@@ -461,21 +470,37 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenM
 func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy {
 	switch mode {
 	case serverlessMode:
-		a.queues[0].setDefaultBurstLimitFrac(0.0)
+		a.queues[0].setDefaultFullyUtilize(false)
+		a.queues[0].setPriorityBasedGroups(false)
+		a.queues[0].SetFullyUtilizeGroups(nil)
 		return &serverlessStrategy{queues: a.queues}
 	case resourceManagerMode:
-		a.queues[0].setDefaultBurstLimitFrac(1.0)
-		return &rmStrategy{queue: a.queues[0]}
+		a.queues[0].setDefaultFullyUtilize(true)
+		a.queues[0].setPriorityBasedGroups(true)
+		a.queues[0].SetFullyUtilizeGroups(map[uint64]bool{
+			foregroundResourceGroupID: true,
+			backgroundResourceGroupID: false,
+		})
+		return &rmStrategy{
+			queue: a.queues[0],
+			groupBurstFracs: map[uint64]float64{
+				foregroundResourceGroupID: 1.0,
+				backgroundResourceGroupID: 0.25,
+			},
+		}
 	default:
 		panic(fmt.Sprintf("unknown cpuTimeTokenMode: %d", mode))
 	}
 }
 
-// workQueueIForAllocator abstracts the burst bucket refill method in
+// workQueueIForAllocator abstracts the burst bucket refill methods in
 // WorkQueue, to enable unit testing.
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
-	setDefaultBurstLimitFrac(frac float64)
+	refillBurstBucketForGroup(rgID uint64, toAdd int64, capacity int64)
+	setDefaultFullyUtilize(fullyUtilize bool)
+	setPriorityBasedGroups(enabled bool)
+	SetFullyUtilizeGroups(groups map[uint64]bool)
 }
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.
