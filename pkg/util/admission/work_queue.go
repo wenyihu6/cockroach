@@ -339,6 +339,11 @@ type WorkQueue struct {
 	//     master's 90%-fullness burst check)
 	//   - RM: 1.0 (unconfigured groups are FULLY_UTILIZE by default)
 	defaultBurstLimitFrac float64
+	// usePriorityBasedGroups, when true, derives the resource group ID
+	// from WorkInfo.Priority instead of WorkInfo.TenantID. Used in
+	// Resource Manager mode to split work into foreground (priority >=
+	// NormalPri) and background (priority < NormalPri) groups.
+	usePriorityBasedGroups bool
 
 	timeSource timeutil.TimeSource
 	knobs      *TestingKnobs
@@ -665,6 +670,11 @@ type AdmitResponse struct {
 	Enabled bool
 
 	tenantID roachpb.TenantID
+	// resourceGroupID is the resource group ID under which this work
+	// was admitted. Used by AdmittedWorkDone to look up the correct
+	// tenantInfo entry (which is keyed by resource group ID, not
+	// tenant ID).
+	resourceGroupID uint64
 	// requestedCount is the number of slots or tokens taken at Admit time.
 	// It is useful to return, so that in AdmittedWorkDone, we can adjust
 	// the deduction, in cases where we have more information, such as in
@@ -712,7 +722,12 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// When changing the code, be careful in making sure the mutex is properly
 	// unlocked on all code paths.
 	q.mu.Lock()
-	rgID := q.getResourceGroupIDLocked(tenantID)
+	var rgID uint64
+	if q.usePriorityBasedGroups {
+		rgID = priorityToResourceGroup(info.Priority)
+	} else {
+		rgID = q.getResourceGroupIDLocked(tenantID)
+	}
 	tenant, ok := q.mu.tenants[rgID]
 	if !ok {
 		// See comment below about CPU time token estimation. If no tenantInfo
@@ -737,8 +752,9 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		info.RequestedCount = tenant.cpuTimeTokenEstimator.estimateTokensToBeUsed()
 	}
 	admitResponse := AdmitResponse{
-		tenantID:       info.TenantID,
-		requestedCount: info.RequestedCount,
+		tenantID:        info.TenantID,
+		resourceGroupID: rgID,
+		requestedCount:  info.RequestedCount,
 	}
 
 	if info.ReplicatedWorkInfo.Enabled {
@@ -853,7 +869,11 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		q.mu.Lock()
 		// The resource group entry could have been removed. See the comment
 		// where the tenantInfo struct is declared.
-		rgID = q.getResourceGroupIDLocked(tenantID)
+		if q.usePriorityBasedGroups {
+			rgID = priorityToResourceGroup(info.Priority)
+		} else {
+			rgID = q.getResourceGroupIDLocked(tenantID)
+		}
 		tenant, ok = q.mu.tenants[rgID]
 		if !ok {
 			burstLimitFrac := q.getBurstLimitFracLocked(rgID)
@@ -1061,7 +1081,7 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 		// NB: additionalUsed can be negative here (in case the initial estimate was
 		// too pessimistic).
 		if additionalUsed != 0 {
-			tenant, ok := q.mu.tenants[resp.tenantID.ToUint64()]
+			tenant, ok := q.mu.tenants[resp.resourceGroupID]
 			if ok {
 				q.adjustTenantUsedLocked(tenant, additionalUsed)
 			}
@@ -1076,7 +1096,7 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 		// in this code path, that is, at admission time.
 		if q.mode == usesCPUTimeTokens {
 			q.mu.defaultCPUTimeTokenEstimator.workDone(cpuTime.Nanoseconds())
-			tenant, ok := q.mu.tenants[resp.tenantID.ToUint64()]
+			tenant, ok := q.mu.tenants[resp.resourceGroupID]
 			// If the tenant struct doesn't exist, it has been GCed due to a lack of
 			// activity. In this case, we do not leverage the grunning measurement
 			// for future estimates.
@@ -1530,6 +1550,28 @@ func (q *WorkQueue) getBurstLimitFracLocked(rgID uint64) float64 {
 	return q.defaultBurstLimitFrac
 }
 
+// Resource group IDs used in Resource Manager mode when
+// usePriorityBasedGroups is true. Work is split into two groups
+// based on WorkInfo.Priority.
+const (
+	// foregroundResourceGroupID is used for work with priority >=
+	// NormalPri (regular user transactions, reads).
+	foregroundResourceGroupID uint64 = 1
+	// backgroundResourceGroupID is used for work with priority <
+	// NormalPri (lower-priority work that isn't routed to elastic
+	// CPU control).
+	backgroundResourceGroupID uint64 = 2
+)
+
+// priorityToResourceGroup maps a WorkPriority to one of the two
+// hardcoded resource groups. Used in Resource Manager mode.
+func priorityToResourceGroup(pri admissionpb.WorkPriority) uint64 {
+	if pri >= admissionpb.NormalPri {
+		return foregroundResourceGroupID
+	}
+	return backgroundResourceGroupID
+}
+
 // getResourceGroupIDLocked returns the resource group ID for the given
 // tenant. Default: tenantID is its own resource group.
 //
@@ -1541,6 +1583,13 @@ func (q *WorkQueue) getResourceGroupIDLocked(tenantID uint64) uint64 {
 		}
 	}
 	return tenantID
+}
+
+// setPriorityBasedGroups enables or disables priority-based resource
+// group derivation. When enabled, the resource group ID is derived
+// from WorkInfo.Priority instead of WorkInfo.TenantID.
+func (q *WorkQueue) setPriorityBasedGroups(enabled bool) {
+	q.usePriorityBasedGroups = enabled
 }
 
 // SetTenantToResourceGroupMapping sets the mapping from tenant IDs to

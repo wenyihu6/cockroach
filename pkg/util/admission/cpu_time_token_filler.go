@@ -450,9 +450,16 @@ func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy 
 	switch mode {
 	case serverlessMode:
 		a.queues[0].setDefaultBurstLimitFrac(0.0)
+		a.queues[0].setPriorityBasedGroups(false)
+		a.queues[0].SetBurstLimits(nil)
 		return &serverlessStrategy{queues: a.queues}
 	case resourceManagerMode:
 		a.queues[0].setDefaultBurstLimitFrac(1.0)
+		a.queues[0].setPriorityBasedGroups(true)
+		a.queues[0].SetBurstLimits(map[uint64]float64{
+			foregroundResourceGroupID: 1.0,
+			backgroundResourceGroupID: 0.25,
+		})
 		return &rmStrategy{queue: a.queues[0]}
 	default:
 		panic(fmt.Sprintf("unknown cpuTimeTokenMode: %d", mode))
@@ -464,6 +471,8 @@ func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy 
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
 	setDefaultBurstLimitFrac(frac float64)
+	setPriorityBasedGroups(enabled bool)
+	SetBurstLimits(limits map[uint64]float64)
 }
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.

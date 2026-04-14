@@ -112,6 +112,10 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 
 func (m *testBurstManager) setDefaultBurstLimitFrac(_ float64) {}
 
+func (m *testBurstManager) setPriorityBasedGroups(_ bool) {}
+
+func (m *testBurstManager) SetBurstLimits(_ map[uint64]float64) {}
+
 func (m *testModel) init() {}
 
 func (m *testModel) fit(_ context.Context, targets targetUtilizations) rates {
