@@ -177,25 +177,12 @@ func makeCPUTimeTokenGrantCoordinator(
 	timeSource := timeutil.DefaultTimeSource{}
 	granter := newCPUTimeTokenGranter(metrics, timeSource)
 
-	filler := &cpuTimeTokenFiller{
-		timeSource: timeSource,
-		closeCh:    make(chan struct{}),
-	}
-
-	allocator := &cpuTimeTokenAllocator{
-		granter:  granter,
-		mode:     initialMode,
-		settings: settings,
-		metrics:  metrics,
-	}
 	model := &cpuTimeTokenLinearModel{
 		granter:            granter,
 		cpuMetricsProvider: opts.CPUMetricsProvider,
 		timeSource:         timeSource,
 		metrics:            metrics,
 	}
-	allocator.model = model
-	filler.allocator = allocator
 
 	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
 	for tier := 0; tier < int(numResourceTiers); tier++ {
@@ -206,6 +193,7 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	var requesters [numResourceTiers]requester
+	var queues [numResourceTiers]workQueueIForAllocator
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		wqOpts := makeWorkQueueOptions(KVWork)
@@ -220,12 +208,20 @@ func makeCPUTimeTokenGrantCoordinator(
 			ambientCtx, KVWork, &childGranters[tier],
 			settings, wqMetrics, wqOpts)
 		granter.requester[tier] = requesters[tier]
-		allocator.queues[tier] = requesters[tier].(*WorkQueue)
+		queues[tier] = requesters[tier].(*WorkQueue)
 	}
-	// In RM mode, all tenants can burst by default (frac=1.0).
-	// Serverless mode uses 0.0 which is the WorkQueue zero-value.
-	if initialMode == resourceManagerMode {
-		allocator.queues[0].setDefaultBurstLimitFrac(1.0)
+	allocator := &cpuTimeTokenAllocator{
+		granter:  granter,
+		queues:   queues,
+		settings: settings,
+		model:    model,
+		metrics:  metrics,
+	}
+	allocator.strategy = allocator.newStrategy(initialMode)
+	filler := &cpuTimeTokenFiller{
+		allocator:  allocator,
+		timeSource: timeSource,
+		closeCh:    make(chan struct{}),
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
