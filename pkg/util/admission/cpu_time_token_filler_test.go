@@ -160,14 +160,14 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 	st := cluster.MakeClusterSettings()
 	KVCPUTimeTokenACMode.Override(context.Background(), &st.SV,
 		int64(resourceManagerMode))
-	allocator := cpuTimeTokenAllocator{
+	allocator := &cpuTimeTokenAllocator{
 		granter:  granter,
-		mode:     resourceManagerMode,
+		queues:   [numResourceTiers]workQueueIForAllocator{burstMgr},
 		settings: st,
 		model:    model,
 		metrics:  metrics,
+		strategy: &rmStrategy{queue: burstMgr},
 	}
-	allocator.queues[0] = burstMgr
 	printBurstMgr = func() string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "burstM  %d\n", burstMgr.tokens)
