@@ -147,9 +147,9 @@ func makeCPUTimeTokenGrantCoordinator(
 	timeSource := timeutil.DefaultTimeSource{}
 	granter := newCPUTimeTokenGranter(metrics, timeSource)
 	var childGranters [numResourceTiers]cpuTimeTokenChildGranter
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
+	for tier := 0; tier < int(numResourceTiers); tier++ {
 		childGranters[tier] = cpuTimeTokenChildGranter{
-			tier:   tier,
+			tier:   resourceTier(tier),
 			parent: granter,
 		}
 	}
@@ -173,23 +173,21 @@ func makeCPUTimeTokenGrantCoordinator(
 
 	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
-		opts := makeWorkQueueOptions(KVWork)
-		opts.mode = usesCPUTimeTokens
-		opts.admittedCountPerTenant = metrics.AdmittedCountPerTenant
-		opts.waitTimeNanosPerTenant = metrics.WaitTimeNanosPerTenant
+	for tier := 0; tier < int(numResourceTiers); tier++ {
+		wqOpts := makeWorkQueueOptions(KVWork)
+		wqOpts.mode = usesCPUTimeTokens
+		wqOpts.admittedCountPerTenant = metrics.AdmittedCountPerTenant
+		wqOpts.waitTimeNanosPerTenant = metrics.WaitTimeNanosPerTenant
 		requesters[tier] = makeWorkQueue(
-			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, opts)
+			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, wqOpts)
 		granter.requester[tier] = requesters[tier]
-		// This type assertion is always valid, since makeWorkQueue always
-		// returns a *WorkQueue.
 		allocator.queues[tier] = requesters[tier].(*WorkQueue)
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
 		filler: filler,
 	}
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
+	for tier := 0; tier < int(numResourceTiers); tier++ {
 		coordinator.queues[tier] = requesters[tier]
 	}
 

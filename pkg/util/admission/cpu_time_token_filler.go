@@ -227,7 +227,7 @@ type cpuTimeTokenAllocator struct {
 	// per interval (1s).
 	refillRates rates
 	// allocated stores the number of tokens added to each bucket in the current
-	// cpuTimeTokenAllocator. No mutex, since only a single goroutine will call
+	// interval. No mutex, since only a single goroutine will call
 	// the allocator.
 	allocated tokenCounts
 }
@@ -339,12 +339,12 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 	// every 1s (typically). The amount we need to allocate this call to allocateTokens
 	// is stored in allocations.
 	var allocations tokenCounts
-	for wc := range a.refillRates {
-		for kind := range a.refillRates[wc] {
+	for tier := range a.refillRates {
+		for qual := range a.refillRates[tier] {
 			toAllocate := allocateFunc(
-				a.refillRates[wc][kind], a.allocated[wc][kind], expectedRemainingTicksInInterval)
-			a.allocated[wc][kind] += toAllocate
-			allocations[wc][kind] = toAllocate
+				a.refillRates[tier][qual], a.allocated[tier][qual], expectedRemainingTicksInInterval)
+			a.allocated[tier][qual] += toAllocate
+			allocations[tier][qual] = toAllocate
 		}
 	}
 	// Each bucket has a max capacity. The max capacity for each bucket is
@@ -430,9 +430,9 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 	}
 
 	// Reset allocated.
-	for wc := range a.allocated {
-		for kind := range a.allocated[wc] {
-			a.allocated[wc][kind] = 0
+	for tier := range a.allocated {
+		for qual := range a.allocated[tier] {
+			a.allocated[tier][qual] = 0
 		}
 	}
 }
@@ -465,7 +465,7 @@ type workQueueIForAllocator interface {
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.
 type cpuTimeModel interface {
-	fit(context.Context, targetUtilizations) rates
+	fit(ctx context.Context, targets targetUtilizations) rates
 }
 
 var _ cpuTimeModel = &cpuTimeTokenLinearModel{}

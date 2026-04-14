@@ -154,15 +154,18 @@ type cpuTimeTokenGranter struct {
 func newCPUTimeTokenGranter(
 	metrics *cpuTimeTokenMetrics, timeSource timeutil.TimeSource,
 ) *cpuTimeTokenGranter {
-	g := &cpuTimeTokenGranter{metrics: metrics, timeSource: timeSource}
+	g := &cpuTimeTokenGranter{
+		metrics:    metrics,
+		timeSource: timeSource,
+	}
 	// Buckets start at 0 tokens (exhausted) before the first refill, so
 	// initialize exhaustedStart and wire the per-bucket counters.
 	now := timeSource.Now()
-	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
+	for tier := 0; tier < int(numResourceTiers); tier++ {
 		for qual := burstQualification(0); qual < numBurstQualifications; qual++ {
 			g.mu.buckets[tier][qual].exhaustedStart = now
 			g.mu.buckets[tier][qual].exhaustedDuration =
-				metrics.ExhaustedDurationNanos[perBucketIdx(tier, qual)]
+				metrics.ExhaustedDurationNanos[perBucketIdx(resourceTier(tier), qual)]
 		}
 	}
 	return g
@@ -284,7 +287,7 @@ func (stg *cpuTimeTokenGranter) tookWithoutPermissionLocked(count int64) {
 		stg.metrics.TokensReturned.Inc(-count)
 	}
 	now := stg.timeSource.Now()
-	for tier := range stg.mu.buckets {
+	for tier := 0; tier < int(numResourceTiers); tier++ {
 		for qual := range stg.mu.buckets[tier] {
 			newTokenCount := stg.mu.buckets[tier][qual].tokens - count
 			stg.mu.buckets[tier][qual].updateTokenCount(
@@ -368,7 +371,7 @@ func (stg *cpuTimeTokenGranter) refill(
 
 	now := stg.timeSource.Now()
 	var shouldGrant bool
-	for tier := range stg.mu.buckets {
+	for tier := 0; tier < int(numResourceTiers); tier++ {
 		for qual := range stg.mu.buckets[tier] {
 			if toAdd[tier][qual] > 0 {
 				shouldGrant = true
