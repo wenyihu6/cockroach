@@ -431,8 +431,12 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				opts.disableGCTenantsAndResetUsed = true
 				opts.mode = usesCPUTimeTokens
 				cpuMetrics := makeCPUTimeTokenMetrics()
-				opts.admittedCountPerTenant = cpuMetrics.AdmittedCountPerTenant
-				opts.waitTimeNanosPerTenant = cpuMetrics.WaitTimeNanosPerTenant
+				opts.perTenantAggMetrics = &tenantAggMetrics{
+					admittedCount:  cpuMetrics.AdmittedCountPerTenant[0],
+					waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[0],
+					tokensUsed:     cpuMetrics.TokensUsedPerTenant[0],
+					tokensReturned: cpuMetrics.TokensReturnedPerTenant[0],
+				}
 				q = makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
 					workKind, tg, st, metrics, opts).(*WorkQueue)
 				q.knobs.DisableCPUTimeTokenEstimation = true
@@ -585,8 +589,12 @@ func TestCPUTimeTokenEstimation(t *testing.T) {
 	opts := makeWorkQueueOptions(KVWork)
 	opts.mode = usesCPUTimeTokens
 	cpuMetrics := makeCPUTimeTokenMetrics()
-	opts.admittedCountPerTenant = cpuMetrics.AdmittedCountPerTenant
-	opts.waitTimeNanosPerTenant = cpuMetrics.WaitTimeNanosPerTenant
+	opts.perTenantAggMetrics = &tenantAggMetrics{
+		admittedCount:  cpuMetrics.AdmittedCountPerTenant[0],
+		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[0],
+		tokensUsed:     cpuMetrics.TokensUsedPerTenant[0],
+		tokensReturned: cpuMetrics.TokensReturnedPerTenant[0],
+	}
 	timeSource = timeutil.NewManualTime(initialTime)
 	opts.timeSource = timeSource
 	opts.disableEpochClosingGoroutine = true
