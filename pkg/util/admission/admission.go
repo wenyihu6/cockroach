@@ -131,17 +131,17 @@ import (
 )
 
 // burstQualification is an optional behavior of certain WorkQueues (which
-// implement requester), that differentiate between tenants that are qualified
+// implement requester), that differentiate between groups that are qualified
 // to burst (in their token consumption) and those that are not. This is a
-// dynamic attribute of a tenant, based on token consumption history
-// maintained in the WorkQueue. The ordering of tenants is also affected in
-// that burstable tenants are ordered before non-burstable tenants.
+// dynamic attribute of a group, based on token consumption history
+// maintained in the WorkQueue. The ordering of groups is also affected in
+// that burstable groups are ordered before non-burstable groups.
 type burstQualification uint8
 
 const (
 	// Order matters here. A higher priority burstQualification must use a
 	// lower ordinal than a lower priority burstQualification (see
-	// tenantHeap.Less for a place where this invariant is relied on).
+	// groupHeap.Less for a place where this invariant is relied on).
 	canBurst burstQualification = iota
 	noBurst
 	numBurstQualifications

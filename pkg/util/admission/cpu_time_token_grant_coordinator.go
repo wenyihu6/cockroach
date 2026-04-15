@@ -109,13 +109,13 @@ func (coord *CPUGrantCoordinators) GetSQLWorkQueue(workKind WorkKind) *WorkQueue
 	return coord.slotsCoord.queues[workKind].(*WorkQueue)
 }
 
-// SetTenantWeights sets the weight of tenants, using the provided tenant ID
-// => weight map. A nil map will result in all tenants having the same weight.
+// SetTenantWeights sets the weight of groups, using the provided group ID
+// => weight map. A nil map will result in all groups having the same weight.
 // SetTenantWeights adjusts the weights on all WorkQueues that
 // CPUGrantCoordinators manages.
 func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.slotsCoord.GetWorkQueue(KVWork).SetTenantWeights(weights)
-	coord.cpuTimeCoord.setTenantWeights(weights)
+	coord.cpuTimeCoord.setGroupWeights(weights)
 }
 
 // GetRunnableCountCallback returns a callback of type
@@ -166,7 +166,7 @@ func makeCPUTimeTokenGrantCoordinator(
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		wqOpts := makeWorkQueueOptions(KVWork)
 		wqOpts.mode = usesCPUTimeTokens
-		wqOpts.perTenantAggMetrics = &tenantAggMetrics{
+		wqOpts.perGroupAggMetrics = &groupAggMetrics{
 			admittedCount:  metrics.AdmittedCountPerTenant[tier],
 			waitTimeNanos:  metrics.WaitTimeNanosPerTenant[tier],
 			tokensUsed:     metrics.TokensUsedPerTenant[tier],
@@ -226,7 +226,7 @@ func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue(tier resourceTier) *Work
 	return coord.queues[tier].(*WorkQueue)
 }
 
-func (coord *cpuTimeTokenGrantCoordinator) setTenantWeights(weights map[uint64]uint32) {
+func (coord *cpuTimeTokenGrantCoordinator) setGroupWeights(weights map[uint64]uint32) {
 	for tier := range coord.queues {
 		coord.queues[tier].(*WorkQueue).SetTenantWeights(weights)
 	}
