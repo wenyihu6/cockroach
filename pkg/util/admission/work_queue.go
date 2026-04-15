@@ -308,14 +308,19 @@ type WorkQueue struct {
 		maxQueueDelayToSwitchToLifo time.Duration
 		// Only used if mode == usesCPUTimeTokens.
 		defaultCPUTimeTokenEstimator cpuTimeTokenEstimator
-		// burstBucketCapacity is the base capacity for burst buckets.
-		// Updated by refillBurstBuckets. Also used as the initial capacity
-		// for newly created tenants (buckets init full). Only used if
-		// mode == usesCPUTimeTokens.
+		// burstBucketCapacity is the base capacity for burst buckets,
+		// used as the initial capacity for newly created tenants
+		// (buckets init full so new tenants can burst immediately).
+		// In Serverless mode, this is the uniform capacity passed to
+		// all tenants. In RM mode, this is the unscaled (100% CPU)
+		// capacity; new groups init with this value and receive the
+		// correct per-group scaled capacity on the next refill
+		// (within 1ms). Only used if mode == usesCPUTimeTokens.
 		burstBucketCapacity int64
 		// maxCPUGroups maps resource group ID to whether that group
-		// always qualifies for burst (MAX_CPU). Only used if
-		// mode == usesCPUTimeTokens.
+		// always qualifies for burst (MAX_CPU). Maintained by
+		// refillBurstBucketForGroup so new tenants pick up the
+		// correct initial flag. Only used if mode == usesCPUTimeTokens.
 		maxCPUGroups map[uint64]bool
 		// overrideAllToBypassAdmission, when true, causes all work to bypass
 		// admission control. Used by CPU time token AC.
@@ -328,10 +333,22 @@ type WorkQueue struct {
 	// perTenantAggMetrics holds the parent AggCounters for per-tenant
 	// metrics. Only set when mode == usesCPUTimeTokens.
 	perTenantAggMetrics *tenantAggMetrics
+	// defaultMaxCPU is the fallback maxCPU value for tenants not in
+	// maxCPUGroups. Always false in production.
+	defaultMaxCPU bool
 	// usePriorityBasedGroups, when true, derives the resource group ID
 	// from WorkInfo.Priority instead of WorkInfo.TenantID. Used in
 	// Resource Manager mode to split work into foreground (priority >=
 	// NormalPri) and background (priority < NormalPri) groups.
+	//
+	// This is a bool set by the filler goroutine rather than a direct
+	// read of the cpuTimeTokenMode cluster setting because mode
+	// transitions also affect the allocator strategy, queue
+	// configuration (burst fractions, maxCPU), and work routing
+	// (activeMode). The filler coordinates all of these together in
+	// newStrategy and resetInterval. Reading the cluster setting
+	// directly here could observe RM mode before the other components
+	// are configured for it.
 	usePriorityBasedGroups bool
 
 	timeSource timeutil.TimeSource
@@ -341,8 +358,8 @@ type WorkQueue struct {
 var _ requester = &WorkQueue{}
 
 // tenantAggMetrics holds parent AggCounters for per-tenant admission
-// metrics. One instance is shared across all tenants within a
-// WorkQueue. Only used when mode == usesCPUTimeTokens.
+// metrics. One instance is shared across all tenants within a WorkQueue.
+// Only used when mode == usesCPUTimeTokens.
 type tenantAggMetrics struct {
 	admittedCount  *aggmetric.AggCounter
 	waitTimeNanos  *aggmetric.AggCounter
@@ -651,11 +668,19 @@ type AdmitResponse struct {
 	// If true, admission control is enabled.
 	Enabled bool
 
-	tenantID roachpb.TenantID
 	// resourceGroupID is the resource group ID under which this work
 	// was admitted. Used by AdmittedWorkDone to look up the correct
 	// tenantInfo entry (which is keyed by resource group ID, not
-	// tenant ID).
+	// tenant ID). This captures the key at admission time, so
+	// AdmittedWorkDone finds the right entry even if the mode
+	// switches between Admit and AdmittedWorkDone. For example,
+	// work admitted under Serverless uses tenant IDs (53, 54, ...)
+	// as keys, while RM mode uses resource group IDs (1, 2). After
+	// a switch, old entries remain in the map until periodic GC
+	// removes them for inactivity. If the entry is not found, the
+	// lookup misses gracefully since usage correction and estimator
+	// updates are incremental optimizations, not correctness
+	// requirements.
 	resourceGroupID uint64
 	// requestedCount is the number of slots or tokens taken at Admit time.
 	// It is useful to return, so that in AdmittedWorkDone, we can adjust
@@ -734,7 +759,6 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		info.RequestedCount = tenant.cpuTimeTokenEstimator.estimateTokensToBeUsed()
 	}
 	admitResponse := AdmitResponse{
-		tenantID:        info.TenantID,
 		resourceGroupID: rgID,
 		requestedCount:  info.RequestedCount,
 	}
@@ -1303,19 +1327,31 @@ func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 //
 // If the group's burst qualification changes, its position in the
 // tenantHeap is updated.
-func (q *WorkQueue) refillBurstBucketForGroup(rgID uint64, toAdd int64, capacity int64) {
+func (q *WorkQueue) refillBurstBucketForGroup(
+	rgID uint64, toAdd int64, capacity int64, unscaledCapacity int64, maxCPU bool,
+) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	// Maintain the maxCPU map so newly created tenants (which appear
+	// between refill ticks) pick up the correct initial flag via
+	// getMaxCPULocked.
+	if q.mu.maxCPUGroups == nil {
+		q.mu.maxCPUGroups = make(map[uint64]bool)
+	}
+	q.mu.maxCPUGroups[rgID] = maxCPU
 	tenant, ok := q.mu.tenants[rgID]
 	if !ok {
 		return
 	}
-	// Update burstBucketCapacity to the latest value seen. In RM mode,
-	// the last group refilled sets this, which is fine since
-	// burstBucketCapacity is only used as the initial capacity for
-	// newly created tenants and will be overwritten on the next refill.
-	q.mu.burstBucketCapacity = capacity
+	// Store the unscaled (100% CPU) capacity for initializing newly
+	// created groups. We cannot store the per-group scaled capacity
+	// here because each group has a different scale factor; using the
+	// unscaled value means new groups start full and can burst
+	// immediately, with the correct per-group capacity applied on the
+	// next refill (within 1ms).
+	q.mu.burstBucketCapacity = unscaledCapacity
 	prevBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
+	tenant.cpuTimeBurstBucket.maxCPU = maxCPU
 	tenant.cpuTimeBurstBucket.refill(toAdd, capacity)
 	curBurstQual := tenant.cpuTimeBurstBucket.burstQualification()
 	if prevBurstQual != curBurstQual && isInTenantHeap(tenant) {
@@ -1504,28 +1540,8 @@ func (q *WorkQueue) SetTenantWeights(tenantWeights map[uint64]uint32) {
 	}
 }
 
-// SetMaxCPUGroups sets per-resource-group maxCPU flags, using
-// the provided resource group ID => bool map. Existing groups have their
-// burst buckets updated; new groups will pick up their flag when created.
-func (q *WorkQueue) SetMaxCPUGroups(groups map[uint64]bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.mu.maxCPUGroups = groups
-	for id, tenant := range q.mu.tenants {
-		fu := q.getMaxCPULocked(id)
-		if tenant.cpuTimeBurstBucket.maxCPU != fu {
-			prevQual := tenant.cpuTimeBurstBucket.burstQualification()
-			tenant.cpuTimeBurstBucket.maxCPU = fu
-			curQual := tenant.cpuTimeBurstBucket.burstQualification()
-			if prevQual != curQual && isInTenantHeap(tenant) {
-				q.mu.tenantHeap.fix(tenant)
-			}
-		}
-	}
-}
-
 // getMaxCPULocked returns the maxCPU flag for the given resource
-// group. Returns false (90%-fullness check) if no override exists.
+// group. Falls back to defaultMaxCPU (false in production).
 //
 // REQUIRES: q.mu is held.
 func (q *WorkQueue) getMaxCPULocked(rgID uint64) bool {
@@ -1534,7 +1550,7 @@ func (q *WorkQueue) getMaxCPULocked(rgID uint64) bool {
 			return fu
 		}
 	}
-	return false
+	return q.defaultMaxCPU
 }
 
 // Resource group IDs used in Resource Manager mode when

@@ -28,41 +28,66 @@ func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 	coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, knobs)
 	defer coords.Close()
 	cpuCoords := coords.RegularCPU
+	ctx := context.Background()
 
 	defer func(prev bool) {
-		cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, prev)
+		cpuTimeTokenACEnabled.Override(ctx, &settings.SV, prev)
 	}(cpuTimeTokenACEnabled.Get(&settings.SV))
 
 	// Test that if setting is disabled, WorkQueues uses slots, else they
 	// use CPU time tokens.
-	cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, false)
+	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, false)
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	// If CPU time token AC is disabled, we use one WorkQueue for both
-	// system & app tenant work.
-	require.Equal(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	// If CPU time token AC is disabled, we use the slots-based WorkQueue
+	// for both system & app tenant work.
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
-	cpuTimeTokenACEnabled.Override(context.Background(), &settings.SV, true)
+	// Default mode is Serverless — 2 separate queues.
+	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, true)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	// If CPU time token AC is enabled, we use one WorkQueue for system
-	// tenant work & a second WorkQueue for app tenant work.
-	require.NotEqual(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	// In Serverless mode, system and app tenant work use different queues.
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+
+	// Switch to RM mode dynamically — single queue for all work.
+	// In production, mode changes take effect when the filler goroutine
+	// calls resetInterval and publishes the new mode. Since the filler
+	// goroutine is disabled in this test, we update the atomic directly.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
+		int64(resourceManagerMode))
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+
+	// Switch back to Serverless — 2 separate queues again.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
+		int64(serverlessMode))
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
 	// Test that the env var kill switch overrides the cluster setting.
-	// Even with the setting enabled, the kill switch forces slot-based AC.
 	defer func(prev bool) {
 		cpuTimeTokenACKillSwitch = prev
 	}(cpuTimeTokenACKillSwitch)
 	cpuTimeTokenACKillSwitch = true
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.Equal(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
 	// Disabling the kill switch restores CPU time token AC (setting is
-	// still enabled).
+	// still enabled, mode is still Serverless from above).
 	cpuTimeTokenACKillSwitch = false
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.NotEqual(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 }
