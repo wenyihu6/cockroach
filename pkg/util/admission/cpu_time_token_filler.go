@@ -51,11 +51,8 @@ var KVCPUTimeUtilBurstDelta = settings.RegisterFloatSetting(
 	settings.SystemOnly,
 	"admission.cpu_time_tokens.target_util.burst_delta",
 	"the delta between non-burstable & burstable CPU utilization target if "+
-		"using the KV CPU time token system, this delta is the same for both system "+
-		"& app tenant work, and is expressed in the same units as "+
-		"admission.cpu_time_tokens.target_util.app_tenant & "+
-		"admission.cpu_time_tokens.target_util.system_tenant (value is in the "+
-		"interval [0,1] where 1 means all cores)",
+		"using the KV CPU time token system (value is in the interval [0,1] "+
+		"where 1 means all cores)",
 	// Why is the default value 0.05 (5%)? It tends to work out because in the
 	// worst case there is  5% remaining burst budget and then over time the 85%
 	// bucket fills itself to full. For example, say the rates were 80 tokens/s
@@ -87,36 +84,34 @@ const (
 const timePerTick = 1 * time.Millisecond
 
 // cpuTimeTokenFiller starts a goroutine which periodically calls
-// cpuTimeTokenAllocator to add tokens to a cpuTimeTokenGranter. For example, on
-// an 8 vCPU machine, we may want to allow burstable tier-0 work to use 6 seconds
-// of CPU time per second. Then the refill rates for tier0 burstable work would
-// equal 6 seconds per second, and cpuTimeTokenFiller would add 6 seconds of token
-// every second, but smoothly -- 1ms at a time. See cpuTimeTokenGranter for details
-// on the multi-dimensional token buckets owned by cpuTimeTokenGranter; the TLDR is
-// there is one bucket per <resource tier, burst qualification> pair.
+// cpuTimeTokenAllocator to add tokens to a cpuTimeTokenGranter. For
+// example, on an 8 vCPU machine, we may want to allow burstable tier-0
+// work to use 6 seconds of CPU time per second. Then the refill rates
+// for tier0 burstable work would equal 6 seconds per second, and
+// cpuTimeTokenFiller would add 6 seconds of token every second, but
+// smoothly -- 1ms at a time. See cpuTimeTokenGranter for details on the
+// token buckets; the TLDR is there is one bucket per <resource tier,
+// burst qualification> pair.
 //
-// cpuTimeTokenFiller owns the time.Ticker logic. The details of the token allocation
-// are left to the cpuTimeTokenAllocator, in order to improve clarity & testability.
+// cpuTimeTokenFiller owns the time.Ticker logic. The details of the
+// token allocation are left to the cpuTimeTokenAllocator, in order to
+// improve clarity & testability.
 //
-// Note that the combination of cpuTimeTokenFiller & cpuTimeTokenAllocator are written
-// to be robust against delayed and dropped time.Timer ticks. That
-// is, in the presence of delayed and dropped ticks, the correct number of tokens will
-// be added to the buckets; they just may be added in a less smooth fashion than
-// normal. If ticks are delayed more than roughly 1s, not enough tokens will be
-// added to the bucket, but we do not expect this significant of a delay in practice
-// (admission control will be running).
+// Note that the combination of cpuTimeTokenFiller &
+// cpuTimeTokenAllocator are written to be robust against delayed and
+// dropped time.Timer ticks. That is, in the presence of delayed and
+// dropped ticks, the correct number of tokens will be added to the
+// buckets; they just may be added in a less smooth fashion than normal.
 //
-// See ticker docs, where it is mentioned ticks can be dropped, if receivers are
-// slow: https://pkg.go.dev/time#NewTicker
-//
-// The mechanism by which the goroutine adds the correct number of tokens, in the
-// presence of delayed or dropped ticks, is:
+// The mechanism by which the goroutine adds the correct number of
+// tokens, in the presence of delayed or dropped ticks, is:
 //   - time is split into intervals of 1s
 //   - intervals are split into 1s / timePerTick(=1ms) time.Ticker ticks
-//   - cpuTimeTokenAllocator attempts to allocate remaining tokens for interval evenly
-//     across remaining ticks in the interval
-//   - once interval is complete, all remaining tokens needed for that interval
-//     are added (e.g. see t.allocateTokens(1) below), then a new interval starts
+//   - cpuTimeTokenAllocator attempts to allocate remaining tokens for
+//     interval evenly across remaining ticks in the interval
+//   - once interval is complete, all remaining tokens needed for that
+//     interval are added (e.g. see t.allocateTokens(1) below), then a
+//     new interval starts
 type cpuTimeTokenFiller struct {
 	allocator  cpuTimeTokenAllocatorI
 	timeSource timeutil.TimeSource
@@ -208,27 +203,23 @@ type cpuTimeTokenAllocatorI interface {
 
 var _ cpuTimeTokenAllocatorI = &cpuTimeTokenAllocator{}
 
-// cpuTimeTokenAllocator allocates tokens to a cpuTimeTokenGranter. See the
-// comment above cpuTimeTokenFiller for a high level picture. The
-// responsibility of cpuTimeTokenAllocator is to gradually allocate tokens
-// every interval, while respecting the bucket capacities. The computation
-// of the rate of tokens to add every interval is left to cpuTimeModel.
+// cpuTimeTokenAllocator allocates tokens to a cpuTimeTokenGranter.
+// See the comment above cpuTimeTokenFiller for a high level picture.
+// The allocator gradually distributes tokens every interval, while
+// respecting bucket capacities. The computation of the rate of tokens
+// to add every interval is left to cpuTimeModel.
 type cpuTimeTokenAllocator struct {
-	granter *cpuTimeTokenGranter
-	// queues holds references to WorkQueues for each resource tier. Used to
-	// refill per-tenant burst buckets that determine queue priority ordering.
-	// See cpu_time_token_burst.go for more.
+	granter  *cpuTimeTokenGranter
 	queues   [numResourceTiers]workQueueIForAllocator
 	settings *cluster.Settings
 	model    cpuTimeModel
 	metrics  *cpuTimeTokenMetrics
-
-	// refillRates stores the number of CPU time tokens to add to each bucket
-	// per interval (1s).
+	// refillRates stores the number of CPU time tokens to add to each
+	// bucket per interval (1s).
 	refillRates rates
-	// allocated stores the number of tokens added to each bucket in the current
-	// cpuTimeTokenAllocator. No mutex, since only a single goroutine will call
-	// the allocator.
+	// allocated stores the number of tokens added to each bucket in the
+	// current interval. No mutex, since only a single goroutine will
+	// call the allocator.
 	allocated tokenCounts
 }
 
@@ -271,8 +262,9 @@ type minimums [numResourceTiers][numBurstQualifications]int64
 type tokenCounts [numResourceTiers][numBurstQualifications]int64
 
 // targetUtilizations stores a target CPU utilization, as a float64 (so
-// 0.8 for 80% CPU utilization), one per bucket in CPUTimeTokenGranter. This
-// is aggregate CPU usage, so 0.8 means 80% of CPU time across all cores.
+// 0.8 for 80% CPU utilization), one per bucket in cpuTimeTokenGranter.
+// This is aggregate CPU usage, so 0.8 means 80% of CPU time across all
+// cores.
 type targetUtilizations [numResourceTiers][numBurstQualifications]float64
 
 // computeMinimums computes per-bucket minimums from refill rates. These
@@ -339,12 +331,12 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 	// every 1s (typically). The amount we need to allocate this call to allocateTokens
 	// is stored in allocations.
 	var allocations tokenCounts
-	for wc := range a.refillRates {
-		for kind := range a.refillRates[wc] {
+	for tier := range a.refillRates {
+		for qual := range a.refillRates[tier] {
 			toAllocate := allocateFunc(
-				a.refillRates[wc][kind], a.allocated[wc][kind], expectedRemainingTicksInInterval)
-			a.allocated[wc][kind] += toAllocate
-			allocations[wc][kind] = toAllocate
+				a.refillRates[tier][qual], a.allocated[tier][qual], expectedRemainingTicksInInterval)
+			a.allocated[tier][qual] += toAllocate
+			allocations[tier][qual] = toAllocate
 		}
 	}
 	// Each bucket has a max capacity. The max capacity for each bucket is
@@ -429,12 +421,7 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) {
 		a.queues[resourceTier].refillBurstBuckets(toAdd, burstCapacity)
 	}
 
-	// Reset allocated.
-	for wc := range a.allocated {
-		for kind := range a.allocated[wc] {
-			a.allocated[wc][kind] = 0
-		}
-	}
+	a.allocated = tokenCounts{}
 }
 
 // refill increments per-bucket refill metrics, then delegates to
@@ -465,7 +452,7 @@ type workQueueIForAllocator interface {
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.
 type cpuTimeModel interface {
-	fit(context.Context, targetUtilizations) rates
+	fit(ctx context.Context, targets targetUtilizations) rates
 }
 
 var _ cpuTimeModel = &cpuTimeTokenLinearModel{}
@@ -475,61 +462,8 @@ var _ cpuTimeModel = &cpuTimeTokenLinearModel{}
 //
 // The refill rate is chosen such that the rate at which tokens are added
 // results in an (actual measured) CPU utilization matching the target
-// utilization. Tokens represent CPU work carried out by requests which acquired
-// from the bucket, and the actual CPU time used by the requests is consumed
-// from the bucket. However, requests can use additional CPU time that isn't
-// reflected in what's consumed - for example, the CPU work incurred by heap
-// allocations, which need to be garbage collected by the runtime at a
-// near-future point in time, or more generally any other asynchronous work
-// triggered by the request which may outlive it. Additionally, not all work
-// in the system is visible to the bucket: work by the Go runtime is a basic
-// example, but even "userspace work" is likely not tracked in its entirety.
-//
-// We address both of these issues by assuming an approximately constant ratio
-// between the rate of total and tracked CPU time (at least over short periods
-// of time) and then "punishing" tracked work by that factor, in effect assuming
-// that any "untracked" CPU work is incurred by the tracked work. This motivates
-// the tokenToCPUTimeMultiplier below, which is computed via
-//
-//	tokenToCPUTimeMultiplier = totalCPUTime / trackedCPUTime (over a short interval)
-//
-// Observing, for example, 20s of CPU time consumed in the process but only 10s
-// in tracked requests, we would set tokenToCPUTimeMultiplier to 2 (dimensionless),
-// and the refill rate would be halved (which corresponds to saying that a request
-// that consumes, say, 100ms of CPU time should really be billed for twice that
-// amount).
-//
-// Since 1 token represents 1 nanosecond of CPU time, we express CPU capacity in
-// tokens/s (i.e., CPU-nanoseconds per wall-clock second). For example, an 8 vCPU
-// machine has a capacity of 8E9 tokens/s. The refill rate is then simply:
-//
-//	refillRate [tokens/s] = targetUtilization * capacity [tokens/s] / tokenToCPUTimeMultiplier
-//
-// For an 8 vCPU machine (capacity = 8E9 tokens/s), with a target utilization of
-// 80% and a tokenToCPUTimeMultiplier of 1:
-//
-//	refillRate = 0.8 * 8E9 tokens/s / 1 = 6.4E9 tokens/s
-//
-// which corresponds to 6.4 CPU-seconds of work admitted per wall-clock second.
-//
-// We clamp tokenToCPUTimeMultiplier to be in the interval [1, 20]. The lower
-// bound 1 reflects our knowledge that whatever is measured by tracked requests
-// was actually consumed (i.e. consumed tokens represent at least the
-// corresponding amount of CPU time). As the multiplier increases, it is less and
-// less likely that the tracked requests are actually to blame for the high
-// utilization, but we continue to pretend that we are, to shift queuing into
-// admission control rather than the Go scheduler (where we have little
-// control). In highly degraded situations (multiplier >= 20), we cap the
-// multiplier at 20 to avoid penalizing tracked requests further. See fit() for
-// more details.
-//
-// As is discussed in the cpuTimeTokenGranter docs, the buckets are arranged in
-// a priority hierarchy. Higher priority buckets have higher target utilizations
-// than lower priority buckets, and incoming requests generally require that the
-// bucket for their priority has enough tokens to accommodate the request, but then
-// withdraw from all buckets (which may put lower-priority buckets in a deficit).
-// Due to this, higher priority buckets have more tokens added per second than
-// lower priority buckets.
+// utilization. See the detailed comments in fit() for the multiplier
+// computation and smoothing.
 type cpuTimeTokenLinearModel struct {
 	granter            tokenUsageTracker
 	cpuMetricsProvider CPUMetricsProvider
@@ -570,28 +504,29 @@ type CPUMetricsProvider interface {
 
 // fit adjusts tokenToCPUTimeMultiplier based on CPU usage & token usage.
 // fit computes refill rates from tokenToCPUTimeMultiplier and the targets
-// parameter. targets tracks a target CPU utilization for all buckets in
-// the multi-dimensional token buckets owned by cpuTimeTokenGranter. fit
-// returns the refill rates.
+// parameter. targets tracks a target CPU utilization for all active
+// buckets in the cpuTimeTokenGranter. fit returns the refill rates.
 func (m *cpuTimeTokenLinearModel) fit(ctx context.Context, targets targetUtilizations) rates {
 	if !m.init {
 		m.init = true
 		m.lastFitTime = m.timeSource.Now()
 		totalCPUTime, err := m.cpuMetricsProvider.GetCPUUsage()
 		if err != nil {
-			// We do not expect the syscall that fetches CPU usage to ever fail.
-			log.Dev.Fatalf(ctx, "GetCPUUsage returned %q in cpuTimeTokenLinearModel.fit init", err)
+			log.Dev.Fatalf(ctx,
+				"GetCPUUsage returned %q in cpuTimeTokenLinearModel.fit init", err)
 		}
 		m.totalCPUTime = totalCPUTime
 		m.tokenToCPUTimeMultiplier = 1
-		return m.computeRefillRates(targets, m.tokenToCPUTimeMultiplier, m.cpuMetricsProvider.GetCPUCapacity())
+		return m.computeRefillRates(
+			targets, m.tokenToCPUTimeMultiplier,
+			m.cpuMetricsProvider.GetCPUCapacity())
 	}
 
 	cpuCapacity := m.cpuMetricsProvider.GetCPUCapacity()
 	totalCPUTime, err := m.cpuMetricsProvider.GetCPUUsage()
 	if err != nil {
-		// We do not expect the syscall that fetches CPU usage to ever fail.
-		log.Dev.Fatalf(ctx, "GetCPUUsage returned %q in cpuTimeTokenLinearModel.fit", err)
+		log.Dev.Fatalf(ctx,
+			"GetCPUUsage returned %q in cpuTimeTokenLinearModel.fit", err)
 	}
 
 	intCPUTime := totalCPUTime - m.totalCPUTime
@@ -622,7 +557,8 @@ func (m *cpuTimeTokenLinearModel) fit(ctx context.Context, targets targetUtiliza
 	}
 
 	// Update multiplier.
-	isLowCPUUtil := int64(intCPUTime) < int64(float64(elapsedSinceLastFit.Nanoseconds())*cpuCapacity*lowCPUUtilFrac)
+	isLowCPUUtil := int64(intCPUTime) < int64(
+		float64(elapsedSinceLastFit.Nanoseconds())*cpuCapacity*lowCPUUtilFrac)
 	if isLowCPUUtil {
 		// With good integration with admission control, most foreground
 		// work will be tracked by AC and reflected in the model, and the
@@ -732,10 +668,9 @@ func (m *cpuTimeTokenLinearModel) fit(ctx context.Context, targets targetUtiliza
 			alpha = 0.8
 		}
 
-		// Exponentially smooth changes to the multiplier. 1s of data is noisy,
-		// so smoothing is necessary.
 		m.tokenToCPUTimeMultiplier =
-			alpha*tokenToCPUTimeMultiplier + (1-alpha)*m.tokenToCPUTimeMultiplier
+			alpha*tokenToCPUTimeMultiplier +
+				(1-alpha)*m.tokenToCPUTimeMultiplier
 	}
 
 	refillRates := m.computeRefillRates(targets, m.tokenToCPUTimeMultiplier, cpuCapacity)
@@ -752,16 +687,17 @@ func (m *cpuTimeTokenLinearModel) fit(ctx context.Context, targets targetUtiliza
 	return refillRates
 }
 
-// computeRefillRates is a pure helper function that computes refill rates.
-// The CPU capacity is measured in vCPUs. This takes into account the cgroup, so
-// can be fractional.
+// computeRefillRates is a pure helper function that computes refill
+// rates.
 func (*cpuTimeTokenLinearModel) computeRefillRates(
 	targets targetUtilizations, tokenToCPUTimeMultiplier float64, cpuCapacity float64,
 ) rates {
 	var refillRates rates
 	for tier := range targets {
 		for qual := range targets[tier] {
-			refillRates[tier][qual] = int64(cpuCapacity * float64(time.Second) * targets[tier][qual] / tokenToCPUTimeMultiplier)
+			refillRates[tier][qual] = int64(
+				cpuCapacity * float64(time.Second) *
+					targets[tier][qual] / tokenToCPUTimeMultiplier)
 		}
 	}
 	return refillRates
