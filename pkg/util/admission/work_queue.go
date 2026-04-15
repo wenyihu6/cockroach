@@ -305,10 +305,10 @@ type WorkQueue struct {
 		maxQueueDelayToSwitchToLifo time.Duration
 		// Only used if mode == usesCPUTimeTokens.
 		defaultCPUTimeTokenEstimator cpuTimeTokenEstimator
-		// burstBucketCapacity is the capacity for newly created tenant burst
-		// buckets. Note that buckets init full, so burstBucketCapacity is also
-		// the starting token count. Updated by refillBurstBuckets. Only used
-		// if mode == usesCPUTimeTokens.
+		// burstBucketCapacity is the base capacity for burst buckets.
+		// Updated by refillBurstBuckets. Also used as the initial capacity
+		// for newly created tenants (buckets init full). Only used if
+		// mode == usesCPUTimeTokens.
 		burstBucketCapacity int64
 		// overrideAllToBypassAdmission, when true, causes all work to bypass
 		// admission control. Used by CPU time token AC.
@@ -694,9 +694,10 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// dedicated to that tenant yet. When we create the tenantInfo struct
 		// here, we also create the estimator. We init the estimator using a
 		// global estimator that sees workload across all tenants.
+		maxCPU := false
 		tenant = newTenantInfo(tenantID, q.getTenantWeightLocked(tenantID),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
-			q.mu.burstBucketCapacity,
+			q.mu.burstBucketCapacity, maxCPU,
 			q.perTenantAggMetrics)
 		q.mu.tenants[tenantID] = tenant
 	}
@@ -829,9 +830,10 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// tenantInfo struct is declared.
 		tenant, ok = q.mu.tenants[tenantID]
 		if !ok {
+			maxCPU := false
 			tenant = newTenantInfo(tenantID, q.getTenantWeightLocked(tenantID),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
-				q.mu.burstBucketCapacity,
+				q.mu.burstBucketCapacity, maxCPU,
 				q.perTenantAggMetrics)
 			q.mu.tenants[tenantID] = tenant
 		}
@@ -1674,6 +1676,7 @@ func newTenantInfo(
 	mode workQueueMode,
 	cpuTimeTokenEstimate int64,
 	burstBucketCapacity int64,
+	maxCPU bool,
 	aggMetrics *tenantAggMetrics,
 ) *tenantInfo {
 	ti := tenantInfoPool.Get().(*tenantInfo)
@@ -1692,7 +1695,7 @@ func newTenantInfo(
 	// always returns noBurst. This effectively disables the
 	// burstQualification functionality.
 	ti.cpuTimeBurstBucket.init(
-		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */)
+		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */, maxCPU)
 	if aggMetrics != nil {
 		tid := strconv.FormatUint(id, 10)
 		ti.admittedCount = aggMetrics.admittedCount.AddChild(tid)
