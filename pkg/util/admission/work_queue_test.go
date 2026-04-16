@@ -466,10 +466,14 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				ctx, cancel := context.WithCancel(context.Background())
 				var requestedCount int64
 				d.ScanArgs(t, "requested-count", &requestedCount)
+				var pri int
+				if d.HasArg("priority") {
+					d.ScanArgs(t, "priority", &pri)
+				}
 				wrkMap.set(id, &testWork{cancel: cancel})
 				workInfo := WorkInfo{
 					TenantID:        tenant,
-					Priority:        admissionpb.WorkPriority(0),
+					Priority:        admissionpb.WorkPriority(pri),
 					CreateTime:      int64(1) * int64(time.Millisecond),
 					BypassAdmission: bypass,
 					RequestedCount:  requestedCount,
@@ -565,10 +569,35 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "v", &v)
 				q.mu.Lock()
+				if q.mu.maxCPUGroups == nil {
+					q.mu.maxCPUGroups = make(map[uint64]bool)
+				}
+				q.mu.maxCPUGroups[uint64(group)] = v
 				if gi, ok := q.mu.groups[uint64(group)]; ok {
+					prevQual := gi.cpuTimeBurstBucket.burstQualification()
 					gi.cpuTimeBurstBucket.maxCPU = v
+					curQual := gi.cpuTimeBurstBucket.burstQualification()
+					if prevQual != curQual && isInGroupHeap(gi) {
+						q.mu.groupHeap.fix(gi)
+					}
 				}
 				q.mu.Unlock()
+				return ""
+
+			case "set-priority-based-groups":
+				var v bool
+				d.ScanArgs(t, "v", &v)
+				q.setPriorityBasedGroups(v)
+				return ""
+
+			case "refill-burst-bucket-for-group":
+				var group int
+				var toAdd int64
+				var capacity int64
+				d.ScanArgs(t, "group", &group)
+				d.ScanArgs(t, "to-add", &toAdd)
+				d.ScanArgs(t, "capacity", &capacity)
+				q.refillBurstBucketForGroup(uint64(group), toAdd, capacity)
 				return ""
 
 			default:

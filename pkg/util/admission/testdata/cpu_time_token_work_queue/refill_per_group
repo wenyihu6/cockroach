@@ -1,0 +1,104 @@
+###
+# This test exercises refillBurstBucketForGroup, which refills a
+# single group's burst bucket with per-group scaled amounts (as
+# opposed to refillBurstBuckets which applies uniform amounts to
+# all groups).
+###
+init
+----
+
+set-try-get-return-value v=true
+----
+
+# Create three groups.
+admit id=1 tenant=10 requested-count=1
+----
+tryGet: input no_burst, returning true
+id 1: admit succeeded
+
+admit id=2 tenant=20 requested-count=1
+----
+tryGet: input no_burst, returning true
+id 2: admit succeeded
+
+admit id=3 tenant=30 requested-count=1
+----
+tryGet: input no_burst, returning true
+id 3: admit succeeded
+
+# Refill only group 10 with a large amount. Groups 20 and 30 get nothing.
+refill-burst-bucket-for-group group=10 to-add=100 capacity=100
+----
+
+print
+----
+closed epoch: 0 groupHeap len: 0
+ group-id: 10 used: 1, w: 1, fifo: -128
+ group-id: 20 used: 1, w: 1, fifo: -128
+ group-id: 30 used: 1, w: 1, fifo: -128
+burst-buckets: t10=fullness=99.0% tokens=99 capacity=100 qual=can_burst t20=fullness=0.0% tokens=-1 capacity=0 qual=no_burst t30=fullness=0.0% tokens=-1 capacity=0 qual=no_burst
+
+# Group 10 should be at high fullness (can_burst), while groups 20 and
+# 30 remain at -1 tokens with capacity=0 (no_burst).
+
+# Refill group 20 with a smaller amount.
+refill-burst-bucket-for-group group=20 to-add=50 capacity=100
+----
+
+print
+----
+closed epoch: 0 groupHeap len: 0
+ group-id: 10 used: 1, w: 1, fifo: -128
+ group-id: 20 used: 1, w: 1, fifo: -128
+ group-id: 30 used: 1, w: 1, fifo: -128
+burst-buckets: t10=fullness=99.0% tokens=99 capacity=100 qual=can_burst t20=fullness=49.0% tokens=49 capacity=100 qual=no_burst t30=fullness=0.0% tokens=-1 capacity=0 qual=no_burst
+
+# Group 20 is now at 49% (no_burst). Group 30 still untouched.
+
+###
+# Verify that refill-burst-bucket-for-group correctly updates the heap
+# when burst qualification changes.
+###
+
+set-try-get-return-value v=false
+----
+
+# Queue work for groups 10 and 30.
+admit id=4 tenant=10 requested-count=1
+----
+tryGet: input can_burst, returning false
+
+admit id=5 tenant=30 requested-count=1
+----
+
+gc-groups-and-reset-used
+----
+
+# Group 10 is can_burst (100% full), group 30 is no_burst (-1 tokens).
+# Group 10's work should be granted first.
+granted chain-id=1
+----
+continueGrantChain 1
+id 4: admit succeeded
+granted: returned 1
+
+granted chain-id=1
+----
+continueGrantChain 1
+id 5: admit succeeded
+granted: returned 1
+
+###
+# Verify refill for a nonexistent group is a no-op.
+###
+
+refill-burst-bucket-for-group group=999 to-add=100 capacity=100
+----
+
+print
+----
+closed epoch: 0 groupHeap len: 0
+ group-id: 10 used: 1, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+ group-id: 30 used: 1, w: 1, fifo: -128
+burst-buckets: t10=fullness=98.0% tokens=98 capacity=100 qual=can_burst t20=fullness=49.0% tokens=49 capacity=100 qual=no_burst t30=fullness=0.0% tokens=-2 capacity=0 qual=no_burst
