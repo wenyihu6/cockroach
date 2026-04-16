@@ -559,14 +559,14 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				q.gcGroupsResetUsedAndUpdateEstimators()
 				return ""
 
-			case "set-tenant-max-cpu":
-				var tenantID uint64
+			case "set-max-cpu-groups":
+				var group int
 				var v bool
-				d.ScanArgs(t, "tenant", &tenantID)
+				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "v", &v)
 				q.mu.Lock()
-				if ti, ok := q.mu.tenants[tenantID]; ok {
-					ti.cpuTimeBurstBucket.maxCPU = v
+				if gi, ok := q.mu.groups[uint64(group)]; ok {
+					gi.cpuTimeBurstBucket.maxCPU = v
 				}
 				q.mu.Unlock()
 				return ""
