@@ -9,9 +9,11 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/envutil"
 	"github.com/cockroachdb/cockroach/pkg/util/goschedstats"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -83,20 +85,27 @@ type CPUGrantCoordinators struct {
 
 // GetKVWorkQueue returns a WorkQueue to use for KVWork. If
 // admission.cpu_time_tokens.enabled is true, it returns a WorkQueue that
-// implements CPU time token AC. Else it returns a WorkQueue that does
-// slots-based AC. If CPU time token AC, there is one WorkQueue for system
-// tenant work and another for app tenant work. The system tenant WorkQueue
-// is backed by a granter that allows greater resource usage than the app
-// tenant WorkQueue. This is a prioritization scheme. For details regarding
-// the granters, see cpu_time_token_granter.go.
+// implements CPU time token AC. In Serverless mode, there is one
+// WorkQueue for system tenant work and another for app tenant work. In
+// Resource Manager mode, there is a single WorkQueue for all work.
+//
+// The active mode is read from an atomic that the filler goroutine
+// updates in resetInterval, so mode switches take effect atomically
+// with the corresponding bucket configuration changes at the next
+// interval boundary.
 func (coord *CPUGrantCoordinators) GetKVWorkQueue(isSystemTenant bool) *WorkQueue {
 	if !cpuTimeTokenACIsEnabled(&coord.st.SV) {
 		return coord.slotsCoord.GetWorkQueue(KVWork)
 	}
-	if isSystemTenant {
-		return coord.cpuTimeCoord.getWorkQueue(systemTenant)
+	mode := cpuTimeTokenMode(coord.cpuTimeCoord.filler.activeMode.Load())
+	if mode == serverlessMode {
+		if isSystemTenant {
+			return coord.cpuTimeCoord.getWorkQueue(systemTenant)
+		}
+		return coord.cpuTimeCoord.getWorkQueue(appTenant)
 	}
-	return coord.cpuTimeCoord.getWorkQueue(appTenant)
+	// Resource Manager mode: single queue for all work.
+	return coord.cpuTimeCoord.getWorkQueue(0)
 }
 
 // GetSQLWorkQueue returns a WorkQueue for SQLKVResponseWork or
@@ -118,6 +127,38 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setTenantWeights(weights)
 }
 
+// ResourceGroupConfig holds per-resource-group configuration.
+type ResourceGroupConfig struct {
+	Weight uint32
+	MaxCPU bool
+}
+
+// defaultRMResourceGroupConfig is the default resource group
+// configuration used in Resource Manager mode when no external
+// config has been set via SetResourceGroupConfig.
+var defaultRMResourceGroupConfig = map[uint64]ResourceGroupConfig{
+	foregroundResourceGroupID: {Weight: 1, MaxCPU: true},
+	backgroundResourceGroupID: {Weight: 1, MaxCPU: false},
+}
+
+// SetResourceGroupConfig sets per-resource-group weights and maxCPU
+// flags. Only meaningful in Resource Manager mode. Weights are applied
+// immediately; maxCPU and burst fractions are picked up by the filler
+// goroutine in the next resetInterval (within 1s).
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	weights := make(map[uint64]uint32, len(config))
+	for id, cfg := range config {
+		weights[id] = cfg.Weight
+	}
+	coord.SetTenantWeights(weights)
+	configCopy := make(map[uint64]ResourceGroupConfig, len(config))
+	for id, cfg := range config {
+		configCopy[id] = cfg
+	}
+	coord.cpuTimeCoord.resourceGroupConfig.Store(&configCopy)
+	coord.cpuTimeCoord.configDirty.Store(true)
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
@@ -133,6 +174,14 @@ func (cg *CPUGrantCoordinators) Close() {
 type cpuTimeTokenGrantCoordinator struct {
 	filler *cpuTimeTokenFiller
 	queues [numResourceTiers]requesterClose
+	// resourceGroupConfig points to the allocator's atomic config
+	// pointer. Written by SetResourceGroupConfig (external callers),
+	// read by the filler goroutine in resetInterval to recompute
+	// burst fractions from weights.
+	resourceGroupConfig *atomic.Pointer[map[uint64]ResourceGroupConfig]
+	// configDirty points to the allocator's dirty flag. Set by
+	// SetResourceGroupConfig, checked by the filler goroutine.
+	configDirty *atomic.Bool
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -142,10 +191,16 @@ func makeCPUTimeTokenGrantCoordinator(
 	registry *metric.Registry,
 	knobs *TestingKnobs,
 ) *cpuTimeTokenGrantCoordinator {
+	// Always create 2 tiers. In RM mode, tier-1 sits idle (no work
+	// routed, zero refill rates). This enables dynamic mode switching
+	// at runtime without rebuilding queues.
+	initialMode := cpuTimeTokenMode(KVCPUTimeTokenACMode.Get(&settings.SV))
+
 	metrics := makeCPUTimeTokenMetrics()
 	registry.AddMetricStruct(metrics)
 	timeSource := timeutil.DefaultTimeSource{}
 	granter := newCPUTimeTokenGranter(metrics, timeSource)
+
 	model := &cpuTimeTokenLinearModel{
 		granter:            granter,
 		cpuMetricsProvider: opts.CPUMetricsProvider,
@@ -162,6 +217,7 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	var requesters [numResourceTiers]requester
+	var queues [numResourceTiers]workQueueIForAllocator
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		wqOpts := makeWorkQueueOptions(KVWork)
@@ -175,16 +231,16 @@ func makeCPUTimeTokenGrantCoordinator(
 		requesters[tier] = makeWorkQueue(
 			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, wqOpts)
 		granter.requester[tier] = requesters[tier]
+		queues[tier] = requesters[tier].(*WorkQueue)
 	}
 	allocator := &cpuTimeTokenAllocator{
 		granter:  granter,
+		queues:   queues,
 		settings: settings,
 		model:    model,
 		metrics:  metrics,
 	}
-	for tier := 0; tier < int(numResourceTiers); tier++ {
-		allocator.queues[tier] = requesters[tier].(*WorkQueue)
-	}
+	allocator.strategy = allocator.newStrategy(initialMode)
 	filler := &cpuTimeTokenFiller{
 		allocator:  allocator,
 		timeSource: timeSource,
@@ -192,8 +248,13 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
-		filler: filler,
+		filler:              filler,
+		resourceGroupConfig: &allocator.resourceGroupConfig,
+		configDirty:         &allocator.configDirty,
 	}
+	// Initialize the filler's activeMode so GetKVWorkQueue returns the
+	// correct queue before the filler goroutine starts.
+	filler.activeMode.Store(int64(initialMode))
 	for tier := 0; tier < int(numResourceTiers); tier++ {
 		coordinator.queues[tier] = requesters[tier]
 	}
@@ -223,6 +284,13 @@ func makeCPUTimeTokenGrantCoordinator(
 }
 
 func (coord *cpuTimeTokenGrantCoordinator) getWorkQueue(tier resourceTier) *WorkQueue {
+	if buildutil.CrdbTestBuild {
+		mode := cpuTimeTokenMode(coord.filler.activeMode.Load())
+		if mode == resourceManagerMode && tier != 0 {
+			panic(fmt.Sprintf(
+				"queue[%d] accessed in resource manager mode", tier))
+		}
+	}
 	return coord.queues[tier].(*WorkQueue)
 }
 
