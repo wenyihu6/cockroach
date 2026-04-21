@@ -174,18 +174,14 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		settings: st,
 		model:    model,
 		metrics:  metrics,
-		strategy: &rmStrategy{
-			queue: burstMgr,
-			groupBurstFracs: map[uint64]float64{
-				foregroundResourceGroupID: 1.0,
-				backgroundResourceGroupID: 0.25,
-			},
-			groupMaxCPU: map[uint64]bool{
-				foregroundResourceGroupID: true,
-				backgroundResourceGroupID: false,
-			},
-		},
+		strategy: &rmStrategy{queue: burstMgr},
 	}
+	// Store default config and mark dirty so the first resetInterval
+	// call applies it via applyConfig, computing groupBurstFracs from
+	// weights (MaxCPU=true -> 1.0, else -> weight/totalWeight).
+	cfg := defaultRMResourceGroupConfig
+	allocator.resourceGroupConfig.Store(&cfg)
+	allocator.configDirty.Store(true)
 	printBurstMgr = func() string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "burstM  %d\n", burstMgr.tokens)

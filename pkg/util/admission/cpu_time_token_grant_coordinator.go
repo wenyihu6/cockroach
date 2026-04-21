@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
@@ -126,6 +127,38 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setTenantWeights(weights)
 }
 
+// ResourceGroupConfig holds per-resource-group configuration.
+type ResourceGroupConfig struct {
+	Weight uint32
+	MaxCPU bool
+}
+
+// defaultRMResourceGroupConfig is the default resource group
+// configuration used in Resource Manager mode when no external
+// config has been set via SetResourceGroupConfig.
+var defaultRMResourceGroupConfig = map[uint64]ResourceGroupConfig{
+	foregroundResourceGroupID: {Weight: 1, MaxCPU: true},
+	backgroundResourceGroupID: {Weight: 1, MaxCPU: false},
+}
+
+// SetResourceGroupConfig sets per-resource-group weights and maxCPU
+// flags. Only meaningful in Resource Manager mode. Weights are applied
+// immediately; maxCPU and burst fractions are picked up by the filler
+// goroutine in the next resetInterval (within 1s).
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	weights := make(map[uint64]uint32, len(config))
+	for id, cfg := range config {
+		weights[id] = cfg.Weight
+	}
+	coord.SetTenantWeights(weights)
+	configCopy := make(map[uint64]ResourceGroupConfig, len(config))
+	for id, cfg := range config {
+		configCopy[id] = cfg
+	}
+	coord.cpuTimeCoord.resourceGroupConfig.Store(&configCopy)
+	coord.cpuTimeCoord.configDirty.Store(true)
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
@@ -141,6 +174,14 @@ func (cg *CPUGrantCoordinators) Close() {
 type cpuTimeTokenGrantCoordinator struct {
 	filler *cpuTimeTokenFiller
 	queues [numResourceTiers]requesterClose
+	// resourceGroupConfig points to the allocator's atomic config
+	// pointer. Written by SetResourceGroupConfig (external callers),
+	// read by the filler goroutine in resetInterval to recompute
+	// burst fractions from weights.
+	resourceGroupConfig *atomic.Pointer[map[uint64]ResourceGroupConfig]
+	// configDirty points to the allocator's dirty flag. Set by
+	// SetResourceGroupConfig, checked by the filler goroutine.
+	configDirty *atomic.Bool
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -207,7 +248,9 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
-		filler: filler,
+		filler:              filler,
+		resourceGroupConfig: &allocator.resourceGroupConfig,
+		configDirty:         &allocator.configDirty,
 	}
 	// Initialize the filler's activeMode so GetKVWorkQueue returns the
 	// correct queue before the filler goroutine starts.

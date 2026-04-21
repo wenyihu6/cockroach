@@ -193,6 +193,15 @@ type cpuTimeTokenAllocator struct {
 	// current interval. No mutex, since only a single goroutine will
 	// call the allocator.
 	allocated tokenCounts
+	// resourceGroupConfig stores the current resource group
+	// configuration for RM mode. Written by external callers via
+	// SetResourceGroupConfig, read by the filler goroutine in
+	// resetInterval and newStrategy.
+	resourceGroupConfig atomic.Pointer[map[uint64]ResourceGroupConfig]
+	// configDirty is set to true by SetResourceGroupConfig (external
+	// goroutine) and checked by resetInterval (filler goroutine) to
+	// detect config changes without re-applying every interval.
+	configDirty atomic.Bool
 }
 
 // modeStrategy encapsulates the mode-specific behavior of the
@@ -207,6 +216,11 @@ type modeStrategy interface {
 	// per-tick allocation (from allocateTokens) or per-interval delta
 	// (from resetInterval). refillRates is the current refill rates.
 	refillBurst(tokens tokenCounts, refillRates rates)
+	// applyConfig applies resource group configuration to the
+	// strategy's internal state (e.g. groupBurstFracs). No-op for
+	// serverless mode. Does not modify the queue; resetInterval
+	// handles queue configuration after refill.
+	applyConfig(config map[uint64]ResourceGroupConfig)
 }
 
 // serverlessStrategy implements modeStrategy for Serverless mode,
@@ -240,6 +254,8 @@ func (s *serverlessStrategy) computeTargets(
 	return targets
 }
 
+func (s *serverlessStrategy) applyConfig(_ map[uint64]ResourceGroupConfig) {}
+
 func (s *serverlessStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
 	for tier := range s.queues {
 		toAdd := tokens[tier][noBurst] / 4
@@ -260,14 +276,20 @@ type rmStrategy struct {
 	// when KVCPUTimeUtilGoal=0.75 + KVCPUTimeUtilBurstDelta=0.25).
 	// Updated by computeTargets every interval.
 	canBurstTarget float64
-	// groupBurstFracs maps resource group ID to its WEIGHT_CPU fraction
-	// for burst bucket refill scaling. For example, foreground=1.0
-	// (gets 100% of the 100% CPU rate) and background=0.25 (gets 25%).
-	groupBurstFracs map[uint64]float64
-	// groupMaxCPU maps resource group ID to whether that group always
-	// qualifies for burst (MAX_CPU). For example, foreground=true
-	// always qualifies; background=false uses the 90%-fullness check.
-	groupMaxCPU map[uint64]bool
+	// groups maps resource group ID to its per-group config derived
+	// from ResourceGroupConfig. Applied to the queue by resetInterval
+	// after refill is complete.
+	groups map[uint64]rmGroupConfig
+}
+
+// rmGroupConfig holds the derived per-group configuration for RM
+// mode. burstFrac is the group's share of burst bucket refill (e.g.
+// foreground=1.0 for 100% of the 100% CPU rate, background=0.25
+// for 25%). maxCPU controls burst qualification (true = 100%
+// fullness threshold).
+type rmGroupConfig struct {
+	burstFrac float64
+	maxCPU    bool
 }
 
 func (s *rmStrategy) mode() cpuTimeTokenMode {
@@ -289,6 +311,35 @@ func (s *rmStrategy) computeTargets(sv *settings.Values, burstDelta float64) tar
 	// granter's bucket ordering invariants without special-casing.
 	targets[1] = targets[0]
 	return targets
+}
+
+func (s *rmStrategy) applyConfig(config map[uint64]ResourceGroupConfig) {
+	s.groups = computeRMGroupConfigs(config)
+}
+
+// computeRMGroupConfigs derives per-group burst fractions and maxCPU
+// flags from the resource group config. MaxCPU groups get a burst
+// fraction of 1.0 (they can burst to full node CPU). Other groups
+// get their normalized weight share (weight / totalWeight).
+func computeRMGroupConfigs(config map[uint64]ResourceGroupConfig) map[uint64]rmGroupConfig {
+	var totalWeight uint32
+	for _, cfg := range config {
+		totalWeight += cfg.Weight
+	}
+	if totalWeight == 0 {
+		return nil
+	}
+	groups := make(map[uint64]rmGroupConfig, len(config))
+	for id, cfg := range config {
+		var frac float64
+		if cfg.MaxCPU {
+			frac = 1.0
+		} else {
+			frac = float64(cfg.Weight) / float64(totalWeight)
+		}
+		groups[id] = rmGroupConfig{burstFrac: frac, maxCPU: cfg.MaxCPU}
+	}
+	return groups
 }
 
 func (s *rmStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
@@ -315,9 +366,9 @@ func (s *rmStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
 	// Pre-scale per-group and call refillBurstBucketForGroup directly.
 	// Pass the unscaled capacity so the queue can use it as the initial
 	// capacity for newly created groups.
-	for rgID, frac := range s.groupBurstFracs {
+	for rgID, gc := range s.groups {
 		s.queue.refillBurstBucketForGroup(
-			rgID, int64(rate100*frac), int64(cap100*frac), int64(cap100), s.groupMaxCPU[rgID])
+			rgID, int64(rate100*gc.burstFrac), int64(cap100*gc.burstFrac), int64(cap100), gc.maxCPU)
 	}
 }
 
@@ -433,6 +484,16 @@ func refillGranter(
 	granter.refill(toAdd, bucketCapacities, bucketMinimums, updateMetrics)
 }
 
+// getResourceGroupConfig returns the current resource group config,
+// falling back to defaultRMResourceGroupConfig if none has been set
+// via SetResourceGroupConfig.
+func (a *cpuTimeTokenAllocator) getResourceGroupConfig() map[uint64]ResourceGroupConfig {
+	if cfg := a.resourceGroupConfig.Load(); cfg != nil {
+		return *cfg
+	}
+	return defaultRMResourceGroupConfig
+}
+
 // allocateTokens distributes tokens evenly across remaining ticks in
 // the interval, then delegates burst bucket refill to the strategy.
 func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval int64) {
@@ -453,14 +514,19 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenMode {
 	// Determine which strategy to use for this interval's computation.
 	// On mode change, build a new strategy but don't install it yet.
-	// Queue side effects are deferred until after refill.
+	// On config change, apply to the current strategy's internal state.
+	// In both cases, queue side effects are deferred until after
+	// refill.
 	strategy := a.strategy
-	modeChanged := false
+	configChanged := false
 	newMode := cpuTimeTokenMode(
 		KVCPUTimeTokenACMode.Get(&a.settings.SV))
 	if newMode != strategy.mode() {
 		strategy = a.newStrategy(newMode)
-		modeChanged = true
+		configChanged = true
+	} else if a.configDirty.CompareAndSwap(true, false) {
+		strategy.applyConfig(a.getResourceGroupConfig())
+		configChanged = true
 	}
 
 	burstDelta := KVCPUTimeUtilBurstDelta.Get(&a.settings.SV)
@@ -487,7 +553,7 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenM
 	// is complete, so admission behavior only changes once tokens are
 	// in place.
 	a.strategy = strategy
-	if modeChanged {
+	if configChanged {
 		a.configureQueue(strategy)
 	}
 	return strategy.mode()
@@ -500,9 +566,10 @@ func (a *cpuTimeTokenAllocator) configureQueue(strategy modeStrategy) {
 		strategy.mode() == resourceManagerMode)
 }
 
-// newStrategy constructs the modeStrategy for the given mode. Queue
-// side effects are not applied here; resetInterval applies them
-// after the refill is complete.
+// newStrategy constructs the modeStrategy for the given mode and
+// applies the current resource group config. Queue side effects
+// are not applied here; resetInterval applies them after the refill
+// is complete.
 //
 // No explicit bucket reset is needed on mode switch. The granter's
 // tier-1 buckets stay alive across transitions, and the delta
@@ -516,17 +583,10 @@ func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy 
 	case serverlessMode:
 		return &serverlessStrategy{queues: a.queues}
 	case resourceManagerMode:
-		return &rmStrategy{
-			queue: a.queues[0],
-			groupBurstFracs: map[uint64]float64{
-				foregroundResourceGroupID: 1.0,
-				backgroundResourceGroupID: 0.25,
-			},
-			groupMaxCPU: map[uint64]bool{
-				foregroundResourceGroupID: true,
-				backgroundResourceGroupID: false,
-			},
-		}
+		s := &rmStrategy{queue: a.queues[0]}
+		s.applyConfig(a.getResourceGroupConfig())
+		a.configDirty.Store(false)
+		return s
 	default:
 		panic(fmt.Sprintf("unknown cpuTimeTokenMode: %d", mode))
 	}
