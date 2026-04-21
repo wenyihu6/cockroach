@@ -39,8 +39,8 @@ type cpuTimeBurstBucket struct {
 	// maxCPU controls burst qualification:
 	//   true:  always canBurst (MAX_CPU resource groups in RM mode)
 	//   false: canBurst only when tokens > 90% of capacity
-	// Default is false (preserves 90%-fullness check). Per-group
-	// overrides are set via SetMaxCPUGroups.
+	// Default is false (preserves 90%-fullness check). Updated every
+	// refill tick via refillBurstBucketForGroup.
 	maxCPU bool
 	// disabled is true when mode != usesCPUTimeTokens, causing
 	// burstQualification to always return noBurst. This effectively

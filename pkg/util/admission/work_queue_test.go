@@ -439,6 +439,7 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				}
 				q = makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
 					workKind, tg, st, metrics, opts).(*WorkQueue)
+				q.defaultMaxCPU = true
 				q.knobs.DisableCPUTimeTokenEstimation = true
 				tg.r = q
 				wrkMap.resetMap()
@@ -551,6 +552,28 @@ func TestCPUTimeTokenWorkQueue(t *testing.T) {
 				q.gcTenantsResetUsedAndUpdateEstimators()
 				return ""
 
+			case "set-max-cpu-groups":
+				var groupsStr string
+				d.ScanArgs(t, "groups", &groupsStr)
+				fields := strings.FieldsFunc(groupsStr, func(r rune) bool {
+					return r == ':' || r == ',' || unicode.IsSpace(r)
+				})
+				if len(fields)%2 != 0 {
+					return "id and bool are not paired"
+				}
+				groups := make(map[uint64]bool)
+				for i := 0; i < len(fields); i += 2 {
+					id, err := strconv.Atoi(fields[i])
+					require.NoError(t, err)
+					b, err := strconv.ParseBool(fields[i+1])
+					require.NoError(t, err)
+					groups[uint64(id)] = b
+				}
+				q.mu.Lock()
+				q.mu.maxCPUGroups = groups
+				q.mu.Unlock()
+				return ""
+
 			default:
 				return fmt.Sprintf("unknown command: %s", d.Cmd)
 			}
@@ -602,6 +625,7 @@ func TestCPUTimeTokenEstimation(t *testing.T) {
 	st = cluster.MakeTestingClusterSettings()
 	q = makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
 		KVWork, tg, st, metrics, opts).(*WorkQueue)
+	q.defaultMaxCPU = true
 	tg.r = q
 	ctx := context.Background()
 
