@@ -299,6 +299,15 @@ type cpuTimeTokenAllocator struct {
 	// cpuTimeTokenAllocator. No mutex, since only a single goroutine will call
 	// the allocator.
 	allocated tokenCounts
+	// resourceGroupConfig stores the current resource group
+	// configuration for RM mode. Written by external callers via
+	// SetResourceGroupConfig, read by the filler goroutine in
+	// resetInterval and newStrategy.
+	resourceGroupConfig atomic.Pointer[map[uint64]ResourceGroupConfig]
+	// configDirty is set to true by SetResourceGroupConfig (external
+	// goroutine) and checked by resetInterval (filler goroutine) to
+	// detect config changes without re-applying every interval.
+	configDirty atomic.Bool
 }
 
 // modeStrategy encapsulates the mode-specific behavior of the
@@ -612,6 +621,16 @@ func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy 
 // tenants are modeled as resource groups in a single WorkQueue.
 func (a *cpuTimeTokenAllocator) configureQueue() {
 	a.queues[0].setUseResourceGroup(a.strategy.mode() == resourceManagerMode)
+}
+
+// getResourceGroupConfig returns the current resource group config,
+// falling back to defaultRMResourceGroupConfig if none has been set
+// via SetResourceGroupConfig.
+func (a *cpuTimeTokenAllocator) getResourceGroupConfig() map[uint64]ResourceGroupConfig {
+	if cfg := a.resourceGroupConfig.Load(); cfg != nil {
+		return *cfg
+	}
+	return defaultRMResourceGroupConfig
 }
 
 // refillGranter increments per-bucket refill metrics, then delegates
