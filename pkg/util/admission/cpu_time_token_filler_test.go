@@ -135,7 +135,7 @@ func (m *testModel) fit(_ context.Context, targets targetUtilizations) rates {
 	fmt.Fprint(m.buf, "fit(\n")
 	for qual := int(numBurstQualifications - 1); qual >= 0; qual-- {
 		fmt.Fprintf(m.buf, "\t%s -> %v%%\n",
-			burstQualification(qual).String(), round(targets[0][qual]))
+			burstQualification(qual).String(), round(targets[qual]))
 	}
 	fmt.Fprint(m.buf, ")\n")
 	return m.rates
@@ -147,16 +147,12 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 
 	metrics := makeCPUTimeTokenMetrics()
 	granter := newCPUTimeTokenGranter(metrics, timeutil.DefaultTimeSource{})
-	childGranter := &cpuTimeTokenChildGranter{tier: 0, parent: granter}
 	requester := &testRequester{
 		additionalID: "",
-		granter:      childGranter,
+		granter:      granter,
 	}
 	var buf strings.Builder
-	granter.requester[0] = requester
-	// Tier 1 is unused in RM mode but the slot must be non-nil so
-	// tryGrantLocked can call hasWaitingRequests on it.
-	granter.requester[1] = &testRequester{buf: &buf}
+	granter.requester = requester
 	burstMgr := &testBurstManager{}
 	var printBurstMgr func() string
 	flushAndReset := func() string {
@@ -168,14 +164,14 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 	}
 
 	model := &testModel{buf: &buf}
-	model.rates[0][canBurst] = 5000
-	model.rates[0][noBurst] = 4000
+	model.rates[canBurst] = 5000
+	model.rates[noBurst] = 4000
 	st := cluster.MakeClusterSettings()
 	cpuTimeTokenACMode.Override(context.Background(), &st.SV,
 		resourceManagerMode)
 	allocator := &cpuTimeTokenAllocator{
 		granter:  granter,
-		queues:   [numResourceTiers]workQueueIForAllocator{burstMgr},
+		queue:    burstMgr,
 		settings: st,
 		model:    model,
 		metrics:  metrics,
@@ -200,8 +196,8 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 			var increaseRatesBy int64
 			d.MaybeScanArgs(t, "increase_rates_by", &increaseRatesBy)
 			if increaseRatesBy != 0 {
-				model.rates[0][canBurst] += increaseRatesBy
-				model.rates[0][noBurst] += increaseRatesBy
+				model.rates[canBurst] += increaseRatesBy
+				model.rates[noBurst] += increaseRatesBy
 			}
 			allocator.resetInterval(ctx)
 			return flushAndReset()
@@ -213,19 +209,23 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		case "set-tokens":
 			var v int64
 			d.ScanArgs(t, "v", &v)
-			granter.mu.buckets[0][canBurst].tokens = v
-			granter.mu.buckets[0][noBurst].tokens = v
+			granter.mu.buckets[canBurst].tokens = v
+			granter.mu.buckets[noBurst].tokens = v
 			burstMgr.tokens = v
 			return flushAndReset()
 		case "setClusterSettings":
 			ctx := context.Background()
 			var override float64
 			if d.MaybeScanArgs(t, "target", &override) {
-				fmt.Fprintf(&buf, "SET CLUSTER SETTING admission.cpu_time_tokens.target_util = %v\n", override)
+				fmt.Fprintf(&buf,
+					"SET CLUSTER SETTING admission.cpu_time_tokens.target_util = %v\n",
+					override)
 				KVCPUTimeUtilTarget.Override(ctx, &allocator.settings.SV, override)
 			}
 			if d.MaybeScanArgs(t, "burst", &override) {
-				fmt.Fprintf(&buf, "SET CLUSTER SETTING admission.cpu_time_tokens.target_util.burst_delta = %v\n", override)
+				fmt.Fprintf(&buf,
+					"SET CLUSTER SETTING admission.cpu_time_tokens.target_util.burst_delta = %v\n",
+					override)
 				KVCPUTimeUtilBurstDelta.Override(ctx, &allocator.settings.SV, override)
 			}
 			return flushAndReset()
@@ -259,9 +259,8 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	actualCPUTime.append(dur, 1) // appended value ignored by init
 
 	var targets targetUtilizations
-	targets[0][noBurst] = 0.75
-	targets[0][canBurst] = 1.0
-	targets[1] = targets[0]
+	targets[noBurst] = 0.75
+	targets[canBurst] = 1.0
 
 	// The first call to fit inits the model, by setting tokenToCPUTimeMultiplier
 	// to one, since in prod on the first call to fit, there will be no CPU
@@ -274,9 +273,9 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	// test). The unit of refillRates is nanoseconds.
 	//
 	// 75% util -> 10 vCPUs * .75 * 1s = 7.5s
-	require.Equal(t, int64(7500000000), refillRates[0][noBurst])
+	require.Equal(t, int64(7500000000), refillRates[noBurst])
 	// 100% util -> 10 vCPUs * 1.0 * 1s = 10s
-	require.Equal(t, int64(10000000000), refillRates[0][canBurst])
+	require.Equal(t, int64(10000000000), refillRates[canBurst])
 
 	// Below tests are of the computation of tokenToCPUTimeMultiplier only. The
 	// computation of tokenToCPUTimeMultiplier involves state stored on the model,
@@ -409,9 +408,9 @@ func TestCPUTimeTokenLinearModel(t *testing.T) {
 	// equal to 3.0 instead of one.
 	//
 	// 75% -> 10 vCPUs * .75 * 1s = 7.5s -> 7.5s / 3.0 = 2.5s
-	require.Equal(t, int64(2500000000), refillRates[0][noBurst])
+	require.Equal(t, int64(2500000000), refillRates[noBurst])
 	// 100% -> 10 vCPUs * 1.0 * 1s = 10s -> 10s / 3.0 = 3.333...s
-	require.Equal(t, int64(3333333333), refillRates[0][canBurst])
+	require.Equal(t, int64(3333333333), refillRates[canBurst])
 
 	// We do not expect the syscall that fetches CPU usage to ever fail.
 	// Verify that log.Fatalf is called when GetCPUUsage returns an error.

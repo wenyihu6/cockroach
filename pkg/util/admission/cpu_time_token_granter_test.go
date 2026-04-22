@@ -25,18 +25,14 @@ func TestCPUTimeTokenGranter(t *testing.T) {
 	defer log.Scope(t).Close(t)
 
 	granter := newCPUTimeTokenGranter(makeCPUTimeTokenMetrics(), timeutil.DefaultTimeSource{})
-	childGranter := &cpuTimeTokenChildGranter{tier: 0, parent: granter}
 	var buf strings.Builder
 	var lastGranterStateStr string
 	requester := &testRequester{
 		additionalID: "",
-		granter:      childGranter,
+		granter:      granter,
 		buf:          &buf,
 	}
-	granter.requester[0] = requester
-	// Tier 1 is unused in RM mode but the slot must be non-nil so
-	// tryGrantLocked can call hasWaitingRequests on it.
-	granter.requester[1] = &testRequester{buf: &buf}
+	granter.requester = requester
 	requester.returnValueFromHasWaitingRequests = noBurst
 
 	flushAndReset := func(init bool) string {
@@ -56,17 +52,17 @@ func TestCPUTimeTokenGranter(t *testing.T) {
 	datadriven.RunTest(t, datapathutils.TestDataPath(t, "cpu_time_token_granter"), func(t *testing.T, d *datadriven.TestData) string {
 		switch d.Cmd {
 		case "init":
-			granter.mu.buckets[0][canBurst].tokens = 0
-			granter.mu.buckets[0][noBurst].tokens = 0
+			granter.mu.buckets[canBurst].tokens = 0
+			granter.mu.buckets[noBurst].tokens = 0
 			if d.HasArg("can_burst") {
 				var n int64
 				d.ScanArgs(t, "can_burst", &n)
-				granter.mu.buckets[0][canBurst].tokens = n
+				granter.mu.buckets[canBurst].tokens = n
 			}
 			if d.HasArg("no_burst") {
 				var n int64
 				d.ScanArgs(t, "no_burst", &n)
-				granter.mu.buckets[0][noBurst].tokens = n
+				granter.mu.buckets[noBurst].tokens = n
 			}
 			if d.HasArg("waiter") {
 				var n int64
@@ -118,20 +114,20 @@ func TestCPUTimeTokenGranter(t *testing.T) {
 		case "refill":
 			// The delta, bucket capacity, & bucket minimums are hard-coded.
 			var delta tokenCounts
-			delta[0][canBurst] = 5
-			delta[0][noBurst] = 4
+			delta[canBurst] = 5
+			delta[noBurst] = 4
 			var bucketCapacity capacities
-			bucketCapacity[0][canBurst] = 20
-			bucketCapacity[0][noBurst] = 16
+			bucketCapacity[canBurst] = 20
+			bucketCapacity[noBurst] = 16
 			var bucketMins minimums
-			bucketMins[0][canBurst] = 0
-			bucketMins[0][noBurst] = -4
+			bucketMins[canBurst] = 0
+			bucketMins[noBurst] = -4
 			granter.refill(delta, bucketCapacity, bucketMins, true /* updateMetrics */)
 			fmt.Fprint(&buf, "refill(\n")
 			for qual := 0; qual < int(numBurstQualifications); qual++ {
 				fmt.Fprintf(&buf, "\t%s -> delta: %v, cap: %v, min: %v\n",
-					burstQualification(qual).String(), delta[0][qual],
-					bucketCapacity[0][qual], bucketMins[0][qual])
+					burstQualification(qual).String(), delta[qual],
+					bucketCapacity[qual], bucketMins[qual])
 			}
 			fmt.Fprint(&buf, ")\n")
 			return flushAndReset(false /* init */)
@@ -179,11 +175,11 @@ func TestExhaustedDuration(t *testing.T) {
 	tb.updateTokenCount(-50, t0.Add(4*time.Second), false /* flushToMetricNow */)
 	require.Equal(t, int64(3*time.Second), c.Count())
 
-	// Still exhausted, no flush tick — counter unchanged.
+	// Still exhausted, no flush tick - counter unchanged.
 	tb.updateTokenCount(-100, t0.Add(5*time.Second), false /* flushToMetricNow */)
 	require.Equal(t, int64(3*time.Second), c.Count())
 
-	// Still exhausted, flush tick — flushes 2s since exhaustion started. Total = 5s.
+	// Still exhausted, flush tick - flushes 2s since exhaustion started. Total = 5s.
 	tb.updateTokenCount(-100, t0.Add(6*time.Second), true /* flushToMetricNow */)
 	require.Equal(t, int64(5*time.Second), c.Count())
 }
