@@ -82,8 +82,9 @@ type testTokenAllocator struct {
 
 func (m *testTokenAllocator) init() {}
 
-func (a *testTokenAllocator) resetInterval(context.Context) {
+func (a *testTokenAllocator) resetInterval(context.Context) cpuTimeTokenMode {
 	fmt.Fprintf(a.buf, "resetInterval()\n")
+	return serverlessMode
 }
 
 func (a *testTokenAllocator) allocateTokens(remainingTicks int64) {
@@ -108,6 +109,11 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 		m.tokens = -capacity / 4
 	}
 }
+
+func (m *testBurstManager) refillBurstBucketForGroup(_ uint64, _ int64, _ int64, _ int64, _ bool) {
+}
+
+func (m *testBurstManager) setUseResourceGroup(_ bool) {}
 
 func (m *testModel) init() {}
 
@@ -174,15 +180,17 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		testTier0: {},
 		testTier1: {},
 	}
+	queues := [numResourceTiers]workQueueIForAllocator{
+		testTier0: burstMgrs[testTier0],
+		testTier1: burstMgrs[testTier1],
+	}
 	allocator := cpuTimeTokenAllocator{
 		granter:  granter,
 		settings: cluster.MakeClusterSettings(),
 		model:    model,
 		metrics:  metrics,
-		queues: [numResourceTiers]workQueueIForAllocator{
-			testTier0: burstMgrs[testTier0],
-			testTier1: burstMgrs[testTier1],
-		},
+		queues:   queues,
+		strategy: &serverlessStrategy{queues: queues},
 	}
 	printBurstMgrs = func() string {
 		var b strings.Builder

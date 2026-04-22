@@ -51,68 +51,66 @@ func TestCPUTimeTokenACEnableAndDisable(t *testing.T) {
 	coords := NewGrantCoordinators(ambientCtx, settings, opts, registry, &noopOnLogEntryAdmitted{}, knobs)
 	defer coords.Close()
 	cpuCoords := coords.RegularCPU
-
 	ctx := context.Background()
-	defer func(prevMode cpuTimeTokenMode, prevEnabled bool) {
-		cpuTimeTokenACMode.Override(ctx, &settings.SV, prevMode)
-		cpuTimeTokenACEnabled.Override(ctx, &settings.SV, prevEnabled)
-	}(cpuTimeTokenACMode.Get(&settings.SV), cpuTimeTokenACEnabled.Get(&settings.SV))
 
-	// Both settings off: slot-based AC.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, offMode)
+	defer func(prev bool) {
+		cpuTimeTokenACEnabled.Override(ctx, &settings.SV, prev)
+	}(cpuTimeTokenACEnabled.Get(&settings.SV))
+
+	// Test that if setting is disabled, WorkQueues uses slots, else they
+	// use CPU time tokens.
 	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, false)
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.Equal(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	// If CPU time token AC is disabled, we use the slots-based WorkQueue
+	// for both system & app tenant work.
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
-	// Mode set to serverless: CPU time token AC.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, serverlessMode)
-	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, false)
-	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
-	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.NotEqual(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
-
-	// Mode set to resource_manager: CPU time token AC.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, resourceManagerMode)
-	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, false)
-	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
-	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.NotEqual(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
-
-	// Legacy bool fallback: mode is off but enabled=true enables CTT AC.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, offMode)
+	// Default mode is Serverless - 2 separate queues.
 	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, true)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.NotEqual(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	// In Serverless mode, system and app tenant work use different queues.
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
-	// Kill switch overrides all modes.
+	// Switch to RM mode dynamically - single queue for all work.
+	// In production, mode changes take effect when the filler goroutine
+	// calls resetInterval and publishes the new mode. Since the filler
+	// goroutine is disabled in this test, we update the atomic directly.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
+		int64(resourceManagerMode))
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+
+	// Switch back to Serverless - 2 separate queues again.
+	cpuCoords.cpuTimeCoord.filler.activeMode.Store(
+		int64(serverlessMode))
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+
+	// Test that the env var kill switch overrides the cluster setting.
 	defer func(prev bool) {
 		cpuTimeTokenACKillSwitch = prev
 	}(cpuTimeTokenACKillSwitch)
-
-	// Kill switch overrides serverlessMode.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, serverlessMode)
-	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, false)
 	cpuTimeTokenACKillSwitch = true
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.Equal(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	require.Equal(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 
-	// Kill switch overrides resourceManagerMode.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, resourceManagerMode)
-	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
-	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-
-	// Kill switch overrides legacy bool fallback.
-	cpuTimeTokenACMode.Override(ctx, &settings.SV, offMode)
-	cpuTimeTokenACEnabled.Override(ctx, &settings.SV, true)
-	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
-	require.Equal(t, usesSlots, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-
-	// Disabling kill switch restores CPU time token AC.
+	// Disabling the kill switch restores CPU time token AC (setting is
+	// still enabled, mode is still Serverless from above).
 	cpuTimeTokenACKillSwitch = false
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */).mode)
 	require.Equal(t, usesCPUTimeTokens, cpuCoords.GetKVWorkQueue(true /* isSystemTenant */).mode)
-	require.NotEqual(t, cpuCoords.GetKVWorkQueue(false /* isSystemTenant */), cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
+	require.NotEqual(t,
+		cpuCoords.GetKVWorkQueue(false /* isSystemTenant */),
+		cpuCoords.GetKVWorkQueue(true /* isSystemTenant */))
 }

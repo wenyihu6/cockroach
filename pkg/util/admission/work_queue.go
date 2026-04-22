@@ -328,8 +328,9 @@ type WorkQueue struct {
 			active, inactive map[uint64]uint32
 		}
 		// maxCPUGroups maps resource group ID to whether that group always
-		// qualifies for burst (MAX_CPU). Only used if mode == usesCPUTimeTokens and
-		// admission.cpu_time_tokens.mode == "resource_manager".
+		// qualifies for burst (MAX_CPU). Maintained by
+		// refillBurstBucketForGroup so new groups pick up the
+		// correct initial flag. Only used if mode == usesCPUTimeTokens.
 		maxCPUGroups map[uint64]bool
 
 		// useResourceGroup, when true, derives the resource group ID from
@@ -354,16 +355,14 @@ type WorkQueue struct {
 		maxQueueDelayToSwitchToLifo time.Duration
 		// Only used if mode == usesCPUTimeTokens.
 		defaultCPUTimeTokenEstimator cpuTimeTokenEstimator
-		// burstBucketCapacity is the capacity for newly created group burst
-		// buckets. Note that buckets init full, so burstBucketCapacity is also
-		// the starting token count. Updated by refillBurstBuckets. Only used
-		// if mode == usesCPUTimeTokens.
-		//
-		// TODO(wenyihu6): For RM, a group that appears between refills will use
-		// burstBucketCapacity (which may be stale or zero) until the next refill
-		// delivers its correct per-group capacity within 1ms. We should plumb the
-		// per-group capacity to newGroupInfo at creation time so new groups don't
-		// wait for the next refill cycle.
+		// burstBucketCapacity is the base capacity for burst buckets,
+		// used as the initial capacity for newly created groups
+		// (buckets init full so new groups can burst immediately).
+		// In Serverless mode, this is the uniform capacity passed to
+		// all groups. In RM mode, this is the unscaled (100% CPU)
+		// capacity; new groups init with this value and receive the
+		// correct per-group scaled capacity on the next refill
+		// (within 1ms). Only used if mode == usesCPUTimeTokens.
 		burstBucketCapacity int64
 		// overrideAllToBypassAdmission, when true, causes all work to bypass
 		// admission control. Used by CPU time token AC.
@@ -1413,29 +1412,48 @@ func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 }
 
 // refillBurstBucketForGroup adds tokens to a specific resource group's
-// burst bucket and updates its capacity. This is called by
-// rmStrategy.refillBurst with pre-scaled per-group amounts. For example,
-// a group with WEIGHT_CPU=10% gets toAdd and capacity equal to 10% of the
-// 100% CPU rate, so its burst bucket stays at steady state when the
-// group uses ~10% of node CPU.
-// TODO(wenyihu6): actually finish the plumbing from ^
+// burst bucket and updates its capacity. Called by rmStrategy.refillBurst
+// with pre-scaled per-group amounts. For example, a group with
+// WEIGHT_CPU=10% gets toAdd and capacity equal to 10% of the 100% CPU
+// rate, so its burst bucket stays at steady state when the group uses
+// ~10% of node CPU.
+//
+// The maxCPU flag and maxCPUGroups map are maintained here so that newly
+// created groups (which appear between refill ticks) pick up the correct
+// initial flag via getMaxCPULocked.
 //
 // If the group's burst qualification changes, its position in the
 // groupHeap is updated.
-//
-// TODO(wenyihu6): investigate whether refill rates need a pre-warming
-// period after RM config changes. A sudden config swap (e.g. changing
-// which groups have maxCPU) could interact poorly with the filler's
-// model if it hasn't had time to stabilize at the new rates.
-func (q *WorkQueue) refillBurstBucketForGroup(groupID uint64, toAdd int64, capacity int64) {
+func (q *WorkQueue) refillBurstBucketForGroup(
+	groupID uint64, toAdd int64, capacity int64, unscaledCapacity int64, maxCPU bool,
+) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	// Maintain the maxCPU map so newly created groups (which appear
+	// between refill ticks) pick up the correct initial flag via
+	// getMaxCPULocked.
+	if q.mu.maxCPUGroups == nil {
+		q.mu.maxCPUGroups = make(map[uint64]bool)
+	}
+	q.mu.maxCPUGroups[groupID] = maxCPU
 	group, ok := q.mu.groups[groupID]
 	if !ok {
 		return
 	}
-	q.mu.burstBucketCapacity = capacity
-	q.refillBurstBucketLocked(group, toAdd, capacity)
+	// Store the unscaled (100% CPU) capacity for initializing newly
+	// created groups. We cannot store the per-group scaled capacity
+	// here because each group has a different scale factor; using the
+	// unscaled value means new groups start full and can burst
+	// immediately, with the correct per-group capacity applied on the
+	// next refill (within 1ms).
+	q.mu.burstBucketCapacity = unscaledCapacity
+	prevBurstQual := group.cpuTimeBurstBucket.burstQualification()
+	group.cpuTimeBurstBucket.maxCPU = maxCPU
+	group.cpuTimeBurstBucket.refill(toAdd, capacity)
+	curBurstQual := group.cpuTimeBurstBucket.burstQualification()
+	if prevBurstQual != curBurstQual && isInGroupHeap(group) {
+		q.mu.groupHeap.fix(group)
+	}
 }
 
 // refillBurstBucketLocked refills a group's burst bucket and fixes its
@@ -1550,28 +1568,6 @@ func (q *WorkQueue) getMaxCPULocked(groupID uint64) bool {
 		}
 	}
 	return false
-}
-
-// SetMaxCPUGroups replaces all per-resource-group maxCPU flags with
-// the provided map. Groups absent from the map revert to the default
-// (maxCPU=false). Existing groups have their burst buckets updated;
-// new groups will pick up their flag when created. The map is captured
-// by reference; the caller must not modify it after calling.
-func (q *WorkQueue) SetMaxCPUGroups(groups map[uint64]bool) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.mu.maxCPUGroups = groups
-	for id, group := range q.mu.groups {
-		maxCPU := q.getMaxCPULocked(id)
-		if group.cpuTimeBurstBucket.maxCPU != maxCPU {
-			prevQual := group.cpuTimeBurstBucket.burstQualification()
-			group.cpuTimeBurstBucket.maxCPU = maxCPU
-			curQual := group.cpuTimeBurstBucket.burstQualification()
-			if prevQual != curQual && isInGroupHeap(group) {
-				q.mu.groupHeap.fix(group)
-			}
-		}
-	}
 }
 
 // SetOverrideAllToBypassAdmission sets whether all work should bypass
