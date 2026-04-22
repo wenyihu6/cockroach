@@ -568,16 +568,23 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				var v bool
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "v", &v)
-				// Build the full map from current state plus the new entry,
-				// then call the production SetMaxCPUGroups method.
+				// Set the maxCPU flag directly on the group's burst bucket
+				// and maintain the maxCPUGroups map. This mirrors what
+				// refillBurstBucketForGroup does in production.
 				q.mu.Lock()
-				m := make(map[uint64]bool)
-				for k, val := range q.mu.maxCPUGroups {
-					m[k] = val
+				if q.mu.maxCPUGroups == nil {
+					q.mu.maxCPUGroups = make(map[uint64]bool)
+				}
+				q.mu.maxCPUGroups[uint64(group)] = v
+				if g, ok := q.mu.groups[uint64(group)]; ok {
+					prevQual := g.cpuTimeBurstBucket.burstQualification()
+					g.cpuTimeBurstBucket.maxCPU = v
+					curQual := g.cpuTimeBurstBucket.burstQualification()
+					if prevQual != curQual && isInGroupHeap(g) {
+						q.mu.groupHeap.fix(g)
+					}
 				}
 				q.mu.Unlock()
-				m[uint64(group)] = v
-				q.SetMaxCPUGroups(m)
 				return ""
 
 			case "set-priority-based-groups":
@@ -593,7 +600,12 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "to-add", &toAdd)
 				d.ScanArgs(t, "capacity", &capacity)
-				q.refillBurstBucketForGroup(uint64(group), toAdd, capacity)
+				var maxCPU bool
+				if d.HasArg("max-cpu") {
+					d.ScanArgs(t, "max-cpu", &maxCPU)
+				}
+				q.refillBurstBucketForGroup(
+					uint64(group), toAdd, capacity, capacity, maxCPU)
 				return ""
 
 			default:

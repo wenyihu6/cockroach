@@ -37,9 +37,6 @@ import "github.com/cockroachdb/redact"
 // With cluster settings at their default values, this implies that
 // an application tenant can burst, if they are using roughly less
 // than 20% of the CPU on a CRDB node (0.8 * 0.25 = 0.2).
-//
-// TODO(wenyihu6): refillBurstBuckets currently applies the same uniform
-// toAdd/capacity to all groups. Add per-group scaling of refill rates.
 type cpuTimeBurstBucket struct {
 	tokens   int64
 	capacity int64
@@ -47,8 +44,11 @@ type cpuTimeBurstBucket struct {
 	// burstQualification to always return noBurst. This effectively
 	// disables the burstQualification functionality.
 	disabled bool
-	// maxCPU is true for MAX_CPU resource groups in RM mode.
-	// See cpuTimeBurstBucket comment for burst qualification rules.
+	// maxCPU controls burst qualification:
+	//   true:  always canBurst (MAX_CPU resource groups in RM mode)
+	//   false: canBurst only when tokens > 90% of capacity
+	// Default is false (preserves 90%-fullness check). Updated every
+	// refill tick via refillBurstBucketForGroup.
 	maxCPU bool
 }
 
