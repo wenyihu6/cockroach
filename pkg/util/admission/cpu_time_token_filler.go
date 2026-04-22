@@ -299,6 +299,15 @@ type cpuTimeTokenAllocator struct {
 	// cpuTimeTokenAllocator. No mutex, since only a single goroutine will call
 	// the allocator.
 	allocated tokenCounts
+	// resourceGroupConfig stores the current resource group
+	// configuration for RM mode. Written by external callers via
+	// SetResourceGroupConfig, read by the filler goroutine in
+	// resetInterval and newStrategy.
+	resourceGroupConfig atomic.Pointer[map[uint64]ResourceGroupConfig]
+	// configDirty is set to true by SetResourceGroupConfig (external
+	// goroutine) and checked by resetInterval (filler goroutine) to
+	// detect config changes without re-applying every interval.
+	configDirty atomic.Bool
 }
 
 // modeStrategy encapsulates the mode-specific behavior of the
@@ -313,6 +322,11 @@ type modeStrategy interface {
 	// per-tick allocation (from allocateTokens) or per-interval delta
 	// (from resetInterval). refillRates is the current refill rates.
 	refillBurst(tokens tokenCounts, refillRates rates)
+	// applyConfig applies resource group configuration to the
+	// strategy's internal state (e.g. per-group burst fracs). No-op for
+	// serverless mode. Does not modify the queue; resetInterval
+	// handles queue configuration after refill.
+	applyConfig(config map[uint64]ResourceGroupConfig)
 }
 
 // serverlessStrategy implements modeStrategy for Serverless mode,
@@ -352,11 +366,110 @@ func (s *serverlessStrategy) computeTargets(
 	return targets
 }
 
+func (s *serverlessStrategy) applyConfig(_ map[uint64]ResourceGroupConfig) {}
+
 func (s *serverlessStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
 	for tier := range s.queues {
 		toAdd := tokens[tier][noBurst] / 4
 		burstCapacity := refillRates[tier][noBurst] / 4
 		s.queues[tier].refillBurstBuckets(toAdd, burstCapacity)
+	}
+}
+
+// rmStrategy implements modeStrategy for Resource Manager mode, which
+// uses a single WorkQueue with N resource groups and a single
+// utilization target. Burst bucket refill normalizes to 100% CPU by
+// dividing out canBurstTarget, then pre-scales per-group amounts
+// by that group's weight fraction before calling
+// refillBurstBucketForGroup.
+type rmStrategy struct {
+	queue workQueueIForAllocator
+	// canBurstTarget stores the canBurst utilization target (e.g., 1.0
+	// when KVCPUTimeUtilTarget=0.75 + KVCPUTimeUtilBurstDeltaRM=0.25).
+	// Updated by computeTargets every interval.
+	canBurstTarget float64
+	// groups maps resource group ID to its per-group config derived
+	// from ResourceGroupConfig. Applied to the queue by resetInterval
+	// after refill is complete.
+	groups map[uint64]rmGroupConfig
+}
+
+// rmGroupConfig holds the derived per-group configuration for RM
+// mode. burstFrac is the group's share of burst bucket refill (e.g.
+// high=1.0 for 100% of the 100% CPU rate, low=0.25 for 25%). maxCPU
+// controls burst qualification (true = always qualifies for burst).
+type rmGroupConfig struct {
+	burstFrac float64
+	maxCPU    bool
+}
+
+func (s *rmStrategy) mode() cpuTimeTokenMode {
+	return resourceManagerMode
+}
+
+func (s *rmStrategy) computeTargets(sv *settings.Values, burstDelta float64) targetUtilizations {
+	var targets targetUtilizations
+	noBurstTarget := KVCPUTimeUtilTarget.Get(sv)
+	targets[0][noBurst] = noBurstTarget
+	targets[0][canBurst] = noBurstTarget + burstDelta
+	s.canBurstTarget = targets[0][canBurst]
+	// Mirror tier-0 targets to tier-1 so all array slots have valid
+	// values. Tier-1 sits idle in RM mode (no work is routed to it)
+	// but receives the same refill rates and token deductions as
+	// tier-0. This is harmless: tryGrantLocked skips tier-1 because
+	// its requester has no waiting work, and the symmetric deductions
+	// keep both tiers' token counts in lockstep, preserving the
+	// granter's bucket ordering invariants without special-casing.
+	targets[1] = targets[0]
+	return targets
+}
+
+func (s *rmStrategy) applyConfig(config map[uint64]ResourceGroupConfig) {
+	s.groups = computeRMGroupConfigs(config)
+}
+
+// computeRMGroupConfigs derives per-group burst fractions and maxCPU
+// flags from the resource group config. MaxCPU groups get a burst
+// fraction of 1.0 (they can burst to full node CPU). Other groups
+// get their normalized weight share (weight / totalWeight).
+func computeRMGroupConfigs(config map[uint64]ResourceGroupConfig) map[uint64]rmGroupConfig {
+	var totalWeight uint32
+	for _, cfg := range config {
+		totalWeight += cfg.Weight
+	}
+	if totalWeight == 0 {
+		return nil
+	}
+	groups := make(map[uint64]rmGroupConfig, len(config))
+	for id, cfg := range config {
+		var frac float64
+		if cfg.MaxCPU {
+			frac = 1.0
+		} else {
+			frac = float64(cfg.Weight) / float64(totalWeight)
+		}
+		groups[id] = rmGroupConfig{burstFrac: frac, maxCPU: cfg.MaxCPU}
+	}
+	return groups
+}
+
+func (s *rmStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
+	if s.canBurstTarget <= 0 {
+		return
+	}
+	// Normalize to the 100% CPU rate by dividing out canBurstTarget.
+	// This relies on cpuTimeTokenLinearModel computing rates as
+	// rate = cpuCapacity * time.Second * target / multiplier, so
+	// rate / target is constant across targets. If the model becomes
+	// non-linear, have fit return the full-CPU rate as a separate
+	// value instead of recovering it via division here.
+	rate100 := float64(tokens[0][canBurst]) / s.canBurstTarget
+	cap100 := float64(refillRates[0][canBurst]) / s.canBurstTarget
+	// Pre-scale per-group and call refillBurstBucketForGroup directly.
+	for rgID, gc := range s.groups {
+		s.queue.refillBurstBucketForGroup(
+			rgID, int64(rate100*gc.burstFrac), int64(cap100*gc.burstFrac),
+			int64(cap100), gc.maxCPU)
 	}
 }
 
@@ -511,13 +624,19 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 // granter and burst buckets. If the mode cluster setting has changed,
 // the strategy is swapped before computing targets.
 func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenMode {
-	// Check for mode transition. a.strategy is only accessed by the
-	// filler goroutine, so we can update it immediately.
-	modeChanged := false
+	// Check for mode transition or config change. a.strategy is only
+	// accessed by the filler goroutine, so we can update it
+	// immediately. On mode change, build a new strategy. On config
+	// change, apply to the existing strategy's internal state. In
+	// both cases, queue side effects are deferred until after refill.
+	configChanged := false
 	newMode := cpuTimeTokenACMode.Get(&a.settings.SV)
-	if newMode != a.strategy.mode() {
+	if newMode != offMode && newMode != a.strategy.mode() {
 		a.strategy = a.newStrategy(newMode)
-		modeChanged = true
+		configChanged = true
+	} else if a.configDirty.CompareAndSwap(true, false) {
+		a.strategy.applyConfig(a.getResourceGroupConfig())
+		configChanged = true
 	}
 
 	burstDelta := KVCPUTimeUtilBurstDelta.Get(&a.settings.SV)
@@ -568,15 +687,16 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenM
 	// CTT queue that has stale token levels or wrong group derivation
 	// (e.g. TenantID instead of Priority), breaking fair-sharing until
 	// the next interval.
-	if modeChanged {
+	if configChanged {
 		a.configureQueue()
 	}
 	return a.strategy.mode()
 }
 
-// newStrategy constructs the modeStrategy for the given mode. Queue
-// side effects are not applied here; resetInterval applies them
-// after the refill is complete.
+// newStrategy constructs the modeStrategy for the given mode and
+// applies the current resource group config. Queue side effects
+// are not applied here; resetInterval applies them after the refill
+// is complete.
 //
 // No explicit bucket reset is needed on mode switch. The granter's
 // tier-1 buckets stay alive across transitions, and the delta
@@ -590,17 +710,27 @@ func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy 
 	case serverlessMode:
 		return &serverlessStrategy{queues: a.queues}
 	case resourceManagerMode:
-		// TODO(wenyihu6): implement this
-		panic(fmt.Sprintf("resourceManagerMode not implemented yet"))
+		s := &rmStrategy{queue: a.queues[0]}
+		s.applyConfig(a.getResourceGroupConfig())
+		a.configDirty.Store(false)
+		return s
 	default:
 		panic(fmt.Sprintf("unknown cpuTimeTokenMode: %d", mode))
 	}
 }
 
+// getResourceGroupConfig returns the current resource group config,
+// falling back to defaultRMResourceGroupConfig if none has been set
+// via SetResourceGroupConfig.
+func (a *cpuTimeTokenAllocator) getResourceGroupConfig() map[uint64]ResourceGroupConfig {
+	if cfg := a.resourceGroupConfig.Load(); cfg != nil {
+		return *cfg
+	}
+	return defaultRMResourceGroupConfig
+}
+
 // configureQueue applies mode-specific settings to the WorkQueue.
 // Called at the end of resetInterval after refill is complete.
-//
-// TODO(wenyihu6): clean up
 func (a *cpuTimeTokenAllocator) configureQueue() {
 	a.queues[0].setUseResourceGroup(a.strategy.mode() == resourceManagerMode)
 }
@@ -630,10 +760,14 @@ func refillGranter(
 	granter.refill(toAdd, bucketCapacities, bucketMinimums, updateMetrics)
 }
 
-// workQueueIForAllocator abstracts the burst bucket refill method in WorkQueue,
-// to enable unit testing.
+// workQueueIForAllocator abstracts the burst bucket refill methods in
+// WorkQueue, to enable unit testing.
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
+	refillBurstBucketForGroup(
+		rgID uint64, toAdd int64, capacity int64,
+		unscaledCapacity int64, maxCPU bool,
+	)
 	setUseResourceGroup(enabled bool)
 }
 
