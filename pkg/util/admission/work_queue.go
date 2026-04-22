@@ -349,12 +349,13 @@ type WorkQueue struct {
 		// Manager mode to split work into foreground (priority >= NormalPri)
 		// and background (priority < NormalPri) groups.
 		//
-		// This is a bool rather than a live read of the cluster setting so
-		// that mode transitions can update this and all components have a
-		// consistent view.
-		//
-		// TODO(wenyihu): support mode transitions and consider
-		// replacing this with an enum for serverless vs RM mode.
+		// This is a bool set by the filler goroutine rather than a direct
+		// read of the cpuTimeTokenMode cluster setting because mode
+		// transitions also affect the allocator strategy, queue
+		// configuration (burst fractions, maxCPU), and work routing
+		// (activeMode). The filler coordinates all of these together in
+		// resetInterval. Reading the cluster setting directly here could
+		// observe RM mode before the other components are configured for it.
 		useResourceGroup bool
 
 		// The highest epoch that is closed.
