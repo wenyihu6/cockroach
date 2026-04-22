@@ -269,7 +269,14 @@ func makeCPUTimeTokenGrantCoordinator(
 	// Always create 2 tiers. In RM mode, tier-1 sits idle (no work
 	// routed, zero refill rates). This enables dynamic mode switching
 	// at runtime without rebuilding queues.
+	// Default to serverless when mode is off (legacy bool path or CTT
+	// not yet enabled). The strategy only matters when the filler runs,
+	// and the filler only starts when CTT is enabled. Using serverless
+	// as the default preserves the legacy 2-queue behavior.
 	initialMode := cpuTimeTokenACMode.Get(&settings.SV)
+	if initialMode == offMode {
+		initialMode = serverlessMode
+	}
 	metrics := makeCPUTimeTokenMetrics()
 	registry.AddMetricStruct(metrics)
 	timeSource := timeutil.DefaultTimeSource{}
