@@ -731,8 +731,17 @@ func (a *cpuTimeTokenAllocator) getResourceGroupConfig() map[uint64]ResourceGrou
 
 // configureQueue applies mode-specific settings to the WorkQueue.
 // Called at the end of resetInterval after refill is complete.
+// In RM mode, pre-creates groups from the resource group config
+// so they are ready before work arrives. In serverless mode,
+// clears any pinned groups so they can be GC'd.
 func (a *cpuTimeTokenAllocator) configureQueue() {
-	a.queues[0].setUseResourceGroup(a.strategy.mode() == resourceManagerMode)
+	isRM := a.strategy.mode() == resourceManagerMode
+	a.queues[0].setUseResourceGroup(isRM)
+	if isRM {
+		a.queues[0].setPinnedResourceGroups(a.getResourceGroupConfig())
+	} else {
+		a.queues[0].setPinnedResourceGroups(nil)
+	}
 }
 
 // refill increments per-bucket refill metrics, then delegates to
@@ -769,6 +778,7 @@ type workQueueIForAllocator interface {
 		unscaledCapacity int64, maxCPU bool,
 	)
 	setUseResourceGroup(enabled bool)
+	setPinnedResourceGroups(configs map[uint64]ResourceGroupConfig)
 }
 
 // cpuTimeModel abstracts cpuTimeLinearModel for testing.

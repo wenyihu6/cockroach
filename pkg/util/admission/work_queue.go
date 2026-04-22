@@ -327,11 +327,11 @@ type WorkQueue struct {
 			// The maps are lazily allocated.
 			active, inactive map[uint64]uint32
 		}
-		// maxCPUGroups maps resource group ID to whether that group always
-		// qualifies for burst (MAX_CPU). Maintained by
-		// refillBurstBucketForGroup so new groups pick up the
-		// correct initial flag. Only used if mode == usesCPUTimeTokens.
-		maxCPUGroups map[uint64]bool
+		// pinnedGroups is the set of resource group IDs that were
+		// pre-created by setPinnedResourceGroups. These groups are
+		// exempt from GC so they remain available even when idle.
+		// Only populated in Resource Manager mode.
+		pinnedGroups map[uint64]struct{}
 
 		// useResourceGroup, when true, derives the resource group ID from
 		// WorkInfo.Priority instead of WorkInfo.TenantID. Used in Resource
@@ -738,6 +738,50 @@ func (q *WorkQueue) setUseResourceGroup(enabled bool) {
 	q.mu.useResourceGroup = enabled
 }
 
+// setPinnedResourceGroups pre-creates groupInfo structs for all
+// configured resource groups and pins them from GC. Groups that
+// already exist have their weight and maxCPU updated in place.
+// Passing nil clears all pinned groups (e.g. on switch to
+// serverless mode), allowing them to be GC'd normally.
+//
+// Pre-creation is preferred over on-demand creation in Admit
+// because the filler goroutine needs to know maxCPU for each group
+// when calling refillBurstBucketForGroup. Without pre-creation,
+// the first request to a group would always get no_burst
+// qualification until the next refill cycle. Pre-creation also
+// avoids needing a config lookup in Admit to determine maxCPU.
+// The cost is just a few pinned groupInfo structs that skip GC.
+//
+// Called by configureQueue at the end of resetInterval, after
+// tokens are in place.
+func (q *WorkQueue) setPinnedResourceGroups(configs map[uint64]ResourceGroupConfig) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.mu.pinnedGroups = nil
+	if configs == nil {
+		return
+	}
+	q.mu.pinnedGroups = make(map[uint64]struct{}, len(configs))
+	for id, cfg := range configs {
+		q.mu.pinnedGroups[id] = struct{}{}
+		group, ok := q.mu.groups[id]
+		if !ok {
+			group = newGroupInfo(id, cfg.Weight, q.mode,
+				q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(),
+				q.mu.burstBucketCapacity, cfg.MaxCPU, q.perGroupAggMetrics)
+			q.mu.groups[id] = group
+		} else {
+			group.weight = cfg.Weight
+			prevQual := group.cpuTimeBurstBucket.burstQualification()
+			group.cpuTimeBurstBucket.maxCPU = cfg.MaxCPU
+			curQual := group.cpuTimeBurstBucket.burstQualification()
+			if prevQual != curQual && isInGroupHeap(group) {
+				q.mu.groupHeap.fix(group)
+			}
+		}
+	}
+}
+
 // groupIDForWorkLocked returns the resource group ID for the given
 // WorkInfo. In RM mode (useResourceGroup), the group is derived from
 // WorkInfo.Priority; otherwise it is the TenantID.
@@ -807,15 +851,20 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 
 	group, ok := q.mu.groups[groupID]
 	if !ok {
+		// In RM mode, all groups should be pre-created by
+		// setPinnedResourceGroups before work arrives.
+		if buildutil.CrdbTestBuild && q.mu.useResourceGroup {
+			panic(fmt.Sprintf(
+				"group %d not pre-created in resource manager mode", groupID))
+		}
 		// See comment below about CPU time token estimation. If no groupInfo
 		// struct exists for a group, then there is no cpuTimeTokenEstimator
 		// dedicated to that group yet. When we create the groupInfo struct
 		// here, we also create the estimator. We init the estimator using a
 		// global estimator that sees workload across all groups.
-		maxCPU := q.getMaxCPULocked(groupID)
 		group = newGroupInfo(groupID, q.getGroupWeightLocked(groupID),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
-			maxCPU, q.perGroupAggMetrics)
+			false /* maxCPU */, q.perGroupAggMetrics)
 		q.mu.groups[groupID] = group
 	}
 	// If mode == usesCPUTimeTokens, WorkQueue does CPU time token estimation.
@@ -956,10 +1005,15 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// groupInfo struct is declared.
 		group, ok = q.mu.groups[groupID]
 		if !ok {
-			maxCPU := q.getMaxCPULocked(groupID)
+			// In RM mode, pinned groups are exempt from GC, so this
+			// path should not be reached for configured groups.
+			if buildutil.CrdbTestBuild && q.mu.useResourceGroup {
+				panic(fmt.Sprintf(
+					"group %d not pre-created in resource manager mode", groupID))
+			}
 			group = newGroupInfo(groupID, q.getGroupWeightLocked(groupID),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
-				maxCPU, q.perGroupAggMetrics)
+				false /* maxCPU */, q.perGroupAggMetrics)
 			q.mu.groups[groupID] = group
 		}
 		q.adjustGroupUsedLocked(group, -info.RequestedCount)
@@ -1320,6 +1374,12 @@ func (q *WorkQueue) gcGroupsResetUsedAndUpdateEstimators() {
 	// needed.
 	for id, info := range q.mu.groups {
 		if info.used == 0 && !isInGroupHeap(info) {
+			// Skip GC for pinned groups (pre-created via
+			// setPinnedResourceGroups in RM mode).
+			if _, pinned := q.mu.pinnedGroups[id]; pinned {
+				info.cpuTimeTokenEstimator.update()
+				continue
+			}
 			delete(q.mu.groups, id)
 			releaseGroupInfo(info)
 		} else {
@@ -1418,9 +1478,9 @@ func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 // rate, so its burst bucket stays at steady state when the group uses
 // ~10% of node CPU.
 //
-// The maxCPU flag and maxCPUGroups map are maintained here so that newly
-// created groups (which appear between refill ticks) pick up the correct
-// initial flag via getMaxCPULocked.
+// Groups are expected to be pre-created via setPinnedResourceGroups
+// before refill ticks begin. If the group does not exist yet (e.g.
+// during startup before config is applied), this is a no-op.
 //
 // If the group's burst qualification changes, its position in the
 // groupHeap is updated.
@@ -1429,13 +1489,6 @@ func (q *WorkQueue) refillBurstBucketForGroup(
 ) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	// Maintain the maxCPU map so newly created groups (which appear
-	// between refill ticks) pick up the correct initial flag via
-	// getMaxCPULocked.
-	if q.mu.maxCPUGroups == nil {
-		q.mu.maxCPUGroups = make(map[uint64]bool)
-	}
-	q.mu.maxCPUGroups[groupID] = maxCPU
 	group, ok := q.mu.groups[groupID]
 	if !ok {
 		return
@@ -1553,21 +1606,6 @@ func (q *WorkQueue) getGroupWeightLocked(groupID uint64) uint32 {
 		weight = defaultGroupWeight
 	}
 	return weight
-}
-
-// getMaxCPULocked returns the maxCPU flag for the given resource
-// group. Returns false if the group is not in the map. See
-// cpuTimeBurstBucket for how this flag affects burst qualification.
-//
-// REQUIRES: q.mu is held.
-func (q *WorkQueue) getMaxCPULocked(groupID uint64) bool {
-	q.mu.AssertHeld()
-	if q.mu.maxCPUGroups != nil {
-		if maxCPU, ok := q.mu.maxCPUGroups[groupID]; ok {
-			return maxCPU
-		}
-	}
-	return false
 }
 
 // SetOverrideAllToBypassAdmission sets whether all work should bypass

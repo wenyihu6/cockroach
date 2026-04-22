@@ -22,23 +22,26 @@ set-priority-based-groups v=true
 ----
 
 # Admit high-priority work (priority=0, NormalPri). Should route to
-# group 1 regardless of tenant ID.
+# group 1 regardless of tenant ID. Group 1 has maxCPU=true from
+# pre-creation, so it qualifies for burst (can_burst).
 admit id=1 tenant=10 priority=0 requested-count=1
 ----
-tryGet: input no_burst, returning true
+tryGet: input can_burst, returning true
 id 1: admit succeeded
 
 admit id=2 tenant=20 priority=0 requested-count=1
 ----
-tryGet: input no_burst, returning true
+tryGet: input can_burst, returning true
 id 2: admit succeeded
 
 # Both high-pri admits (different tenants) should land in group 1.
+# Group 1 has maxCPU=true from pre-creation via defaultRMResourceGroupConfig.
 print
 ----
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 2, w: 1, fifo: -128
-burst-buckets: t1=fullness=0.0% tokens=-2 capacity=0 qual=no_burst
+ group-id: 2 used: 0, w: 1, fifo: -128
+burst-buckets: t1=fullness=0.0% tokens=-2 capacity=0 maxCPU=true qual=can_burst t2=fullness=0.0% tokens=0 capacity=0 qual=no_burst
 
 # Admit low-priority work (priority=-30, BulkNormalPri). Should route
 # to group 2 regardless of tenant ID.
@@ -58,7 +61,7 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 2, w: 1, fifo: -128
  group-id: 2 used: 2, w: 1, fifo: -128
-burst-buckets: t1=fullness=0.0% tokens=-2 capacity=0 qual=no_burst t2=fullness=0.0% tokens=-2 capacity=0 qual=no_burst
+burst-buckets: t1=fullness=0.0% tokens=-2 capacity=0 maxCPU=true qual=can_burst t2=fullness=0.0% tokens=-2 capacity=0 qual=no_burst
 
 ###
 # Verify AdmittedWorkDone uses the correct group. Complete work from
@@ -80,11 +83,13 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 101, w: 1, fifo: -128
  group-id: 2 used: 201, w: 1, fifo: -128
-burst-buckets: t1=fullness=0.0% tokens=-101 capacity=0 qual=no_burst t2=fullness=0.0% tokens=-201 capacity=0 qual=no_burst
+burst-buckets: t1=fullness=0.0% tokens=-101 capacity=0 maxCPU=true qual=can_burst t2=fullness=0.0% tokens=-201 capacity=0 qual=no_burst
 
 ###
 # Verify burst qualification works correctly with priority-based groups.
-# Set group 1 (high) to maxCPU and queue work.
+# Group 1 (high) already has maxCPU=true from pre-creation via
+# defaultRMResourceGroupConfig. Re-setting it here is a no-op but
+# exercises the set-max-cpu-groups path.
 ###
 
 set-max-cpu-groups group=1 v=true

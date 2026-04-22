@@ -568,29 +568,37 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				var v bool
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "v", &v)
-				// Set the maxCPU flag directly on the group's burst bucket
-				// and maintain the maxCPUGroups map. This mirrors what
-				// refillBurstBucketForGroup does in production.
-				q.mu.Lock()
-				if q.mu.maxCPUGroups == nil {
-					q.mu.maxCPUGroups = make(map[uint64]bool)
+				// Use setPinnedResourceGroups to pre-create the group
+				// with the correct maxCPU flag, mirroring production
+				// where configureQueue pre-creates groups.
+				config := map[uint64]ResourceGroupConfig{
+					uint64(group): {Weight: 1, MaxCPU: v},
 				}
-				q.mu.maxCPUGroups[uint64(group)] = v
-				if g, ok := q.mu.groups[uint64(group)]; ok {
-					prevQual := g.cpuTimeBurstBucket.burstQualification()
-					g.cpuTimeBurstBucket.maxCPU = v
-					curQual := g.cpuTimeBurstBucket.burstQualification()
-					if prevQual != curQual && isInGroupHeap(g) {
-						q.mu.groupHeap.fix(g)
+				// Merge with any existing pinned groups.
+				q.mu.Lock()
+				for id := range q.mu.pinnedGroups {
+					if id != uint64(group) {
+						if g, ok := q.mu.groups[id]; ok {
+							config[id] = ResourceGroupConfig{
+								Weight: g.weight,
+								MaxCPU: g.cpuTimeBurstBucket.maxCPU,
+							}
+						}
 					}
 				}
 				q.mu.Unlock()
+				q.setPinnedResourceGroups(config)
 				return ""
 
 			case "set-priority-based-groups":
 				var v bool
 				d.ScanArgs(t, "v", &v)
 				q.setUseResourceGroup(v)
+				if v {
+					q.setPinnedResourceGroups(defaultRMResourceGroupConfig)
+				} else {
+					q.setPinnedResourceGroups(nil)
+				}
 				return ""
 
 			case "refill-burst-bucket-for-group":

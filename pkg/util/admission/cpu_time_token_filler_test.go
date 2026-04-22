@@ -115,6 +115,8 @@ func (m *testBurstManager) refillBurstBucketForGroup(_ uint64, _ int64, _ int64,
 
 func (m *testBurstManager) setUseResourceGroup(_ bool) {}
 
+func (m *testBurstManager) setPinnedResourceGroups(_ map[uint64]ResourceGroupConfig) {}
+
 func (m *testModel) init() {}
 
 func (m *testModel) fit(_ context.Context, targets targetUtilizations) rates {
