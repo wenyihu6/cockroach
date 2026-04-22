@@ -392,3 +392,20 @@ func (stg *cpuTimeTokenGranter) refill(
 		stg.grantUntilNoWaitingRequestsLocked()
 	}
 }
+
+// formatBuckets returns a human-readable string of bucket state. Used
+// for test output formatting.
+func (stg *cpuTimeTokenGranter) formatBuckets() string {
+	stg.mu.Lock()
+	defer stg.mu.Unlock()
+	var buf strings.Builder
+	buf.WriteString("cpuTTG")
+	for tier := 0; tier < int(numResourceTiers); tier++ {
+		for qual := burstQualification(0); qual < numBurstQualifications; qual++ {
+			fmt.Fprintf(&buf, " tier%d/%s=%d",
+				tier, qual, stg.mu.buckets[tier][qual].tokens)
+		}
+	}
+	buf.WriteRune('\n')
+	return buf.String()
+}
