@@ -643,6 +643,11 @@ func refillGranter(
 // WorkQueue, to enable unit testing.
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
+	// refillRMGroupBurstBuckets refills every configured RM group's
+	// burst bucket in one q.mu critical section, using per-group
+	// burstFracs scaled against rate100/cap100. See WorkQueue for the
+	// contract.
+	refillRMGroupBurstBuckets(rate100, cap100 float64)
 	setUseResourceGroup(enabled bool)
 }
 

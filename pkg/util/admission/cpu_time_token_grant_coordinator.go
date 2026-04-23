@@ -197,6 +197,21 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setGroupWeights(weights)
 }
 
+// SetResourceGroupConfig installs a new per-resource-group
+// configuration (weight + maxCPU) for Resource Manager mode.
+// Forwards to the RM-mode WorkQueue (queues[0]), which owns the
+// storage. WorkQueue.applyResourceGroupConfigIfChanged consumes
+// the config in the next resetInterval (~1s) and pushes
+// weight/maxCPU/heap/pre-create + recomputes derived burst
+// fractions, atomically with the refill that follows.
+//
+// See WorkQueue.resourceGroupConfig's field comment for the full
+// design discussion of why WorkQueue (rather than this coord or a
+// dedicated registry type) owns the config storage.
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetResourceGroupConfig(config)
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
