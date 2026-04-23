@@ -724,9 +724,8 @@ type workQueueIForAllocator interface {
 	// setUseResourceGroup toggles RM-style group derivation. On a
 	// false→true transition, it materializes the current rmGroups
 	// state (the only mechanism for applying a config that was Set
-	// while in serverless mode and for draining the constructor seed
-	// on first activation). See WorkQueue.setUseResourceGroup for the
-	// contract.
+	// while in serverless mode). See WorkQueue.setUseResourceGroup
+	// for the contract.
 	setUseResourceGroup(enabled bool)
 }
 

@@ -424,9 +424,10 @@ type WorkQueue struct {
 		// The accumulated config is materialized on the next swap
 		// into RM mode: setUseResourceGroup(true) detects the
 		// false→true transition and unconditionally calls
-		// applyResourceGroupConfigLocked. The same mechanism handles
-		// the construction bootstrap on first activation (constructor
-		// seeds defaultRMResourceGroupConfig).
+		// applyResourceGroupConfigLocked. If no Set has happened
+		// before that swap, rmGroups is empty and apply is a no-op;
+		// the priority-derived groups (high/low) lazy-create with
+		// default weight + maxCPU=false on their first Admit.
 		//
 		// There is no dirty bit. The two apply triggers are
 		// (1) Set arriving while useResourceGroup=true and (2) the
@@ -758,15 +759,6 @@ func initWorkQueue(
 		q.mu.Lock()
 		defer q.mu.Unlock()
 		q.mu.groups = make(map[uint64]*groupInfo)
-		// Seed rmGroups with the RM-mode default. burstFrac is left
-		// at zero; the first setUseResourceGroup(true) call (when the
-		// queue transitions into RM mode) computes it via
-		// applyResourceGroupConfigLocked. Harmless in serverless mode,
-		// where the seed sits unused.
-		q.mu.rmGroups = make(map[uint64]rmGroup, len(defaultRMResourceGroupConfig))
-		for id, c := range defaultRMResourceGroupConfig {
-			q.mu.rmGroups[id] = rmGroup{ResourceGroupConfig: c}
-		}
 		q.sampleEpochLIFOSettingsLocked()
 	}()
 	if !opts.disableGCGroupsAndResetUsed {
@@ -1013,15 +1005,6 @@ type ResourceGroupConfig struct {
 	MaxCPU bool
 }
 
-// defaultRMResourceGroupConfig is the configuration used until an
-// explicit SetResourceGroupConfig call replaces it. The two
-// hardcoded groups (high/low) match the two outputs of
-// priorityToResourceGroup.
-var defaultRMResourceGroupConfig = map[uint64]ResourceGroupConfig{
-	highResourceGroupID: {Weight: 1, MaxCPU: true},
-	lowResourceGroupID:  {Weight: 1, MaxCPU: false},
-}
-
 // rmGroup is the per-resource-group state for RM mode. It embeds
 // the input ResourceGroupConfig (Weight, MaxCPU - copied from
 // SetResourceGroupConfig) and adds the derived burstFrac.
@@ -1051,11 +1034,12 @@ func priorityToResourceGroup(pri admissionpb.WorkPriority) uint64 {
 //
 // On a false→true transition (entering RM mode), this also applies
 // the current rmGroups state via applyResourceGroupConfigLocked: it
-// drains the constructor seed on first activation and any
-// SetResourceGroupConfig calls that arrived while in serverless mode
-// (where Set just stores config without applying derived state).
-// This is the single mechanism for materializing accumulated config
-// on mode swap; there is no separate dirty-bit-driven apply path.
+// drains any SetResourceGroupConfig calls that arrived while in
+// serverless mode (where Set just stores config without applying
+// derived state). If no Set has happened, rmGroups is empty and
+// apply is a no-op. This is the single mechanism for materializing
+// accumulated config on mode swap; there is no separate
+// dirty-bit-driven apply path.
 //
 // Callers (cpuTimeTokenAllocator.resetInterval) must invoke this
 // before strategy.refillBurst in the same cycle, otherwise the
@@ -1702,12 +1686,11 @@ func (q *WorkQueue) gcGroupsResetUsedAndUpdateEstimators() {
 	for id, info := range q.mu.groups {
 		// In RM mode, skip GC for IDs that rmGroups owns. Otherwise
 		// a GC + lazy re-create would leave the group stuck at
-		// maxCPU=false defaults until the next SetResourceGroupConfig
-		// or mode swap. The check is gated on useResourceGroup so
-		// the defaultRMResourceGroupConfig seed (which is installed
-		// even in serverless mode and otherwise sits unused) does
-		// not silently change serverless GC behavior for groups
-		// whose IDs collide with the seed (e.g., tenant 1).
+		// maxCPU=false defaults until the next SetResourceGroupConfig.
+		// The check is gated on useResourceGroup so SetResourceGroupConfig
+		// calls that arrived in serverless mode (and only stored config)
+		// don't silently change serverless GC behavior for tenant IDs
+		// that happen to collide with stored RM group IDs.
 		configured := false
 		if q.mu.useResourceGroup {
 			_, configured = q.mu.rmGroups[id]
@@ -2012,8 +1995,8 @@ func (q *WorkQueue) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig
 //   - SetResourceGroupConfig when useResourceGroup is true (the
 //     immediate-apply path during RM steady-state).
 //   - setUseResourceGroup on a false→true transition (the
-//     mode-swap path; also handles the construction bootstrap on
-//     first activation of RM mode).
+//     mode-swap path; drains any Sets that arrived in serverless
+//     mode). A no-op if rmGroups is empty.
 //
 // All updates land in one critical section, so any concurrent reader
 // that takes q.mu sees fully-old or fully-new derived state - never
