@@ -302,8 +302,7 @@ type cpuTimeTokenAllocator struct {
 }
 
 // modeStrategy encapsulates the mode-specific behavior of the
-// cpuTimeTokenAllocator. Currently only serverlessStrategy is
-// implemented; rmStrategy will be added for resource manager mode.
+// cpuTimeTokenAllocator.
 type modeStrategy interface {
 	mode() cpuTimeTokenMode
 	// computeTargets reads mode-specific cluster settings and returns
@@ -358,6 +357,67 @@ func (s *serverlessStrategy) refillBurst(tokens tokenCounts, refillRates rates) 
 		burstCapacity := refillRates[tier][noBurst] / 4
 		s.queues[tier].refillBurstBuckets(toAdd, burstCapacity)
 	}
+}
+
+// rmStrategy implements modeStrategy for Resource Manager mode, which
+// uses a single WorkQueue with N resource groups and a single
+// utilization target. Burst bucket refill normalizes to 100% CPU by
+// dividing out canBurstTarget, then pre-scales per-group amounts
+// by that group's weight fraction before calling
+// refillBurstBucketForGroup.
+//
+// rmStrategy no longer caches per-group state. The burstFrac map
+// lives on the long-lived WorkQueue (q.mu.rmGroupConfigs); refillBurst
+// snapshots it from there each tick. This lets SetResourceGroupConfig
+// apply derived state immediately under q.mu without needing to call
+// back into the short-lived rmStrategy. See WorkQueue.rmGroupConfigs's
+// field comment for the ownership rationale.
+type rmStrategy struct {
+	queue workQueueIForAllocator
+	// canBurstTarget stores the canBurst utilization target (e.g., 1.0
+	// when KVCPUTimeUtilTarget=0.75 + KVCPUTimeUtilBurstDeltaRM=0.25).
+	// Updated by computeTargets every interval.
+	canBurstTarget float64
+}
+
+func (s *rmStrategy) mode() cpuTimeTokenMode {
+	return resourceManagerMode
+}
+
+func (s *rmStrategy) computeTargets(sv *settings.Values, burstDelta float64) targetUtilizations {
+	var targets targetUtilizations
+	noBurstTarget := KVCPUTimeUtilTarget.Get(sv)
+	targets[0][noBurst] = noBurstTarget
+	targets[0][canBurst] = noBurstTarget + burstDelta
+	s.canBurstTarget = targets[0][canBurst]
+	// Mirror tier-0 targets to tier-1 so all array slots have valid
+	// values. Tier-1 sits idle in RM mode (no work is routed to it)
+	// but receives the same refill rates and token deductions as
+	// tier-0. This is harmless: tryGrantLocked skips tier-1 because
+	// its requester has no waiting work, and the symmetric deductions
+	// keep both tiers' token counts in lockstep, preserving the
+	// granter's bucket ordering invariants without special-casing.
+	targets[1] = targets[0]
+	return targets
+}
+
+func (s *rmStrategy) refillBurst(tokens tokenCounts, refillRates rates) {
+	if s.canBurstTarget <= 0 {
+		return
+	}
+	// Normalize to the 100% CPU rate by dividing out canBurstTarget.
+	// This relies on cpuTimeTokenLinearModel computing rates as
+	// rate = cpuCapacity * time.Second * target / multiplier, so
+	// rate / target is constant across targets. If the model becomes
+	// non-linear, have fit return the full-CPU rate as a separate
+	// value instead of recovering it via division here.
+	rate100 := float64(tokens[0][canBurst]) / s.canBurstTarget
+	cap100 := float64(refillRates[0][canBurst]) / s.canBurstTarget
+	// Hand off to WorkQueue, which iterates its rmGroups under one
+	// q.mu hold and refills each group's burst bucket using the
+	// per-group burstFrac. Atomic across all groups; no snapshot
+	// allocation per tick.
+	s.queue.refillRMGroupBurstBuckets(rate100, cap100)
 }
 
 // rates stores a token count per second, for example, the refill
@@ -510,18 +570,85 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 
 // resetInterval recomputes refill rates and applies the delta to the
 // granter and burst buckets. If the mode cluster setting has changed,
-// the strategy is swapped before computing targets.
+// the strategy is swapped and the queue's useResourceGroup flag is
+// updated before refill, so the per-group refill in this same cycle
+// sees populated rmGroupConfigs (the false→true transition in
+// setUseResourceGroup applies the current resourceGroupConfig as a
+// side effect; see WorkQueue.setUseResourceGroup).
 func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenMode {
-	// Check for mode transition. a.strategy is only accessed by the
-	// filler goroutine, so we can update it immediately. offMode is
-	// skipped because it is not a real strategy - the constructor
-	// defaults offMode to serverlessMode, and GetKVWorkQueue handles
-	// the off case before reaching activeMode routing.
+	// a.strategy is only accessed by the filler goroutine, so we can
+	// update it immediately. offMode is skipped because it is not a
+	// real strategy - the constructor defaults offMode to
+	// serverlessMode, and GetKVWorkQueue handles the off case before
+	// reaching activeMode routing.
 	modeChanged := false
 	newMode := cpuTimeTokenACMode.Get(&a.settings.SV)
 	if newMode != offMode && newMode != a.strategy.mode() {
 		a.strategy = a.newStrategy(newMode)
 		modeChanged = true
+	}
+	// === Window between strategy swap and configureQueue ===
+	//
+	// Between the assignment to a.strategy above and the
+	// configureQueue() call below, there is a window where
+	// a.strategy reflects the new mode but q.mu.useResourceGroup
+	// still reflects the old mode. q.mu is NOT held across the two
+	// statements - configureQueue only takes q.mu briefly when it
+	// calls setUseResourceGroup. So the intermediate (strategy,
+	// flag) state is in fact observable to a concurrent goroutine
+	// that takes q.mu in this window.
+	//
+	// Why that's safe: no concurrent observer reads BOTH a.strategy
+	// and q.mu.useResourceGroup, so no one is confused by the
+	// inconsistency.
+	//
+	//   - refill is the only operation that dispatches off
+	//     a.strategy and would care about the flag being in sync.
+	//     It runs on the filler goroutine. We're on that same
+	//     goroutine right now, inside resetInterval; the next refill
+	//     tick can't fire until this function returns. By then
+	//     configureQueue has already completed and the flag matches
+	//     the strategy.
+	//
+	//   - Admit / AdmittedWorkDone run on external goroutines and
+	//     can fire in the window. They take q.mu and read
+	//     useResourceGroup (still false, mid-window), then proceed
+	//     with serverless-mode group derivation. They never read
+	//     a.strategy, so the strategy swap is invisible to them.
+	//     A request admitted mid-window lands in a tenant-keyed
+	//     groupInfo and runs to completion; once configureQueue
+	//     finishes, subsequent admits derive by priority instead.
+	//     The mid-window tenant-keyed groupInfo is functionally
+	//     orphaned (no further admits route to it under RM mode)
+	//     and gets reaped by gcGroupsResetUsedAndUpdateEstimators
+	//     on the next sweep. No correctness issue.
+	//
+	//   - activeMode (which GetKVWorkQueue routes off of) is
+	//     updated by the filler only after this function returns,
+	//     so external Admits routed via GetKVWorkQueue keep seeing
+	//     the old mode for the entire cycle. Mid-window admits are
+	//     only possible from paths that already hold a queue
+	//     reference from before activeMode flips - those are bounded
+	//     by however quickly callers drop their references.
+	//
+	// The two-method refill interface (refillBurstBuckets vs
+	// refillRMGroupBurstBuckets) does not depend on this window
+	// being collapsed: a.strategy.refillBurst directly calls the
+	// right WorkQueue method based on which strategy is active, so
+	// even if a future refactor changed the observability of the
+	// intermediate state, refill would still match the strategy's
+	// intent. See the TODO on workQueueIForAllocator for why the
+	// dispatch is deliberately at the call site rather than driven
+	// by useResourceGroup inside WorkQueue.
+	//
+	// On mode change, configure the queue before refill so the per-
+	// group refill below sees populated rmGroups (when going to RM).
+	// setUseResourceGroup on a false→true transition applies the
+	// current rmGroups synchronously, which materializes derived
+	// state. Going the other way (RM→serverless) just clears the
+	// flag; serverless refill doesn't read rmGroups.
+	if modeChanged {
+		a.configureQueue()
 	}
 
 	burstDelta := KVCPUTimeUtilBurstDelta.Get(&a.settings.SV)
@@ -564,25 +691,16 @@ func (a *cpuTimeTokenAllocator) resetInterval(ctx context.Context) cpuTimeTokenM
 		}
 	}
 
-	// Apply queue configuration after refill is complete, so admission
-	// behavior only changes once tokens are in place. The returned mode
-	// is stored into filler.activeMode by the caller, which is what
-	// GetKVWorkQueue reads to route work. If activeMode were updated
-	// before tokens and queue config, callers could route work into a
-	// CTT queue that has stale token levels or wrong group derivation
-	// (e.g. TenantID instead of Priority), breaking fair-sharing until
-	// the next interval.
-	if modeChanged {
-		a.configureQueue()
-	}
 	return a.strategy.mode()
 }
 
 // newStrategy constructs the modeStrategy for the given mode.
 // offMode is not a valid argument - callers must guard against it
 // (resetInterval skips the swap, the constructor maps off to
-// serverless). Queue side effects are not applied here;
-// resetInterval applies them after the refill is complete.
+// serverless). Queue side effects are applied separately in
+// resetInterval via configureQueue, which runs immediately after the
+// strategy swap and before refill so that the cycle's per-group
+// refill sees populated rmGroupConfigs.
 //
 // No explicit bucket reset is needed on mode switch. The granter's
 // tier-1 buckets stay alive across transitions, and the delta
@@ -598,15 +716,18 @@ func (a *cpuTimeTokenAllocator) newStrategy(mode cpuTimeTokenMode) modeStrategy 
 	case serverlessMode:
 		return &serverlessStrategy{queues: a.queues}
 	case resourceManagerMode:
-		// TODO(wenyihu6): implement this
-		panic("resourceManagerMode not implemented yet")
+		return &rmStrategy{queue: a.queues[0]}
 	default:
 		panic(fmt.Sprintf("unknown cpuTimeTokenMode: %d", mode))
 	}
 }
 
 // configureQueue applies mode-specific settings to the WorkQueue.
-// Called at the end of resetInterval after refill is complete.
+// Called immediately after a strategy swap in resetInterval, before
+// refill. Going from serverless to RM, this triggers
+// applyResourceGroupConfigLocked as a side effect of the false→true
+// useResourceGroup transition (see WorkQueue.setUseResourceGroup), so
+// the cycle's per-group refill below sees populated rmGroupConfigs.
 //
 // TODO(wenyihu6): This will become unnecessary once serverless
 // tenants are modeled as resource groups in a single WorkQueue.
@@ -639,8 +760,31 @@ func refillGranter(
 	granter.refill(toAdd, bucketCapacities, bucketMinimums, updateMetrics)
 }
 
-// workQueueIForAllocator abstracts the burst bucket refill methods in
-// WorkQueue, to enable unit testing.
+// workQueueIForAllocator abstracts the WorkQueue methods called
+// from the allocator/strategy layer, to enable unit testing.
+//
+// TODO(wenyihu6): refillBurstBuckets and refillRMGroupBurstBuckets are
+// two methods because the two modes have genuinely different refill
+// semantics today: serverless applies a uniform per-tenant amount and
+// updates q.mu.burstBucketCapacity (the seed for lazy-created tenant
+// groupInfos); RM iterates configured groups and scales each by
+// burstFrac (no burstBucketCapacity update). Unifying them under one
+// method would require WorkQueue to dispatch internally on
+// useResourceGroup, which trades the strategy-call-site dispatch we
+// have today for a runtime branch that depends on the strategy ↔
+// useResourceGroup invariant being maintained correctly. We chose to
+// keep the dispatch at the strategy level so each call site is the
+// source of truth for which behavior runs - safer against future
+// protocol changes that touch useResourceGroup or strategy
+// independently. See the discussion at the comment near
+// refillRMGroupBurstBuckets for details.
+//
+// This collapses naturally once serverless tenants are modeled as
+// resource groups in a single WorkQueue (per the TODO on
+// configureQueue): then there is only one mode, every group has a
+// burstFrac (uniform=1/N for tenant-equivalent groups), and the two
+// methods fold into a single per-group scaled refill. Until then the
+// two-method shape honestly reflects the two-mode reality.
 type workQueueIForAllocator interface {
 	refillBurstBuckets(toAdd int64, capacity int64)
 	// refillRMGroupBurstBuckets refills every configured RM group's
@@ -648,6 +792,12 @@ type workQueueIForAllocator interface {
 	// burstFracs scaled against rate100/cap100. See WorkQueue for the
 	// contract.
 	refillRMGroupBurstBuckets(rate100, cap100 float64)
+	// setUseResourceGroup toggles RM-style group derivation. On a
+	// false→true transition, it materializes the current rmGroups
+	// state (the only mechanism for applying a config that was Set
+	// while in serverless mode and for draining the constructor seed
+	// on first activation). See WorkQueue.setUseResourceGroup for the
+	// contract.
 	setUseResourceGroup(enabled bool)
 }
 

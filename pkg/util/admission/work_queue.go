@@ -594,6 +594,88 @@ type WorkQueue struct {
 		// (activeMode). The filler coordinates all of these together in
 		// resetInterval. Reading the cluster setting directly here could
 		// observe RM mode before the other components are configured for it.
+		//
+		// === Why one WorkQueue serves both modes (not one queue per mode) ===
+		//
+		// queues[0] is reused across serverless and Resource Manager
+		// modes: useResourceGroup is toggled to switch group derivation.
+		// We considered (and rejected) splitting modes into separate
+		// dedicated WorkQueues. The root reason multi-queue designs
+		// are hard is an asymmetry in how WorkQueue and the granter
+		// are wired:
+		//
+		//   - Outbound (WorkQueue -> granter) is naturally N:1.
+		//     Each WorkQueue holds its own cpuTimeTokenChildGranter
+		//     wrapper that forwards tryGet/tookWithoutPermission/
+		//     returnGrant to a shared granter. Adding queues here is
+		//     cheap: mint another childGranter pointing at the same
+		//     granter and the bucket math just works.
+		//
+		//   - Inbound (granter -> WorkQueue) is structurally 1:1 per
+		//     tier. The granter holds exactly one requester slot per
+		//     tier (cpuTimeTokenGranter.requester[tier]) and pushes
+		//     work down by calling granted() on that one slot. There
+		//     is no built-in way for a single tier slot to fan out
+		//     to multiple queues - whichever queue is not in the
+		//     slot has no callback path.
+		//
+		// "Just add another childGranter" addresses only the outbound
+		// side, so the inbound mismatch remains. The two real
+		// alternatives below each try to fix the inbound side:
+		//
+		// (1) Three queues - serverless tier-0, serverless tier-1, and
+		// a dedicated rmQueue - with the granter's tier-0 requester
+		// slot routed via a tier0Router that picks based on activeMode.
+		// Each queue's mode is fixed at construction; mode swap just
+		// flips the router's pick. This looks structurally cleaner
+		// (queue identity = mode, no flag dispatch internally) but
+		// has a real regression: pending work in the now-inactive
+		// queue's waitingWorkHeap becomes structurally unreachable
+		// from the granter. Because the granter only ever asks the
+		// one requester slot, and the router resolves contention by
+		// picking one queue per call, the unpicked queue is never
+		// asked. Queued work that was admitted before the mode swap
+		// waits for a grant that never comes and ultimately fails
+		// with a deadline-exceeded error. Mode swaps are rare
+		// operator actions, but pending-work stalls were a real
+		// client-visible regression with no matching benefit
+		// (WorkQueue's mode-conditional code - groupIDForWorkLocked,
+		// GC's rmGroups skip, two refill methods - did not actually
+		// simplify, since each queue still carried the dispatch
+		// logic; only the flag's mutability changed).
+		//
+		// (2) Two requester slots per tier on the granter (so it
+		// asks both serverless tier-0 queue and rmQueue, granting to
+		// whichever has work). This solves the pending-work stall
+		// but moves complexity into the granter: the granter must
+		// pick between two requesters, decide what burst
+		// qualification to use when both have work, and grants from
+		// a token pool sized for the active mode regardless of which
+		// queue receives the grant - blurring per-mode token
+		// isolation during the drain window. New policy decisions
+		// in the granter that don't exist in the single-queue
+		// design.
+		//
+		// The single-queue design avoids the contention by not
+		// creating multiple queues that compete for the granter's
+		// per-tier requester slot. Mode is a routing concern within
+		// the queue (group derivation, refill scaling), not a queue
+		// identity. The granter's binding to the queue is permanent;
+		// mode swap touches strategy, useResourceGroup, and refill
+		// rates, but the granter still asks the same queue for
+		// waiting work, so pending requests are reachable across
+		// every mode swap. Less novel machinery, no pending-work
+		// stall, and aligned with the eventual consolidation TODO
+		// (serverless tenants modeled as resource groups) that
+		// collapses everything to one queue anyway.
+		//
+		// The brief window inside resetInterval where a.strategy
+		// reflects the new mode but useResourceGroup still reflects
+		// the old one is safe under goroutine sequencing: only the
+		// filler reads a.strategy, and external Admit callers read
+		// useResourceGroup but never a.strategy, so no observer can
+		// see an inconsistent (strategy, flag) pair. See the long
+		// comment in resetInterval for the full safety argument.
 		useResourceGroup bool
 
 		// The highest epoch that is closed.
@@ -2028,6 +2110,119 @@ func (q *WorkQueue) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig
 // dedicated sub-mutex, take q.mu briefly to swap into active state,
 // then process per-group upserts in batches with q.mu released
 // between batches.
+//
+// === Mode-flip mechanics (serverless ↔ RM) ===
+//
+// This is the canonical place to read about what happens to existing
+// queued work, container identity, and concurrent admits when the
+// cpuTimeTokenMode cluster setting flips. The mode swap touches two
+// pieces of state on the filler goroutine inside resetInterval:
+//
+//	W1: a.strategy = newStrategy            (filler-only field, no lock)
+//	W2: setUseResourceGroup(...)            (q.mu, calls applyResourceGroupConfigLocked
+//	                                         on a false→true transition)
+//
+// W1 and W2 are not under one lock, so there is a microseconds-scale
+// window where one reflects the new mode and the other still reflects
+// the old. The current code orders W1 before W2 (strategy-first),
+// matching the natural cause-and-effect of "decide mode → execute
+// setup for that mode." See the long comment in resetInterval for the
+// full safety argument; the short version is that no observer reads
+// both pieces of state, so the inconsistency is unobservable in
+// practice. The W1/W2 ordering choice produces no functional
+// difference - either order is safe, just slightly different transient
+// bookkeeping during the window.
+//
+// What happens to the WorkQueue's existing q.mu.groups entries when
+// W2 fires (i.e., serverless → RM):
+//
+//   - Colliding IDs (container repurposed). The hardcoded RM
+//     resource group IDs are highResourceGroupID=1 and
+//     lowResourceGroupID=2, which alias the system tenant
+//     (TenantID=1) and the default app tenant (TenantID=2). For
+//     these IDs, the loop above takes the "exists, update" branch:
+//     the same *groupInfo is reused, with weight/maxCPU updated to
+//     the rmGroup values and the heap fixed if those changes
+//     affected groupHeap.Less. The container's queued work,
+//     cpuTimeBurstBucket tokens, cpuTimeTokenEstimator,
+//     priorityStates, and perGroupMetrics counters all carry over.
+//     burstBucket capacity is the one piece that lags - it stays at
+//     the serverless-mode value until the next
+//     refillRMGroupBurstBuckets tick (~1ms) installs the proper
+//     RM-scaled capacity.
+//
+//   - Non-colliding IDs (container orphaned). Tenant containers
+//     whose IDs aren't in rmGroups (e.g., groups[5] for some app
+//     tenant 5) aren't touched by the loop above. They remain in
+//     q.mu.groups and, if they have queued work, in q.mu.groupHeap.
+//     Future Admits don't route to them anymore - in RM mode,
+//     groupIDForWorkLocked returns priorityToResourceGroup(...) for
+//     every tenant, so all new work goes to groups[1] or groups[2].
+//
+// What happens to queued requests across the flip:
+//
+//   - Repurposed containers continue to serve their existing queued
+//     work alongside new RM admits. Nothing dequeues or moves the
+//     pre-existing items; they just compete in the (now-RM-weighted)
+//     heap.
+//
+//   - Orphan containers continue to serve their existing queued work
+//     too. q.mu.groupHeap is the universal pool that hasWaitingRequests
+//     and granted() look at; it does not filter by mode. As long as an
+//     orphan has waiting work, it's eligible for selection by granted()
+//     and its requests get admitted normally. No special "drain orphan"
+//     code path exists or is needed.
+//
+//   - Once an orphan empties, the heap removal in granted() drops it
+//     from groupHeap. The next gcGroupsResetUsedAndUpdateEstimators
+//     sweep finds info.used == 0 && !isInGroupHeap && !configured and
+//     deletes the empty entry. See that function's comment for why the
+//     "configured" check is gated on useResourceGroup (it's the same
+//     ID-collision concern, handled in the GC).
+//
+//   - GC never discards queued requests. The deletion conditions
+//     require the container to be empty (!isInGroupHeap), so any
+//     container with pending work is immune.
+//
+// Concurrent Admits during the W1/W2 window:
+//
+//   - They take q.mu, observe the old useResourceGroup (false), derive
+//     groupID by TenantID, and queue into a tenant-keyed group. Their
+//     fate after W2 is identical to pre-existing work: if the tenant
+//     ID collides with an rmGroup ID, the container gets repurposed
+//     and they ride along; if not, they sit in an orphan that drains.
+//     Either way the request is admitted via the normal granted() path.
+//
+// Transient quirks during the post-flip drain (none affect correctness,
+// throughput, or work admission):
+//
+//   - Metric label semantic shift. perGroupMetrics children are keyed
+//     by stringified ID. The counter labeled "1" represents
+//     system-tenant admits before the flip and high-pri RM admits
+//     after - same metric label, different semantic meaning. A
+//     time-series shows a continuous counter with a discontinuity in
+//     meaning at the flip moment.
+//
+//   - Mixed-weight heap. groupHeap may contain repurposed RM
+//     containers (with new RM weights) and orphan tenant containers
+//     (with serverless weights) competing simultaneously. The two
+//     weight scales aren't necessarily commensurate, so heap ordering
+//     during the drain can be slightly off relative to either pure
+//     mode. Resolves once orphans drain (typically milliseconds).
+//
+//   - burstQualification briefly off for repurposed containers. Their
+//     burst bucket carries over the serverless capacity until the next
+//     refill tick installs RM-scaled capacity. burstQualification can
+//     therefore report canBurst/noBurst slightly off from steady-state
+//     RM behavior for ≤1ms. Burst qualification only governs which
+//     granter qual-slot the request consumes from; it does not gate
+//     admission, since the granter's central token pool meters work.
+//
+// Reverse flip (RM → serverless): symmetric. setUseResourceGroup(false)
+// just clears the flag; no apply runs (apply only fires on false→true).
+// The repurposed RM containers (groups[1], groups[2]) carry over with
+// their RM-era state and get treated as system/app tenant containers
+// for new admits. Same drain story applies to anything still queued.
 func (q *WorkQueue) applyResourceGroupConfigLocked() {
 	// Compute per-group burstFrac in place. MaxCPU groups get 1.0
 	// (burst to full node CPU); other groups get their normalized
