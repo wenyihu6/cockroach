@@ -111,6 +111,9 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 	}
 }
 
+func (m *testBurstManager) refillRMGroupBurstBuckets(_ float64, _ float64) {
+}
+
 func (m *testBurstManager) setUseResourceGroup(enabled bool) {
 	m.useResourceGroup = enabled
 }
