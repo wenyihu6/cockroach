@@ -24,6 +24,18 @@ var (
 		Unit:        metric.Unit_COUNT,
 	}
 
+	cpuTimeTokenDispenseFractionMeta = metric.Metadata{
+		Name: "admission.cpu_time_tokens.dispense_fraction",
+		Help: crstrings.UnwrapText(`
+			The fraction of computed per-tick tokens that the CPU time token
+			allocator is currently dispensing to the granter, in [0, 1].
+			Decays toward 0 when the Go scheduler is overloaded and recovers
+			toward 1 otherwise; values < 1 indicate the adaptive throttle is
+			withholding tokens to let the scheduler backlog drain`),
+		Measurement: "Fraction",
+		Unit:        metric.Unit_PERCENT,
+	}
+
 	cpuTimeTokensConsumedMeta = metric.Metadata{
 		Name: "admission.cpu_time_tokens.usage.consumed",
 		Help: crstrings.UnwrapText(`
@@ -91,9 +103,10 @@ var (
 // control. Fields are exported because metric.Registry.AddMetricStruct
 // uses reflection to discover metrics.
 type cpuTimeTokenMetrics struct {
-	Multiplier     *metric.GaugeFloat64
-	TokensConsumed *metric.Counter
-	TokensReturned *metric.Counter
+	Multiplier       *metric.GaugeFloat64
+	DispenseFraction *metric.GaugeFloat64
+	TokensConsumed   *metric.Counter
+	TokensReturned   *metric.Counter
 
 	// ExhaustedDurationNanos tracks cumulative nanoseconds each bucket has
 	// spent exhausted. Each (tier, qual) bucket gets its own counter rather
@@ -147,10 +160,14 @@ func makeCPUTimeTokenMetrics() *cpuTimeTokenMetrics {
 	// per-tenant metrics. Inlined to avoid a dependency cycle.
 	b := aggmetric.MakeBuilder("tenant_id")
 	m := &cpuTimeTokenMetrics{
-		Multiplier:     metric.NewGaugeFloat64(cpuTimeTokenMultiplierMeta),
-		TokensConsumed: metric.NewCounter(cpuTimeTokensConsumedMeta),
-		TokensReturned: metric.NewCounter(cpuTimeTokensReturnedMeta),
+		Multiplier:       metric.NewGaugeFloat64(cpuTimeTokenMultiplierMeta),
+		DispenseFraction: metric.NewGaugeFloat64(cpuTimeTokenDispenseFractionMeta),
+		TokensConsumed:   metric.NewCounter(cpuTimeTokensConsumedMeta),
+		TokensReturned:   metric.NewCounter(cpuTimeTokensReturnedMeta),
 	}
+	// Initialize the gauge to 1.0 so the metric reflects the adjuster's
+	// initial fraction before the first allocateTokens call.
+	m.DispenseFraction.Update(1.0)
 	// Create one AggCounter per tier for each per-tenant metric.
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		tierStr := tier.String()

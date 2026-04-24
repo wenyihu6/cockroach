@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "admission.go",
         "cpu_time_token_burst.go",
+        "cpu_time_token_dispense_adjuster.go",
         "cpu_time_token_estimation.go",
         "cpu_time_token_filler.go",
         "cpu_time_token_filler_logger.go",
@@ -75,6 +76,7 @@ go_library(
 go_test(
     name = "admission_test",
     srcs = [
+        "cpu_time_token_dispense_adjuster_test.go",
         "cpu_time_token_filler_logger_test.go",
         "cpu_time_token_filler_test.go",
         "cpu_time_token_grant_coordinator_test.go",

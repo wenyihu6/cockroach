@@ -255,6 +255,11 @@ type cpuTimeTokenAllocator struct {
 	settings *cluster.Settings
 	model    cpuTimeModel
 	metrics  *cpuTimeTokenMetrics
+	// dispenseAdjuster owns the per-tick dispensing fraction in [0, 1]
+	// that scales every per-bucket allocation before refill. The
+	// fraction is driven by a CPULoad feedback loop on a separate
+	// goroutine; see cttDispenseAdjuster.
+	dispenseAdjuster *cttDispenseAdjuster
 
 	// refillRates stores the number of CPU time tokens to add to each bucket
 	// per interval (1s).
@@ -380,6 +385,27 @@ func (a *cpuTimeTokenAllocator) allocateTokens(expectedRemainingTicksInInterval 
 			allocations[wc][kind] = toAllocate
 		}
 	}
+	// Scale the per-tick allocation by the dispensing fraction. When the
+	// Go scheduler is overloaded (runnable goroutines >= threshold * procs),
+	// the fraction decays toward 0; when it recovers, the fraction returns
+	// to 1. The withheld portion is rolled back out of a.allocated so that
+	// subsequent ticks in the same interval will redistribute it: if the
+	// fraction recovers mid-interval, the catch-up emits the deferred
+	// tokens; if it stays low, resetInterval zeroes a.allocated and the
+	// withheld tokens are dropped at the interval boundary. See
+	// cttDispenseAdjuster for the feedback loop.
+	frac := a.dispenseAdjuster.getFrac()
+	if frac < 1.0 {
+		for tier := range allocations {
+			for qual := range allocations[tier] {
+				orig := allocations[tier][qual]
+				dispensed := int64(float64(orig) * frac)
+				a.allocated[tier][qual] -= orig - dispensed
+				allocations[tier][qual] = dispensed
+			}
+		}
+	}
+	a.metrics.DispenseFraction.Update(frac)
 	// Each bucket has a max capacity. The max capacity for each bucket is
 	// one second worth of tokens at the current refill rate. This is a fairly
 	// arbitrary decision.

@@ -423,3 +423,185 @@ tier1  -2000     -3000
 burstM
 tier0  -249
 tier1  -124
+
+# === Dispense fraction tests ===
+#
+# Restore the model rates to the original values. Earlier in this file
+# the rates were adjusted by +1 then -2; we apply +1 here to land back
+# on tier0={5000,4000}, tier1={3000,2000}.
+resetInterval increase_rates_by=1
+----
+fit(
+	tier1 no_burst -> 50%
+	tier1 can_burst -> 60%
+	tier0 no_burst -> 75%
+	tier0 can_burst -> 85%
+)
+cpuTTG can_burst no_burst
+tier0  1         -999
+tier1  -1999     -2999
+burstM
+tier0  -249
+tier1  -124
+
+set-tokens v=0
+----
+cpuTTG can_burst no_burst
+tier0  0         0
+tier1  0         0
+burstM
+tier0  0
+tier1  0
+
+# Baseline: dispense fraction 1.0 produces full per-tick allocation.
+# refillRates={tier0:{5000,4000}, tier1:{3000,2000}} divided across
+# 10 remaining ticks gives per-tick allocations of {500,400,300,200}.
+# burstM toAdd = noBurst/4 = {100, 50}.
+setDispenseFrac v=1.0
+----
+dispenseFrac 1.00
+cpuTTG can_burst no_burst
+tier0  0         0
+tier1  0         0
+burstM
+tier0  0
+tier1  0
+
+allocate remaining=10
+----
+cpuTTG can_burst no_burst
+tier0  500       400
+tier1  300       200
+burstM
+tier0  100
+tier1  50
+
+# Reset granter buckets and allocator.allocated. resetInterval (no
+# rate change) zeros allocator.allocated; set-tokens v=0 zeros the
+# granter and burstM tokens.
+resetInterval
+----
+fit(
+	tier1 no_burst -> 50%
+	tier1 can_burst -> 60%
+	tier0 no_burst -> 75%
+	tier0 can_burst -> 85%
+)
+cpuTTG can_burst no_burst
+tier0  500       400
+tier1  300       200
+burstM
+tier0  100
+tier1  50
+
+set-tokens v=0
+----
+cpuTTG can_burst no_burst
+tier0  0         0
+tier1  0         0
+burstM
+tier0  0
+tier1  0
+
+# Half: dispense fraction 0.5 scales every per-bucket allocation by
+# 0.5, so per-tick goes to {250,200,150,100} and burstM toAdd to
+# {50,25}.
+setDispenseFrac v=0.5
+----
+dispenseFrac 0.50
+cpuTTG can_burst no_burst
+tier0  0         0
+tier1  0         0
+burstM
+tier0  0
+tier1  0
+
+allocate remaining=10
+----
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+# Zero: dispense fraction 0.0 emits no tokens. Granter and burstM
+# state are unchanged from the previous tick. allocator.allocated is
+# also unchanged because the roll-back exactly cancels the
+# allocateTokensFn advance.
+setDispenseFrac v=0.0
+----
+dispenseFrac 0.00
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+allocate remaining=9
+----
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+# CPULoad feedback loop: a sustained overload signal (runnable >=
+# threshold * procs = 32 * 4 = 128) decays the fraction by 0.05 per
+# call. Starting from 1.0, 4 calls land at 0.80.
+setDispenseFrac v=1.0
+----
+dispenseFrac 1.00
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+cpu-load runnable=128 procs=4 n=4
+----
+dispenseFrac 0.80
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+# Sustained overload eventually drives the fraction to 0.
+cpu-load runnable=128 procs=4 n=100
+----
+dispenseFrac 0.00
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+# Underload (runnable <= threshold * procs / 2 = 64) recovers by
+# 0.05 per call.
+cpu-load runnable=10 procs=4 n=4
+----
+dispenseFrac 0.20
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25
+
+# Inside the hysteresis band (between threshold/2 and threshold) the
+# fraction stays put.
+cpu-load runnable=100 procs=4 n=10
+----
+dispenseFrac 0.20
+cpuTTG can_burst no_burst
+tier0  250       200
+tier1  150       100
+burstM
+tier0  50
+tier1  25

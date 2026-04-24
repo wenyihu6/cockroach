@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/settings"
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
@@ -180,9 +181,17 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 }
 
 // GetRunnableCountCallback returns a callback of type
-// goschedstats.RunnableCountCallback.
+// goschedstats.RunnableCountCallback. It fans out to both the
+// slot-based grant coordinator (which drives kvSlotAdjuster) and
+// the CTT dispense adjuster, so both admission paths back off and
+// recover on the same scheduler signal.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
-	return coord.slotsCoord.CPULoad
+	slot := coord.slotsCoord.CPULoad
+	ctt := coord.cpuTimeCoord.dispenseAdjuster.CPULoad
+	return func(runnable, procs int, samplePeriod time.Duration) {
+		slot(runnable, procs, samplePeriod)
+		ctt(runnable, procs, samplePeriod)
+	}
 }
 
 // Close implements the stop.Closer interface.
@@ -192,8 +201,9 @@ func (cg *CPUGrantCoordinators) Close() {
 }
 
 type cpuTimeTokenGrantCoordinator struct {
-	filler *cpuTimeTokenFiller
-	queues [numResourceTiers]requesterClose
+	filler           *cpuTimeTokenFiller
+	dispenseAdjuster *cttDispenseAdjuster
+	queues           [numResourceTiers]requesterClose
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -218,10 +228,12 @@ func makeCPUTimeTokenGrantCoordinator(
 		timeSource: timeSource,
 		closeCh:    make(chan struct{}),
 	}
+	dispenseAdjuster := newCTTDispenseAdjuster(settings)
 	allocator := &cpuTimeTokenAllocator{
-		granter:  granter,
-		settings: settings,
-		metrics:  metrics,
+		granter:          granter,
+		settings:         settings,
+		metrics:          metrics,
+		dispenseAdjuster: dispenseAdjuster,
 	}
 	model := &cpuTimeTokenLinearModel{
 		granter:            granter,
@@ -252,7 +264,8 @@ func makeCPUTimeTokenGrantCoordinator(
 	}
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
-		filler: filler,
+		filler:           filler,
+		dispenseAdjuster: dispenseAdjuster,
 	}
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		coordinator.queues[tier] = requesters[tier]

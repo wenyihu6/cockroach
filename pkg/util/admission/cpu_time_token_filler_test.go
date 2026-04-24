@@ -174,15 +174,17 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 		testTier0: {},
 		testTier1: {},
 	}
+	st := cluster.MakeClusterSettings()
 	allocator := cpuTimeTokenAllocator{
 		granter:  granter,
-		settings: cluster.MakeClusterSettings(),
+		settings: st,
 		model:    model,
 		metrics:  metrics,
 		queues: [numResourceTiers]workQueueIForAllocator{
 			testTier0: burstMgrs[testTier0],
 			testTier1: burstMgrs[testTier1],
 		},
+		dispenseAdjuster: newCTTDispenseAdjuster(st),
 	}
 	printBurstMgrs = func() string {
 		var b strings.Builder
@@ -236,6 +238,27 @@ func TestCPUTimeTokenAllocator(t *testing.T) {
 				fmt.Fprintf(&buf, "SET CLUSTER SETTING admission.cpu_time_tokens.target_util.burst_delta = %v\n", override)
 				KVCPUTimeUtilBurstDelta.Override(ctx, &allocator.settings.SV, override)
 			}
+			return flushAndReset()
+		case "cpu-load":
+			// cpu-load runnable=<int> procs=<int> [n=<int>] drives the
+			// dispense adjuster's CPULoad feedback loop. The optional n
+			// argument repeats the call n times, useful for letting the
+			// fraction decay or recover over many ticks.
+			var runnable, procs int
+			d.ScanArgs(t, "runnable", &runnable)
+			d.ScanArgs(t, "procs", &procs)
+			n := 1
+			d.MaybeScanArgs(t, "n", &n)
+			for i := 0; i < n; i++ {
+				allocator.dispenseAdjuster.CPULoad(runnable, procs, time.Millisecond)
+			}
+			fmt.Fprintf(&buf, "dispenseFrac %.2f\n", allocator.dispenseAdjuster.getFrac())
+			return flushAndReset()
+		case "setDispenseFrac":
+			var frac float64
+			d.ScanArgs(t, "v", &frac)
+			allocator.dispenseAdjuster.setFracForTest(frac)
+			fmt.Fprintf(&buf, "dispenseFrac %.2f\n", allocator.dispenseAdjuster.getFrac())
 			return flushAndReset()
 		default:
 			return fmt.Sprintf("unknown command: %s", d.Cmd)
