@@ -46,7 +46,9 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 10 used: 1, w: 1, fifo: -128
  group-id: 20 used: 1, w: 1, fifo: -128
-burst-buckets: t10=fullness=50.0% tokens=50 capacity=100 maxCPU=true qual=can_burst t20=fullness=50.0% tokens=50 capacity=100 qual=no_burst
+ group-id: 10 used: 0, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+burst-buckets: t10=fullness=50.0% tokens=50 capacity=100 qual=no_burst t20=fullness=50.0% tokens=50 capacity=100 qual=no_burst rg10=fullness=100.0% tokens=100 capacity=100 maxCPU=true qual=can_burst rg20=fullness=100.0% tokens=100 capacity=100 qual=can_burst
 
 # Queue work for both groups.
 set-try-get-return-value v=false
@@ -58,7 +60,6 @@ tryGet: input no_burst, returning false
 
 admit id=4 tenant=10 requested-count=1
 ----
-tryGet: input can_burst, returning false
 
 gc-groups-and-reset-used
 ----
@@ -92,7 +93,9 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 10 used: 1, w: 1, fifo: -128
  group-id: 20 used: 1, w: 1, fifo: -128
-burst-buckets: t10=fullness=49.0% tokens=49 capacity=100 qual=no_burst t20=fullness=49.0% tokens=49 capacity=100 qual=no_burst
+ group-id: 10 used: 0, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+burst-buckets: t10=fullness=49.0% tokens=49 capacity=100 qual=no_burst t20=fullness=49.0% tokens=49 capacity=100 qual=no_burst rg10=fullness=100.0% tokens=100 capacity=100 qual=can_burst rg20=fullness=100.0% tokens=100 capacity=100 qual=can_burst
 
 # Both groups are now no_burst. New work should report no_burst.
 admit id=5 tenant=10 requested-count=1
@@ -127,22 +130,24 @@ set-max-cpu-groups group=10 v=true
 
 print
 ----
-closed epoch: 0 groupHeap len: 2 top group: 10
+closed epoch: 0 groupHeap len: 2 top group: 20
  group-id: 10 used: 0, w: 1, fifo: -128 waiting work heap: [0: pri: normal-pri, ct: 1, epoch: 0, qt: 100]
  group-id: 20 used: 0, w: 1, fifo: -128 waiting work heap: [0: pri: normal-pri, ct: 1, epoch: 0, qt: 100]
-burst-buckets: t10=fullness=48.0% tokens=48 capacity=100 maxCPU=true qual=can_burst t20=fullness=49.0% tokens=49 capacity=100 qual=no_burst
+ group-id: 10 used: 0, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+burst-buckets: t10=fullness=48.0% tokens=48 capacity=100 qual=no_burst t20=fullness=49.0% tokens=49 capacity=100 qual=no_burst rg10=fullness=100.0% tokens=100 capacity=100 maxCPU=true qual=can_burst rg20=fullness=100.0% tokens=100 capacity=100 qual=can_burst
 
 # Group 10 (can_burst via maxCPU) should be granted before group 20.
 granted chain-id=1
 ----
 continueGrantChain 1
-id 6: admit succeeded
+id 7: admit succeeded
 granted: returned 1
 
 granted chain-id=1
 ----
 continueGrantChain 1
-id 7: admit succeeded
+id 6: admit succeeded
 granted: returned 1
 
 set-try-get-return-value v=true
@@ -171,4 +176,7 @@ closed epoch: 0 groupHeap len: 0
  group-id: 10 used: 1, w: 1, fifo: -128
  group-id: 20 used: 1, w: 1, fifo: -128
  group-id: 30 used: 1, w: 1, fifo: -128
-burst-buckets: t10=fullness=47.0% tokens=47 capacity=100 qual=no_burst t20=fullness=48.0% tokens=48 capacity=100 qual=no_burst t30=fullness=99.0% tokens=99 capacity=100 maxCPU=true qual=can_burst
+ group-id: 10 used: 0, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+ group-id: 30 used: 0, w: 1, fifo: -128
+burst-buckets: t10=fullness=47.0% tokens=47 capacity=100 qual=no_burst t20=fullness=48.0% tokens=48 capacity=100 qual=no_burst t30=fullness=99.0% tokens=99 capacity=100 qual=can_burst rg10=fullness=100.0% tokens=100 capacity=100 qual=can_burst rg20=fullness=100.0% tokens=100 capacity=100 qual=can_burst rg30=fullness=100.0% tokens=100 capacity=100 maxCPU=true qual=can_burst

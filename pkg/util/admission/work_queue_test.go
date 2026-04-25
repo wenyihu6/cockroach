@@ -581,8 +581,8 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				// testdata assertion.
 				q.mu.Lock()
 				cfg := make(map[uint64]ResourceGroupConfig, len(q.mu.groups)+1)
-				for id, g := range q.mu.groups {
-					cfg[id] = ResourceGroupConfig{
+				for k, g := range q.mu.groups {
+					cfg[k.id] = ResourceGroupConfig{
 						Weight: g.weight,
 						MaxCPU: g.cpuTimeBurstBucket.maxCPU,
 					}
