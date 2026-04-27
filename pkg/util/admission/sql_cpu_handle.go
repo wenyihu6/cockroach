@@ -440,7 +440,9 @@ func (h *SQLCPUHandle) Close() {
 	// be added to mu.reservation after this.
 	remaining := h.mu.reservation.Swap(0)
 	if remaining > 0 {
-		h.wq.AdmittedSQLWorkDone(tenantGroupKey(h.workInfo.TenantID.ToUint64()), remaining)
+		// closed=true was set under mu before this Swap, so no further Admit
+		// can update lastAdmitResp; reading it here without mu is safe.
+		h.wq.AdmittedSQLWorkDone(h.mu.lastAdmitResp.groupKey, remaining)
 	}
 }
 
