@@ -12,7 +12,6 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -490,7 +489,7 @@ func initWorkQueue(
 	func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		q.mu.groups = make(map[uint64]*groupInfo)
+		q.mu.groups = make(map[groupKey]*groupInfo)
 		q.sampleEpochLIFOSettingsLocked()
 	}()
 	if !opts.disableGCGroupsAndResetUsed {
@@ -671,7 +670,7 @@ func (q *WorkQueue) tryCloseEpoch(timeNow time.Time) {
 			// specifically all the store WorkQueues share the same metric. We
 			// should eliminate that sharing and make those per store metrics.
 			log.Dev.Infof(q.ambientCtx, "%s: FIFO threshold for group %d %s %d",
-				q.workKind, group.id, logVerb, group.fifoPriorityThreshold)
+				q.workKind, group.groupKey.id, logVerb, group.fifoPriorityThreshold)
 		}
 		// Note that we are ignoring the new priority threshold and only
 		// dequeueing the ones that are in the closed epoch. It is possible to
@@ -915,14 +914,14 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 				// the waiting heap (and fixing the heap).
 				if log.V(1) {
 					log.Dev.Infof(ctx, "fast-path: admitting t%d pri=%s r%s log-position=%s ingested=%t",
-						groupID, info.Priority,
+						gKey.id, info.Priority,
 						info.ReplicatedWorkInfo.RangeID,
 						info.ReplicatedWorkInfo.LogPosition.String(),
 						info.ReplicatedWorkInfo.Ingested,
 					)
 				}
 				q.onAdmittedReplicatedWork.admittedReplicatedWork(
-					roachpb.MustMakeTenantID(groupID),
+					roachpb.MustMakeTenantID(gKey.id),
 					info.Priority,
 					info.ReplicatedWorkInfo,
 					info.RequestedCount,
@@ -952,20 +951,20 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// can be granted admission.
 		q.mu.Lock()
 
-		// Re-derive groupID: the mode may have changed while the lock
+		// Re-derive gKey: the mode may have changed while the lock
 		// was released (though mode transitions are not yet supported).
-		groupID = q.groupIDForWorkLocked(info)
-		admitResponse.groupID = roachpb.TenantID{InternalValue: groupID}
+		gKey = q.groupKeyForWorkLocked(info)
+		admitResponse.groupKey = gKey
 
 		// The group could have been removed. See the comment where the
 		// groupInfo struct is declared.
-		group, ok = q.mu.groups[groupID]
+		group, ok = q.mu.groups[gKey]
 		if !ok {
-			maxCPU := q.getMaxCPULocked(groupID)
-			group = newGroupInfo(groupID, q.getGroupWeightLocked(groupID),
+			maxCPU := q.getMaxCPULocked(gKey)
+			group = newGroupInfo(gKey, q.getGroupWeightLocked(gKey),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
 				maxCPU, q.perGroupAggMetrics)
-			q.mu.groups[groupID] = group
+			q.mu.groups[gKey] = group
 		}
 		q.adjustGroupUsedLocked(group, -info.RequestedCount)
 	}
@@ -1017,7 +1016,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 			q.mu.Unlock()
 
 			log.Dev.Infof(ctx, "async-path: len(waiting-work)=%d: enqueued t%d pri=%s r%s log-position=%s ingested=%t",
-				queueLen, groupID, info.Priority,
+				queueLen, gKey.id, info.Priority,
 				info.ReplicatedWorkInfo.RangeID,
 				info.ReplicatedWorkInfo.LogPosition,
 				info.ReplicatedWorkInfo.Ingested,
@@ -1266,7 +1265,7 @@ func (q *WorkQueue) granted(grantChainID grantChainID) int64 {
 	requestedCount := item.requestedCount
 	// Cannot read group after release q.mu, since group may get GC'd and
 	// reused.
-	groupID := group.id
+	gKey := group.groupKey
 	q.mu.Unlock()
 
 	if !item.replicated.Enabled {
@@ -1281,7 +1280,7 @@ func (q *WorkQueue) granted(grantChainID grantChainID) int64 {
 			q.mu.Unlock()
 
 			log.Dev.Infof(q.ambientCtx, "async-path: len(waiting-work)=%d dequeued t%d pri=%s r%s log-position=%s ingested=%t",
-				queueLen, groupID, item.priority,
+				queueLen, gKey.id, item.priority,
 				item.replicated.RangeID,
 				item.replicated.LogPosition,
 				item.replicated.Ingested,
@@ -1289,7 +1288,7 @@ func (q *WorkQueue) granted(grantChainID grantChainID) int64 {
 		}
 		defer releaseWaitingWork(item)
 		q.onAdmittedReplicatedWork.admittedReplicatedWork(
-			roachpb.MustMakeTenantID(groupID),
+			roachpb.MustMakeTenantID(gKey.id),
 			item.priority,
 			item.replicated,
 			item.requestedCount,
@@ -1467,16 +1466,21 @@ func (q *WorkQueue) SafeFormat(s redact.SafePrinter, _ rune) {
 	s.Printf("closed epoch: %d ", q.mu.closedEpochThreshold)
 	s.Printf("groupHeap len: %d", len(q.mu.groupHeap))
 	if len(q.mu.groupHeap) > 0 {
-		s.Printf(" top group: %d", q.mu.groupHeap[0].groupKey)
+		s.Printf(" top group: %d", q.mu.groupHeap[0].groupKey.id)
 	}
-	var ids []uint64
-	for id := range q.mu.groups {
-		ids = append(ids, groupKey{})
+	var keys []groupKey
+	for k := range q.mu.groups {
+		keys = append(keys, k)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	for _, id := range ids {
-		group := q.mu.groups[id]
-		s.Printf("\n group-id: %d used: %d, w: %d, fifo: %d", group.id, group.used,
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].kind != keys[j].kind {
+			return keys[i].kind < keys[j].kind
+		}
+		return keys[i].id < keys[j].id
+	})
+	for _, k := range keys {
+		group := q.mu.groups[k]
+		s.Printf("\n group-id: %d used: %d, w: %d, fifo: %d", group.groupKey.id, group.used,
 			group.weight, group.fifoPriorityThreshold)
 		if len(group.waitingWorkHeap) > 0 {
 			// Sort items within waitingWorkHeap
@@ -1509,14 +1513,18 @@ func (q *WorkQueue) SafeFormat(s redact.SafePrinter, _ rune) {
 			}
 		}
 	}
-	if q.mode == usesCPUTimeTokens && len(ids) > 0 {
+	if q.mode == usesCPUTimeTokens && len(keys) > 0 {
 		s.Printf("\nburst-buckets: ")
-		for i, id := range ids {
+		for i, k := range keys {
 			if i > 0 {
 				s.Printf(" ")
 			}
-			group := q.mu.groups[id]
-			s.Printf("t%d=%s", id, &group.cpuTimeBurstBucket)
+			group := q.mu.groups[k]
+			if k.isTenant() {
+				s.Printf("t%d=%s", k.id, &group.cpuTimeBurstBucket)
+			} else {
+				s.Printf("rg%d=%s", k.id, &group.cpuTimeBurstBucket)
+			}
 		}
 	}
 }
@@ -1544,17 +1552,20 @@ func (q *WorkQueue) getGroupWeightLocked(gKey groupKey) uint32 {
 }
 
 // getMaxCPULocked returns the maxCPU flag for the given resource
-// group. Returns false if the group is not in the map. See
-// cpuTimeBurstBucket for how this flag affects burst qualification.
+// group. Returns false if the group is not in the map, or if the
+// container is tenant-keyed: maxCPUGroups is populated with
+// priority-derived RG IDs (see priorityToResourceGroup), so a
+// numerically equal tenant ID must not accidentally inherit the flag.
+// See cpuTimeBurstBucket for how this flag affects burst qualification.
 //
 // REQUIRES: q.mu is held.
-func (q *WorkQueue) getMaxCPULocked(groupKey groupKey) bool {
-	if groupKey.isRG() {
+func (q *WorkQueue) getMaxCPULocked(gKey groupKey) bool {
+	q.mu.AssertHeld()
+	if !gKey.isRG() {
 		return false
 	}
-	q.mu.AssertHeld()
 	if q.mu.maxCPUGroups != nil {
-		if maxCPU, ok := q.mu.maxCPUGroups[groupKey.id]; ok {
+		if maxCPU, ok := q.mu.maxCPUGroups[gKey.id]; ok {
 			return maxCPU
 		}
 	}
@@ -1599,7 +1610,7 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 	q.mu.groupWeights.mu.Lock()
 	defer q.mu.groupWeights.mu.Unlock()
 	if q.mu.groupWeights.inactive == nil {
-		q.mu.groupWeights.inactive = make(map[uint64]uint32)
+		q.mu.groupWeights.inactive = make(map[groupKey]uint32)
 	}
 	// Remove all elements from the inactive map.
 	for k := range q.mu.groupWeights.inactive {
@@ -1616,13 +1627,14 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 	if maxWeight > groupWeightCap {
 		scaling = groupWeightCap / float64(maxWeight)
 	}
-	// Populate the weights in the inactive map.
+	// Populate the weights in the inactive map. SetTenantWeights only
+	// governs tenant containers, so wrap with tenantGroupKey.
 	for k, v := range groupWeights {
 		w := uint32(math.Ceil(float64(v) * scaling))
 		if w < defaultGroupWeight {
 			w = defaultGroupWeight
 		}
-		q.mu.groupWeights.inactive[k] = w
+		q.mu.groupWeights.inactive[tenantGroupKey(k)] = w
 	}
 	// Establish the new active map.
 	func() {
@@ -1631,27 +1643,29 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 		q.mu.groupWeights.active, q.mu.groupWeights.inactive =
 			q.mu.groupWeights.inactive, q.mu.groupWeights.active
 	}()
-	// Create a slice for storing all the groupIDs. We use this to split the
-	// update to the data-structures that require holding q.mu, in case there
-	// are 1000s of groups (we don't want to hold q.mu for long durations).
-	groupIDs := func() []uint64 {
+	// Create a slice for storing all tenant-keyed group keys. We use
+	// this to split the update to the data-structures that require
+	// holding q.mu, in case there are 1000s of groups (we don't want to
+	// hold q.mu for long durations). Only tenant-kind containers are
+	// updated here: SetTenantWeights only governs tenant containers.
+	keys := func() []groupKey {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		gIDs := make([]uint64, len(q.mu.groups))
-		i := 0
+		ks := make([]groupKey, 0, len(q.mu.groups))
 		for k := range q.mu.groups {
-			gIDs[i] = k
-			i++
+			if k.isTenant() {
+				ks = append(ks, k)
+			}
 		}
-		return gIDs
+		return ks
 	}()
-	// Any groups not in groupIDs will see the latest weight when their
+	// Any groups not in keys will see the latest weight when their
 	// groupInfo is created. The existing ones need their weights to be
 	// updated.
 
-	// groupIDs[index] represents the next groupID that needs to be updated.
+	// keys[index] represents the next groupKey that needs to be updated.
 	var index int
-	n := len(groupIDs)
+	n := len(keys)
 	// updateNextBatch acquires q.mu and updates a batch of groups.
 	updateNextBatch := func() (repeat bool) {
 		q.mu.Lock()
@@ -1662,9 +1676,9 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 			if index >= n {
 				return false
 			}
-			groupID := groupIDs[index]
-			gi := q.mu.groups[groupID]
-			weight := q.getGroupWeightLocked(groupID)
+			key := keys[index]
+			gi := q.mu.groups[key]
+			weight := q.getGroupWeightLocked(key)
 			if gi != nil && gi.weight != weight {
 				gi.weight = weight
 				if isInGroupHeap(gi) {
@@ -1943,11 +1957,11 @@ func newGroupInfo(
 	ti.cpuTimeBurstBucket.init(
 		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */, maxCPU)
 	if aggMetrics != nil {
-		tid := strconv.FormatUint(id, 10)
-		ti.perGroupMetrics.admittedCount = aggMetrics.admittedCount.AddChild(tid)
-		ti.perGroupMetrics.waitTimeNanos = aggMetrics.waitTimeNanos.AddChild(tid)
-		ti.perGroupMetrics.tokensUsed = aggMetrics.tokensUsed.AddChild(tid)
-		ti.perGroupMetrics.tokensReturned = aggMetrics.tokensReturned.AddChild(tid)
+		label := groupKey.metricLabel()
+		ti.perGroupMetrics.admittedCount = aggMetrics.admittedCount.AddChild(label)
+		ti.perGroupMetrics.waitTimeNanos = aggMetrics.waitTimeNanos.AddChild(label)
+		ti.perGroupMetrics.tokensUsed = aggMetrics.tokensUsed.AddChild(label)
+		ti.perGroupMetrics.tokensReturned = aggMetrics.tokensReturned.AddChild(label)
 	}
 	return ti
 }
@@ -2017,7 +2031,7 @@ func (th *groupHeap) Less(i, j int) bool {
 	// burstQualification method, so we must call it here.
 	if (*th)[i].used*uint64((*th)[j].weight) == (*th)[j].used*uint64((*th)[i].weight) {
 		if (*th)[i].weight == (*th)[j].weight {
-			return (*th)[i].id < (*th)[j].id
+			return (*th)[i].groupKey.id < (*th)[j].groupKey.id
 		}
 		return (*th)[i].weight > (*th)[j].weight
 	}
@@ -2700,7 +2714,7 @@ func (q *StoreWorkQueue) admittedReplicatedWork(
 	if !coordMuLocked {
 		q.coordMu.Unlock()
 	}
-	q.q[wc].adjustGroupUsed(tenantID, additionalTokensNeeded)
+	q.q[wc].adjustGroupUsed(tenantGroupKey(tenantID.ToUint64()), additionalTokensNeeded)
 
 	// Inform callers of the entry we just admitted.
 	//
@@ -2765,7 +2779,7 @@ func (q *StoreWorkQueue) AdmittedWorkDone(h StoreWorkHandle, doneInfo StoreWorkD
 	}
 	q.updateStoreStatsAfterWorkDone(1, doneInfo, false, true)
 	additionalTokens := q.granters[h.workClass].storeWriteDone(h.writeTokens, doneInfo)
-	q.q[h.workClass].adjustGroupUsed(h.tenantID, additionalTokens)
+	q.q[h.workClass].adjustGroupUsed(tenantGroupKey(h.tenantID.ToUint64()), additionalTokens)
 	return nil
 }
 

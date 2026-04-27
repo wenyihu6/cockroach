@@ -5,6 +5,8 @@
 
 package admission
 
+import "strconv"
+
 // groupKind distinguishes the semantic origin of a groupInfo's
 // container in q.mu.groups. The same numeric ID can represent
 // either a tenant (in serverless mode) or a resource group (in RM
@@ -46,4 +48,16 @@ func tenantGroupKey(id uint64) groupKey {
 // rgGroupKey returns the groupKey for a resource group container.
 func rgGroupKey(id uint64) groupKey {
 	return groupKey{id: id, kind: rgKind}
+}
+
+// metricLabel returns the per-group metric label for k. Tenant-keyed
+// and rg-keyed containers get distinct labels ("tenant:N" vs "rg:N")
+// so dashboard time-series naturally separate the two semantic
+// classes (e.g. system tenant id 1 vs high-pri RG id 1).
+func (k groupKey) metricLabel() string {
+	prefix := "tenant:"
+	if k.isRG() {
+		prefix = "rg:"
+	}
+	return prefix + strconv.FormatUint(k.id, 10)
 }

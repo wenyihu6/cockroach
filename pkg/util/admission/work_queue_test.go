@@ -593,7 +593,7 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "to-add", &toAdd)
 				d.ScanArgs(t, "capacity", &capacity)
-				q.refillBurstBucketForGroup(uint64(group), toAdd, capacity)
+				q.refillBurstBucketForGroup(rgGroupKey(uint64(group)), toAdd, capacity)
 				return ""
 
 			default:

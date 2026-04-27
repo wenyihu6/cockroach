@@ -440,7 +440,7 @@ func (h *SQLCPUHandle) Close() {
 	// be added to mu.reservation after this.
 	remaining := h.mu.reservation.Swap(0)
 	if remaining > 0 {
-		h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, remaining)
+		h.wq.AdmittedSQLWorkDone(tenantGroupKey(h.workInfo.TenantID.ToUint64()), remaining)
 	}
 }
 
