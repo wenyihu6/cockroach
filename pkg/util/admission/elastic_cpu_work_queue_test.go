@@ -171,8 +171,8 @@ func (t *testElasticCPUInternalWorkQueue) adjustGroupUsed(
 	gKey groupKey, additionalUsed int64,
 ) {
 	if !t.disabled {
-		fmt.Fprintf(&t.buf, "adjust-group-used: group=t%d additional-used=%s",
-			gKey.id, time.Duration(additionalUsed).String())
+		fmt.Fprintf(&t.buf, "adjust-group-used: group=%s additional-used=%s",
+			roachpb.MustMakeTenantID(gKey.id).String(), time.Duration(additionalUsed).String())
 	}
 }
 

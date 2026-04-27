@@ -330,7 +330,10 @@ type WorkQueue struct {
 			active, inactive map[groupKey]uint32
 		}
 		// maxCPUGroups maps resource group ID to whether that group always
-		// qualifies for burst (MAX_CPU). Only used if mode == usesCPUTimeTokens and
+		// qualifies for burst (MAX_CPU). IDs are interpreted as resource group
+		// IDs (rgKind); the lookup in getMaxCPULocked short-circuits for
+		// tenant-keyed containers so a numerically equal tenant ID can never
+		// inherit the flag. Only used if mode == usesCPUTimeTokens and
 		// admission.cpu_time_tokens.mode == "resource_manager".
 		maxCPUGroups map[uint64]bool
 
@@ -1551,12 +1554,12 @@ func (q *WorkQueue) getGroupWeightLocked(gKey groupKey) uint32 {
 	return weight
 }
 
-// getMaxCPULocked returns the maxCPU flag for the given resource
-// group. Returns false if the group is not in the map, or if the
-// container is tenant-keyed: maxCPUGroups is populated with
-// priority-derived RG IDs (see priorityToResourceGroup), so a
-// numerically equal tenant ID must not accidentally inherit the flag.
-// See cpuTimeBurstBucket for how this flag affects burst qualification.
+// getMaxCPULocked returns the maxCPU flag for the given group.
+// Returns false if the ID is not in maxCPUGroups, or if gKey is
+// tenant-keyed: maxCPUGroups is populated with RG IDs, so the
+// kind guard prevents a numerically equal tenant ID from inheriting
+// the flag. See cpuTimeBurstBucket for how this flag affects burst
+// qualification.
 //
 // REQUIRES: q.mu is held.
 func (q *WorkQueue) getMaxCPULocked(gKey groupKey) bool {
@@ -1564,25 +1567,23 @@ func (q *WorkQueue) getMaxCPULocked(gKey groupKey) bool {
 	if !gKey.isRG() {
 		return false
 	}
-	if q.mu.maxCPUGroups != nil {
-		if maxCPU, ok := q.mu.maxCPUGroups[gKey.id]; ok {
-			return maxCPU
-		}
-	}
-	return false
+	return q.mu.maxCPUGroups[gKey.id]
 }
 
 // SetMaxCPUGroups replaces all per-resource-group maxCPU flags with
-// the provided map. Groups absent from the map revert to the default
+// the provided map. Input IDs are interpreted as resource group IDs
+// (rgKind); only rg-keyed containers consult this map (see
+// getMaxCPULocked), so a numerically equal tenant ID can never
+// inherit the flag. Groups absent from the map revert to the default
 // (maxCPU=false). Existing groups have their burst buckets updated;
-// new groups will pick up their flag when created. The map is captured
-// by reference; the caller must not modify it after calling.
+// new groups will pick up their flag when created. The map is
+// captured by reference; the caller must not modify it after calling.
 func (q *WorkQueue) SetMaxCPUGroups(groups map[uint64]bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.mu.maxCPUGroups = groups
-	for id, group := range q.mu.groups {
-		maxCPU := q.getMaxCPULocked(id)
+	for gKey, group := range q.mu.groups {
+		maxCPU := q.getMaxCPULocked(gKey)
 		if group.cpuTimeBurstBucket.maxCPU != maxCPU {
 			prevQual := group.cpuTimeBurstBucket.burstQualification()
 			group.cpuTimeBurstBucket.maxCPU = maxCPU
@@ -1844,6 +1845,11 @@ func (ps *priorityStates) getFIFOPriorityThresholdAndReset(
 // the resource group ID is derived from the work's priority (see
 // priorityToResourceGroup).
 type groupInfo struct {
+	// groupKey is the composite (id, kind) under which this groupInfo
+	// is stored in q.mu.groups. Carrying it on the struct lets call
+	// sites that reach a *groupInfo without the original key (heap
+	// items, GC sweep entries) report their semantic origin in
+	// SafeFormat output and metric labels.
 	groupKey groupKey
 	// The weight assigned to the resource group. Must be > 0. For
 	// resource groups, this is WEIGHT_CPU.
