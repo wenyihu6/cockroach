@@ -314,7 +314,11 @@ type WorkQueue struct {
 		groupHeap groupHeap
 		// All groups, including those without waiting work. Keyed by resource group
 		// ID. Periodically cleaned.
-		groups       map[uint64]*groupInfo
+		// Keyed by composite groupKey (id + kind) so that the same uint64
+		// ID representing different semantic kinds (e.g., system tenant
+		// ID 1 vs highResourceGroupID 1) does not collide on a single
+		// container.
+		groups       map[groupKey]*groupInfo
 		groupWeights struct {
 			mu syncutil.Mutex
 			// active refers to the currently active weights. mu is held for updates
@@ -487,7 +491,7 @@ func initWorkQueue(
 	func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		q.mu.groups = make(map[uint64]*groupInfo)
+		q.mu.groups = make(map[groupKey]*groupInfo)
 		q.sampleEpochLIFOSettingsLocked()
 	}()
 	if !opts.disableGCGroupsAndResetUsed {
@@ -702,6 +706,13 @@ type AdmitResponse struct {
 	// AdmittedWorkDone. Need to make sure lookup misses fail gracefully if the
 	// entry has been GCed after a mode switch.
 	groupID roachpb.TenantID
+	// groupKind is the kind of the container this work was admitted into
+	// (tenantKind for serverless TenantID-keyed groups, rgKind for RM
+	// resource-group-keyed groups). Captured at Admit time alongside
+	// groupID so AdmittedWorkDone can construct the composite groupKey
+	// without re-deriving from current useResourceGroup state, which may
+	// have changed since admission.
+	groupKind groupKind
 	// requestedCount is the number of slots or tokens taken at Admit time.
 	// It is useful to return, so that in AdmittedWorkDone, we can adjust
 	// the deduction, in cases where we have more information, such as in
@@ -729,6 +740,43 @@ func priorityToResourceGroup(pri admissionpb.WorkPriority) uint64 {
 	return lowResourceGroupID
 }
 
+// groupKind distinguishes the semantic origin of a groupInfo's
+// container in q.mu.groups. The same numeric ID can represent
+// either a tenant (in serverless mode) or a resource group (in RM
+// mode), and tenant IDs and RM resource group IDs are drawn from
+// the same uint64 space (e.g., system tenant ID = 1 collides with
+// highResourceGroupID = 1). Pairing the ID with a kind in the map
+// key prevents these two semantic meanings from ever sharing a
+// container.
+type groupKind uint8
+
+const (
+	// tenantKind identifies a container created for a tenant ID
+	// (serverless mode routing via TenantID).
+	tenantKind groupKind = iota
+	// rgKind identifies a container created for a resource group
+	// ID (RM mode routing via priorityToResourceGroup).
+	rgKind
+)
+
+// groupKey is the composite map key for q.mu.groups. It pairs the
+// uint64 group ID with its semantic kind so that, e.g., tenant 1
+// and high-priority RG 1 occupy distinct map entries.
+type groupKey struct {
+	id   uint64
+	kind groupKind
+}
+
+// tenantGroupKey returns the groupKey for a tenant container.
+func tenantGroupKey(id uint64) groupKey {
+	return groupKey{id: id, kind: tenantKind}
+}
+
+// rgGroupKey returns the groupKey for a resource group container.
+func rgGroupKey(id uint64) groupKey {
+	return groupKey{id: id, kind: rgKind}
+}
+
 // setUseResourceGroup enables or disables priority-based resource
 // group derivation. When enabled, the resource group ID is derived
 // from WorkInfo.Priority instead of WorkInfo.TenantID.
@@ -738,17 +786,18 @@ func (q *WorkQueue) setUseResourceGroup(enabled bool) {
 	q.mu.useResourceGroup = enabled
 }
 
-// groupIDForWorkLocked returns the resource group ID for the given
-// WorkInfo. In RM mode (useResourceGroup), the group is derived from
-// WorkInfo.Priority; otherwise it is the TenantID.
+// groupKeyForWorkLocked returns the composite groupKey for the given
+// WorkInfo. In RM mode (useResourceGroup), the key is derived from
+// WorkInfo.Priority with kind=rgKind; otherwise it is the TenantID
+// with kind=tenantKind.
 //
 // REQUIRES: q.mu is held.
-func (q *WorkQueue) groupIDForWorkLocked(info WorkInfo) uint64 {
+func (q *WorkQueue) groupKeyForWorkLocked(info WorkInfo) groupKey {
 	q.mu.AssertHeld()
 	if q.mu.useResourceGroup {
-		return priorityToResourceGroup(info.Priority)
+		return rgGroupKey(priorityToResourceGroup(info.Priority))
 	}
-	return info.TenantID.ToUint64()
+	return tenantGroupKey(info.TenantID.ToUint64())
 }
 
 // Admit is called when requesting admission for some work. If
@@ -803,20 +852,21 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	// unlocked on all code paths.
 	q.mu.Lock()
 
-	groupID := q.groupIDForWorkLocked(info)
+	key := q.groupKeyForWorkLocked(info)
+	groupID := key.id
 
-	group, ok := q.mu.groups[groupID]
+	group, ok := q.mu.groups[key]
 	if !ok {
 		// See comment below about CPU time token estimation. If no groupInfo
 		// struct exists for a group, then there is no cpuTimeTokenEstimator
 		// dedicated to that group yet. When we create the groupInfo struct
 		// here, we also create the estimator. We init the estimator using a
 		// global estimator that sees workload across all groups.
-		maxCPU := q.getMaxCPULocked(groupID)
-		group = newGroupInfo(groupID, q.getGroupWeightLocked(groupID),
+		maxCPU := q.getMaxCPULocked(key)
+		group = newGroupInfo(key, q.getGroupWeightLocked(key),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
 			maxCPU, q.perGroupAggMetrics)
-		q.mu.groups[groupID] = group
+		q.mu.groups[key] = group
 	}
 	// If mode == usesCPUTimeTokens, WorkQueue does CPU time token estimation.
 	// When Admit is called, the request hasn't yet executed, so we do not
@@ -833,6 +883,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 	}
 	admitResponse := AdmitResponse{
 		groupID:        roachpb.TenantID{InternalValue: groupID},
+		groupKind:      key.kind,
 		requestedCount: info.RequestedCount,
 	}
 
@@ -947,20 +998,22 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// can be granted admission.
 		q.mu.Lock()
 
-		// Re-derive groupID: the mode may have changed while the lock
+		// Re-derive key: the mode may have changed while the lock
 		// was released (though mode transitions are not yet supported).
-		groupID = q.groupIDForWorkLocked(info)
+		key = q.groupKeyForWorkLocked(info)
+		groupID = key.id
 		admitResponse.groupID = roachpb.TenantID{InternalValue: groupID}
+		admitResponse.groupKind = key.kind
 
 		// The group could have been removed. See the comment where the
 		// groupInfo struct is declared.
-		group, ok = q.mu.groups[groupID]
+		group, ok = q.mu.groups[key]
 		if !ok {
-			maxCPU := q.getMaxCPULocked(groupID)
-			group = newGroupInfo(groupID, q.getGroupWeightLocked(groupID),
+			maxCPU := q.getMaxCPULocked(key)
+			group = newGroupInfo(key, q.getGroupWeightLocked(key),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
 				maxCPU, q.perGroupAggMetrics)
-			q.mu.groups[groupID] = group
+			q.mu.groups[key] = group
 		}
 		q.adjustGroupUsedLocked(group, -info.RequestedCount)
 	}
@@ -1165,8 +1218,9 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 		//
 		// NB: additionalUsed can be negative here (in case the initial estimate was
 		// too pessimistic).
+		respKey := groupKey{id: resp.groupID.ToUint64(), kind: resp.groupKind}
 		if additionalUsed != 0 {
-			group, ok := q.mu.groups[resp.groupID.ToUint64()]
+			group, ok := q.mu.groups[respKey]
 			if ok {
 				q.adjustGroupUsedLocked(group, additionalUsed)
 			}
@@ -1181,7 +1235,7 @@ func (q *WorkQueue) AdmittedWorkDone(resp AdmitResponse, cpuTime time.Duration) 
 		// in this code path, that is, at admission time.
 		if q.mode == usesCPUTimeTokens {
 			q.mu.defaultCPUTimeTokenEstimator.workDone(cpuTime.Nanoseconds())
-			group, ok := q.mu.groups[resp.groupID.ToUint64()]
+			group, ok := q.mu.groups[respKey]
 			// If the group struct doesn't exist, it has been GCed due to a lack of
 			// activity. In this case, we do not leverage the grunning measurement
 			// for future estimates.
@@ -1318,9 +1372,9 @@ func (q *WorkQueue) gcGroupsResetUsedAndUpdateEstimators() {
 	// With large numbers of active groups, this iteration could hold the lock
 	// longer than desired. We could break this iteration into smaller parts if
 	// needed.
-	for id, info := range q.mu.groups {
+	for k, info := range q.mu.groups {
 		if info.used == 0 && !isInGroupHeap(info) {
-			delete(q.mu.groups, id)
+			delete(q.mu.groups, k)
 			releaseGroupInfo(info)
 		} else {
 			info.cpuTimeTokenEstimator.update()
@@ -1338,8 +1392,9 @@ func (q *WorkQueue) gcGroupsResetUsedAndUpdateEstimators() {
 func (q *WorkQueue) adjustGroupUsed(groupID roachpb.TenantID, delta int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	tid := groupID.ToUint64()
-	group, ok := q.mu.groups[tid]
+	// Callers (StoreWorkQueue, AdmittedSQLWorkDone) operate on tenant
+	// containers, so the lookup uses tenantKind.
+	group, ok := q.mu.groups[tenantGroupKey(groupID.ToUint64())]
 	if !ok {
 		return
 	}
@@ -1429,7 +1484,8 @@ func (q *WorkQueue) refillBurstBuckets(toAdd int64, capacity int64) {
 func (q *WorkQueue) refillBurstBucketForGroup(groupID uint64, toAdd int64, capacity int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	group, ok := q.mu.groups[groupID]
+	// rmStrategy only refills RG-keyed containers.
+	group, ok := q.mu.groups[rgGroupKey(groupID)]
 	if !ok {
 		return
 	}
@@ -1462,13 +1518,18 @@ func (q *WorkQueue) SafeFormat(s redact.SafePrinter, _ rune) {
 	if len(q.mu.groupHeap) > 0 {
 		s.Printf(" top group: %d", q.mu.groupHeap[0].id)
 	}
-	var ids []uint64
-	for id := range q.mu.groups {
-		ids = append(ids, id)
+	var keys []groupKey
+	for k := range q.mu.groups {
+		keys = append(keys, k)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	for _, id := range ids {
-		group := q.mu.groups[id]
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].kind != keys[j].kind {
+			return keys[i].kind < keys[j].kind
+		}
+		return keys[i].id < keys[j].id
+	})
+	for _, k := range keys {
+		group := q.mu.groups[k]
 		s.Printf("\n group-id: %d used: %d, w: %d, fifo: %d", group.id, group.used,
 			group.weight, group.fifoPriorityThreshold)
 		if len(group.waitingWorkHeap) > 0 {
@@ -1502,14 +1563,18 @@ func (q *WorkQueue) SafeFormat(s redact.SafePrinter, _ rune) {
 			}
 		}
 	}
-	if q.mode == usesCPUTimeTokens && len(ids) > 0 {
+	if q.mode == usesCPUTimeTokens && len(keys) > 0 {
 		s.Printf("\nburst-buckets: ")
-		for i, id := range ids {
+		for i, k := range keys {
 			if i > 0 {
 				s.Printf(" ")
 			}
-			group := q.mu.groups[id]
-			s.Printf("t%d=%s", id, &group.cpuTimeBurstBucket)
+			group := q.mu.groups[k]
+			if k.kind == tenantKind {
+				s.Printf("t%d=%s", k.id, &group.cpuTimeBurstBucket)
+			} else {
+				s.Printf("rg%d=%s", k.id, &group.cpuTimeBurstBucket)
+			}
 		}
 	}
 }
@@ -1528,23 +1593,38 @@ const defaultGroupWeight = 1
 // sharing scheme would not need such a cap.
 const groupWeightCap = 20
 
-func (q *WorkQueue) getGroupWeightLocked(groupID uint64) uint32 {
-	weight, ok := q.mu.groupWeights.active[groupID]
+// getGroupWeightLocked returns the weight for the given groupKey.
+// Returns defaultGroupWeight if the key has no entry in the active
+// weights map.
+//
+// TODO(wenyihu6): groupWeights.active is currently keyed by uint64
+// only, so a tenant ID and an RG ID with the same numeric value
+// share an entry. The composite-key refactor stops at the groups
+// map for now; weight-map disjointness is a follow-up.
+func (q *WorkQueue) getGroupWeightLocked(key groupKey) uint32 {
+	weight, ok := q.mu.groupWeights.active[key.id]
 	if !ok {
 		weight = defaultGroupWeight
 	}
 	return weight
 }
 
-// getMaxCPULocked returns the maxCPU flag for the given resource
-// group. Returns false if the group is not in the map. See
+// getMaxCPULocked returns the maxCPU flag for the given groupKey.
+// Returns false if the group is not in the map. See
 // cpuTimeBurstBucket for how this flag affects burst qualification.
 //
+// TODO(wenyihu6): maxCPUGroups is currently keyed by uint64 only,
+// so the lookup uses key.id without dispatching on kind. This
+// preserves existing semantics where SetMaxCPUGroups applies to
+// any container with the given ID (tenant or RG). Splitting maxCPU
+// into a kind-aware structure is a follow-up to the composite-key
+// refactor.
+//
 // REQUIRES: q.mu is held.
-func (q *WorkQueue) getMaxCPULocked(groupID uint64) bool {
+func (q *WorkQueue) getMaxCPULocked(key groupKey) bool {
 	q.mu.AssertHeld()
 	if q.mu.maxCPUGroups != nil {
-		if maxCPU, ok := q.mu.maxCPUGroups[groupID]; ok {
+		if maxCPU, ok := q.mu.maxCPUGroups[key.id]; ok {
 			return maxCPU
 		}
 	}
@@ -1560,8 +1640,8 @@ func (q *WorkQueue) SetMaxCPUGroups(groups map[uint64]bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.mu.maxCPUGroups = groups
-	for id, group := range q.mu.groups {
-		maxCPU := q.getMaxCPULocked(id)
+	for k, group := range q.mu.groups {
+		maxCPU := q.getMaxCPULocked(k)
 		if group.cpuTimeBurstBucket.maxCPU != maxCPU {
 			prevQual := group.cpuTimeBurstBucket.burstQualification()
 			group.cpuTimeBurstBucket.maxCPU = maxCPU
@@ -1621,27 +1701,30 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 		q.mu.groupWeights.active, q.mu.groupWeights.inactive =
 			q.mu.groupWeights.inactive, q.mu.groupWeights.active
 	}()
-	// Create a slice for storing all the groupIDs. We use this to split the
-	// update to the data-structures that require holding q.mu, in case there
-	// are 1000s of groups (we don't want to hold q.mu for long durations).
-	groupIDs := func() []uint64 {
+	// Create a slice for storing all tenant-keyed group keys. We use this
+	// to split the update to the data-structures that require holding q.mu,
+	// in case there are 1000s of groups (we don't want to hold q.mu for
+	// long durations). Only tenant-kind containers are updated here:
+	// SetTenantWeights only governs tenant containers; rg-kind containers
+	// take weights from the resource-group config path.
+	keys := func() []groupKey {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		gIDs := make([]uint64, len(q.mu.groups))
-		i := 0
+		ks := make([]groupKey, 0, len(q.mu.groups))
 		for k := range q.mu.groups {
-			gIDs[i] = k
-			i++
+			if k.kind == tenantKind {
+				ks = append(ks, k)
+			}
 		}
-		return gIDs
+		return ks
 	}()
-	// Any groups not in groupIDs will see the latest weight when their
+	// Any groups not in keys will see the latest weight when their
 	// groupInfo is created. The existing ones need their weights to be
 	// updated.
 
-	// groupIDs[index] represents the next groupID that needs to be updated.
+	// keys[index] represents the next groupKey that needs to be updated.
 	var index int
-	n := len(groupIDs)
+	n := len(keys)
 	// updateNextBatch acquires q.mu and updates a batch of groups.
 	updateNextBatch := func() (repeat bool) {
 		q.mu.Lock()
@@ -1652,9 +1735,9 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 			if index >= n {
 				return false
 			}
-			groupID := groupIDs[index]
-			gi := q.mu.groups[groupID]
-			weight := q.getGroupWeightLocked(groupID)
+			key := keys[index]
+			gi := q.mu.groups[key]
+			weight := q.getGroupWeightLocked(key)
 			if gi != nil && gi.weight != weight {
 				gi.weight = weight
 				if isInGroupHeap(gi) {
@@ -1821,6 +1904,11 @@ func (ps *priorityStates) getFIFOPriorityThresholdAndReset(
 // priorityToResourceGroup).
 type groupInfo struct {
 	id uint64
+	// kind distinguishes whether this container was created for a
+	// tenant ID (tenantKind) or a resource group ID (rgKind). Pairs
+	// with id to form the groupKey under which this groupInfo is
+	// stored in q.mu.groups.
+	kind groupKind
 	// The weight assigned to the resource group. Must be > 0. For
 	// resource groups, this is WEIGHT_CPU.
 	weight uint32
@@ -1907,7 +1995,7 @@ var groupInfoPool = sync.Pool{
 }
 
 func newGroupInfo(
-	id uint64,
+	key groupKey,
 	weight uint32,
 	mode workQueueMode,
 	cpuTimeTokenEstimate int64,
@@ -1917,7 +2005,8 @@ func newGroupInfo(
 ) *groupInfo {
 	ti := groupInfoPool.Get().(*groupInfo)
 	*ti = groupInfo{
-		id:                    id,
+		id:                    key.id,
+		kind:                  key.kind,
 		weight:                weight,
 		waitingWorkHeap:       ti.waitingWorkHeap,
 		openEpochsHeap:        ti.openEpochsHeap,
@@ -1933,13 +2022,28 @@ func newGroupInfo(
 	ti.cpuTimeBurstBucket.init(
 		burstBucketCapacity, mode != usesCPUTimeTokens /* disable */, maxCPU)
 	if aggMetrics != nil {
-		tid := strconv.FormatUint(id, 10)
+		tid := metricLabelForKey(key)
 		ti.perGroupMetrics.admittedCount = aggMetrics.admittedCount.AddChild(tid)
 		ti.perGroupMetrics.waitTimeNanos = aggMetrics.waitTimeNanos.AddChild(tid)
 		ti.perGroupMetrics.tokensUsed = aggMetrics.tokensUsed.AddChild(tid)
 		ti.perGroupMetrics.tokensReturned = aggMetrics.tokensReturned.AddChild(tid)
 	}
 	return ti
+}
+
+// metricLabelForKey returns the per-group metric label for the given
+// groupKey. Tenant-keyed and rg-keyed containers get distinct labels
+// so dashboard time-series naturally separate the two semantic
+// classes (e.g. system tenant id 1 vs high-pri RG id 1).
+func metricLabelForKey(key groupKey) string {
+	switch key.kind {
+	case tenantKind:
+		return "tenant:" + strconv.FormatUint(key.id, 10)
+	case rgKind:
+		return "rg:" + strconv.FormatUint(key.id, 10)
+	default:
+		return strconv.FormatUint(key.id, 10)
+	}
 }
 
 func releaseGroupInfo(ti *groupInfo) {
