@@ -347,7 +347,7 @@ func (h *SQLCPUHandle) reportAndAcquireConsumedCPU(
 			// Close already ran and drained reservation. Return the buffer
 			// directly.
 			if closed {
-				h.wq.AdmittedSQLWorkDone(h.workInfo.TenantID, buffer)
+				h.wq.AdmittedSQLWorkDone(resp.groupKey, buffer)
 			}
 		}
 	}
