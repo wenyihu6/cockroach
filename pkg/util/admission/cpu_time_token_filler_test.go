@@ -111,6 +111,9 @@ func (m *testBurstManager) refillBurstBuckets(toAdd int64, capacity int64) {
 	}
 }
 
+func (m *testBurstManager) refillRMGroupBurstBuckets(_ float64, _ float64) {
+}
+
 func (m *testBurstManager) setUseResourceGroup(enabled bool) {
 	m.useResourceGroup = enabled
 }
@@ -559,22 +562,26 @@ func TestServerlessStrategyRefillBurst(t *testing.T) {
 }
 
 // TestNewStrategy verifies that newStrategy returns the correct
-// strategy for serverlessMode and panics for offMode (not a real
-// strategy), resourceManagerMode (not yet implemented), and unknown
-// modes.
+// strategy for serverlessMode and resourceManagerMode and panics
+// for offMode (not a real strategy) and unknown modes.
 func TestNewStrategy(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 
-	allocator := cpuTimeTokenAllocator{}
+	queues := [numResourceTiers]workQueueIForAllocator{
+		testTier0: &testBurstManager{},
+		testTier1: &testBurstManager{},
+	}
+	allocator := cpuTimeTokenAllocator{queues: queues}
+
 	s := allocator.newStrategy(serverlessMode)
 	require.Equal(t, serverlessMode, s.mode())
 
+	rm := allocator.newStrategy(resourceManagerMode)
+	require.Equal(t, resourceManagerMode, rm.mode())
+
 	require.Panics(t, func() {
 		allocator.newStrategy(offMode)
-	})
-	require.Panics(t, func() {
-		allocator.newStrategy(resourceManagerMode)
 	})
 	require.Panics(t, func() {
 		allocator.newStrategy(cpuTimeTokenMode(99))

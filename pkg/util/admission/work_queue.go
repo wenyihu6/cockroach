@@ -1495,6 +1495,18 @@ func (q *WorkQueue) refillBurstBucketForGroup(groupID uint64, toAdd int64, capac
 	q.refillBurstBucketLocked(group, toAdd, capacity)
 }
 
+// refillRMGroupBurstBuckets is the per-group RM-mode refill entry
+// point called by rmStrategy.refillBurst on every refill tick.
+//
+// TODO(wenyihu6): this is a no-op stub. The follow-up commit adds
+// per-resource-group storage (burstFrac, weight, maxCPU) to groupInfo
+// via the ResourceGroupConfigHolder and wires this method to iterate
+// groups and refill each bucket scaled by burstFrac. Until then RM
+// mode buckets do not refill, and any test that exercises RM-mode
+// admission against this method will see no token replenishment.
+func (q *WorkQueue) refillRMGroupBurstBuckets(rate100, cap100 float64) {
+}
+
 // refillBurstBucketLocked refills a group's burst bucket and fixes its
 // heap position if the burst qualification changed. q.mu must be held.
 func (q *WorkQueue) refillBurstBucketLocked(group *groupInfo, toAdd int64, capacity int64) {
