@@ -1157,6 +1157,18 @@ func (r *testRunner) runWorker(
 							t.AddParam(tc.label, fmt.Sprint(enable))
 						}
 					}
+
+					// 50% chance of enabling the multi-metric allocator (MMA)
+					// alongside count-based rebalancing. Skipped for
+					// mixed-version tests, which manage cluster settings
+					// through their own metamorphic mechanism.
+					if !t.spec.Suites.Contains(registry.MixedVersion) && prng.Intn(2) == 0 {
+						const setting = "kv.allocator.load_based_rebalancing"
+						const value = "multi-metric and count"
+						c.clusterSettings[setting] = value
+						c.status(fmt.Sprintf("metamorphically setting %q to %q", setting, value))
+						t.AddParam("metamorphicMMA", value)
+					}
 				}
 
 				// Enable DRPC either deterministically via --force-drpc
