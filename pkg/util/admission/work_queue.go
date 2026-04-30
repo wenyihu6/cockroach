@@ -320,15 +320,22 @@ type WorkQueue struct {
 		groups       map[groupKey]*groupInfo
 		groupWeights struct {
 			mu syncutil.Mutex
-			// active refers to the currently active weights. mu is held for updates
-			// to the inactive weights, to prevent concurrent updates. After
-			// updating the inactive weights, it is made active by swapping with
-			// active, while also holding WorkQueue.mu. Therefore, reading
-			// groupWeights.active does not require groupWeights.mu. For lock
-			// ordering, groupWeights.mu precedes WorkQueue.mu.
+			// active refers to the currently active weights. mu is held for
+			// updates to the inactive weights, to prevent concurrent updates.
+			// After updating the inactive weights, it is made active by
+			// swapping with active, while also holding WorkQueue.mu.
+			// Therefore, reading groupWeights.active does not require
+			// groupWeights.mu (q.mu suffices). For lock ordering,
+			// groupWeights.mu precedes WorkQueue.mu.
+			//
+			// Maps are keyed by the composite groupKey to match q.mu.groups.
+			// Today only tenantKind entries are populated (SetTenantWeights
+			// is the sole writer); the composite key keeps types aligned
+			// with q.mu.groups so getGroupWeightLocked can take a groupKey
+			// directly.
 			//
 			// The maps are lazily allocated.
-			active, inactive map[uint64]uint32
+			active, inactive map[groupKey]uint32
 		}
 		// maxCPUGroups maps resource group ID to whether that group always
 		// qualifies for burst (MAX_CPU). Only used if mode == usesCPUTimeTokens and
@@ -862,7 +869,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		// here, we also create the estimator. We init the estimator using a
 		// global estimator that sees workload across all groups.
 		maxCPU := q.getMaxCPULocked(groupID)
-		group = newGroupInfo(key, q.getGroupWeightLocked(groupID),
+		group = newGroupInfo(key, q.getGroupWeightLocked(key),
 			q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
 			maxCPU, q.perGroupAggMetrics)
 		q.mu.groups[key] = group
@@ -1009,7 +1016,7 @@ func (q *WorkQueue) Admit(ctx context.Context, info WorkInfo) (AdmitResponse, er
 		group, ok = q.mu.groups[key]
 		if !ok {
 			maxCPU := q.getMaxCPULocked(groupID)
-			group = newGroupInfo(key, q.getGroupWeightLocked(groupID),
+			group = newGroupInfo(key, q.getGroupWeightLocked(key),
 				q.mode, q.mu.defaultCPUTimeTokenEstimator.estimateTokensToBeUsed(), q.mu.burstBucketCapacity,
 				maxCPU, q.perGroupAggMetrics)
 			q.mu.groups[key] = group
@@ -1607,8 +1614,8 @@ const defaultGroupWeight = 1
 // sharing scheme would not need such a cap.
 const groupWeightCap = 20
 
-func (q *WorkQueue) getGroupWeightLocked(groupID uint64) uint32 {
-	weight, ok := q.mu.groupWeights.active[groupID]
+func (q *WorkQueue) getGroupWeightLocked(key groupKey) uint32 {
+	weight, ok := q.mu.groupWeights.active[key]
 	if !ok {
 		weight = defaultGroupWeight
 	}
@@ -1662,13 +1669,15 @@ func (q *WorkQueue) SetOverrideAllToBypassAdmission(override bool) {
 
 // SetTenantWeights sets the weight of tenants, using the provided tenant ID
 // => weight map. A nil map will result in all tenants having the same weight.
+// Only tenantKind entries in groupWeights.active are written; any non-tenant
+// entries already in active are preserved across the swap.
 //
 // TODO(wenyihu): rename to SetGroupWeights.
 func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 	q.mu.groupWeights.mu.Lock()
 	defer q.mu.groupWeights.mu.Unlock()
 	if q.mu.groupWeights.inactive == nil {
-		q.mu.groupWeights.inactive = make(map[uint64]uint32)
+		q.mu.groupWeights.inactive = make(map[groupKey]uint32)
 	}
 	// Remove all elements from the inactive map.
 	for k := range q.mu.groupWeights.inactive {
@@ -1685,15 +1694,16 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 	if maxWeight > groupWeightCap {
 		scaling = groupWeightCap / float64(maxWeight)
 	}
-	// Populate the weights in the inactive map.
-	for k, v := range groupWeights {
+	// Populate the tenant weights in the inactive map.
+	for id, v := range groupWeights {
 		w := uint32(math.Ceil(float64(v) * scaling))
 		if w < defaultGroupWeight {
 			w = defaultGroupWeight
 		}
-		q.mu.groupWeights.inactive[k] = w
+		q.mu.groupWeights.inactive[tenantGroupKey(id)] = w
 	}
-	// Establish the new active map.
+	// Swap the inactive map into active under q.mu so concurrent
+	// readers of active see a fully-populated map.
 	func() {
 		q.mu.Lock()
 		defer q.mu.Unlock()
@@ -1735,7 +1745,7 @@ func (q *WorkQueue) SetTenantWeights(groupWeights map[uint64]uint32) {
 			}
 			key := keys[index]
 			gi := q.mu.groups[key]
-			weight := q.getGroupWeightLocked(key.id)
+			weight := q.getGroupWeightLocked(key)
 			if gi != nil && gi.weight != weight {
 				gi.weight = weight
 				if isInGroupHeap(gi) {
