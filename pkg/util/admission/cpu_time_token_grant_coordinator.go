@@ -197,6 +197,21 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setGroupWeights(weights)
 }
 
+// SetResourceGroupConfig installs a new per-resource-group
+// configuration (weight + maxCPU) for Resource Manager mode.
+// Forwards to the RM-mode WorkQueue (queues[0]), whose
+// SetResourceGroupConfig updates the shared
+// ResourceGroupConfigHolder and, if RM mode is active, immediately
+// pushes the derived state onto WorkQueue's groupInfo entries and
+// groupWeights.active under q.mu.
+//
+// See ResourceGroupConfigHolder's type comment in
+// resource_group_config_holder.go for the design discussion of why a
+// dedicated holder owns the config storage.
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).SetResourceGroupConfig(config)
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
@@ -263,6 +278,12 @@ func makeCPUTimeTokenGrantCoordinator(
 
 	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
+	// One holder shared across both per-tier WorkQueues. RM mode only
+	// uses tier 0, but the holder is harmless on tier 1's WorkQueue:
+	// SetResourceGroupConfig is forwarded only to tier 0 below, so
+	// tier 1's holder retains the constructor seed (defaultRMResource-
+	// GroupConfig) and never participates in apply.
+	configHolder := newResourceGroupConfigHolder()
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		opts := makeWorkQueueOptions(KVWork)
 		opts.mode = usesCPUTimeTokens
@@ -272,6 +293,7 @@ func makeCPUTimeTokenGrantCoordinator(
 			tokensUsed:     metrics.TokensUsedPerTenant[tier],
 			tokensReturned: metrics.TokensReturnedPerTenant[tier],
 		}
+		opts.configHolder = configHolder
 		requesters[tier] = makeWorkQueue(
 			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, opts)
 		granter.requester[tier] = requesters[tier]
