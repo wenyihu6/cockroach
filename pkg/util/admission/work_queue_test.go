@@ -568,16 +568,35 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				var v bool
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "v", &v)
-				// Build the full map from current state plus the new entry,
-				// then call the production SetMaxCPUGroups method.
+				// In production this is one step: SetResourceGroupConfig
+				// updates the holder and, if useResourceGroup is true,
+				// immediately applies the derived state on WorkQueue. The
+				// test builds a merged config from current groupInfo state
+				// (so successive set-max-cpu-groups commands accumulate as
+				// a real caller would observe), installs it via
+				// SetResourceGroupConfig, then forces an apply because the
+				// datadriven tests use tenant-keyed groupInfos
+				// (useResourceGroup=false) but still expect
+				// SetResourceGroupConfig to flip maxCPU on existing groups.
 				q.mu.Lock()
-				m := make(map[uint64]bool, len(q.mu.maxCPUGroups))
-				for k, val := range q.mu.maxCPUGroups {
-					m[k] = val
+				cfg := make(map[uint64]ResourceGroupConfig, len(q.mu.groups)+1)
+				for k, g := range q.mu.groups {
+					cfg[k.id] = ResourceGroupConfig{
+						Weight: g.weight,
+						MaxCPU: g.cpuTimeBurstBucket.maxCPU,
+					}
 				}
 				q.mu.Unlock()
-				m[uint64(group)] = v
-				q.SetMaxCPUGroups(m)
+				cur := cfg[uint64(group)]
+				cur.MaxCPU = v
+				if cur.Weight == 0 {
+					cur.Weight = 1
+				}
+				cfg[uint64(group)] = cur
+				q.SetResourceGroupConfig(cfg)
+				q.mu.Lock()
+				q.applyDerivedConfigLocked(q.configHolder.Snapshot())
+				q.mu.Unlock()
 				return ""
 
 			case "set-priority-based-groups":

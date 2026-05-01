@@ -25,7 +25,7 @@ set-try-get-return-value v=true
 # BulkNormalPri -> rg 2.
 admit id=1 tenant=10 priority=0 requested-count=1
 ----
-tryGet: input no_burst, returning true
+tryGet: input can_burst, returning true
 id 1: admit succeeded
 
 admit id=2 tenant=10 priority=-30 requested-count=1
@@ -42,7 +42,7 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 1, w: 1, fifo: -128
  group-id: 2 used: 1, w: 1, fifo: -128
-burst-buckets: rg1=fullness=50.0% tokens=50 capacity=100 qual=no_burst rg2=fullness=50.0% tokens=50 capacity=100 qual=no_burst
+burst-buckets: rg1=fullness=50.0% tokens=50 capacity=100 maxCPU=true qual=can_burst rg2=fullness=50.0% tokens=50 capacity=100 qual=no_burst
 
 # Set rg 1 to maxCPU=true via SetMaxCPUGroups. rg 1 should now be
 # can_burst despite being at only 50% fullness.

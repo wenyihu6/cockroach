@@ -24,7 +24,7 @@ set-try-get-return-value v=true
 # Create two rg-keyed groups via priority-based routing.
 admit id=1 tenant=10 priority=0 requested-count=1
 ----
-tryGet: input no_burst, returning true
+tryGet: input can_burst, returning true
 id 1: admit succeeded
 
 admit id=2 tenant=10 priority=-30 requested-count=1
@@ -43,7 +43,7 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 1, w: 1, fifo: -128
  group-id: 2 used: 1, w: 1, fifo: -128
-burst-buckets: rg1=fullness=99.0% tokens=99 capacity=100 qual=can_burst rg2=fullness=0.0% tokens=-1 capacity=0 qual=no_burst
+burst-buckets: rg1=fullness=99.0% tokens=99 capacity=100 maxCPU=true qual=can_burst rg2=fullness=0.0% tokens=-1 capacity=0 qual=no_burst
 
 # Refill rg 2 with a smaller amount. rg 2 should reach 49%
 # (no_burst).
@@ -55,7 +55,7 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 1, w: 1, fifo: -128
  group-id: 2 used: 1, w: 1, fifo: -128
-burst-buckets: rg1=fullness=99.0% tokens=99 capacity=100 qual=can_burst rg2=fullness=49.0% tokens=49 capacity=100 qual=no_burst
+burst-buckets: rg1=fullness=99.0% tokens=99 capacity=100 maxCPU=true qual=can_burst rg2=fullness=49.0% tokens=49 capacity=100 qual=no_burst
 
 ###
 # Verify that refill-burst-bucket-for-group correctly updates the
@@ -91,7 +91,7 @@ print
 closed epoch: 0 groupHeap len: 2 top group: 1
  group-id: 1 used: 0, w: 1, fifo: -128 waiting work heap: [0: pri: normal-pri, ct: 1, epoch: 0, qt: 100]
  group-id: 2 used: 0, w: 1, fifo: -128 waiting work heap: [0: pri: bulk-normal-pri, ct: 1, epoch: 0, qt: 100]
-burst-buckets: rg1=fullness=99.0% tokens=99 capacity=100 qual=can_burst rg2=fullness=99.0% tokens=99 capacity=100 qual=can_burst
+burst-buckets: rg1=fullness=99.0% tokens=99 capacity=100 maxCPU=true qual=can_burst rg2=fullness=99.0% tokens=99 capacity=100 qual=can_burst
 
 # rg 2 should be granted first (it was already at top of heap when
 # rg 1 was no_burst; now both can_burst, ordering by used/weight is
@@ -120,4 +120,4 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 1 used: 1, w: 1, fifo: -128
  group-id: 2 used: 1, w: 1, fifo: -128
-burst-buckets: rg1=fullness=98.0% tokens=98 capacity=100 qual=can_burst rg2=fullness=98.0% tokens=98 capacity=100 qual=can_burst
+burst-buckets: rg1=fullness=98.0% tokens=98 capacity=100 maxCPU=true qual=can_burst rg2=fullness=98.0% tokens=98 capacity=100 qual=can_burst

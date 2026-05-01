@@ -30,7 +30,7 @@ set-try-get-return-value v=true
 # then flip rg 1 to maxCPU=true.
 admit id=1 tenant=10 priority=0 requested-count=1
 ----
-tryGet: input no_burst, returning true
+tryGet: input can_burst, returning true
 id 1: admit succeeded
 
 admit id=2 tenant=10 priority=-30 requested-count=1

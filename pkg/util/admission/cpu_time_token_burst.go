@@ -37,9 +37,6 @@ import "github.com/cockroachdb/redact"
 // With cluster settings at their default values, this implies that
 // an application tenant can burst, if they are using roughly less
 // than 20% of the CPU on a CRDB node (0.8 * 0.25 = 0.2).
-//
-// TODO(wenyihu6): refillBurstBuckets currently applies the same uniform
-// toAdd/capacity to all groups. Add per-group scaling of refill rates.
 type cpuTimeBurstBucket struct {
 	tokens   int64
 	capacity int64
@@ -47,16 +44,44 @@ type cpuTimeBurstBucket struct {
 	// burstQualification to always return noBurst. This effectively
 	// disables the burstQualification functionality.
 	disabled bool
-	// maxCPU is true for MAX_CPU resource groups in RM mode.
-	// See cpuTimeBurstBucket comment for burst qualification rules.
+	// maxCPU controls burst qualification:
+	//   true:  always canBurst (MAX_CPU resource groups in RM mode)
+	//   false: canBurst only when tokens > 90% of capacity
+	// Default is false (preserves 90%-fullness check). Updated every
+	// refill tick via refillBurstBucketForGroup.
 	maxCPU bool
 }
 
+// init sets up a fresh burst bucket. tokens and capacity are both set
+// to the seed value, so the seed determines cold-start behavior:
+//
+// Serverless mode seeds with the uniform per-tenant capacity. New
+// tenants start full and can burst immediately; bucket state converges
+// to actual usage within a handful of refills.
+//
+// RM mode seeds with 0 (no globally-keyed capacity is correct for
+// every group; see WorkQueue.burstBucketCapacity for the rationale).
+// A new RM group starts at (tokens=0, capacity=0), and the cold-start
+// sequence is:
+//
+//   - First admission drives tokens negative. adjust has no floor of
+//     its own; only refill enforces one.
+//   - burstQualification returns noBurst (tokens > capacity*9/10
+//     cannot hold once tokens go non-positive).
+//   - The group is not blocked. noBurst groups still draw from the
+//     granter's noBurst token pool - they rank below canBurst groups
+//     in the groupHeap and get a smaller share, but admission still
+//     proceeds.
+//   - The next refill (within 1ms) installs the per-group scaled
+//     capacity, adds the per-group scaled toAdd, and floors tokens at
+//     -capacity/4. From there the bucket recovers toward canBurst over
+//     subsequent refills if the group's actual consumption stays at
+//     or below its allocation.
+//
+// The brief negative excursion is an accounting artifact, not real
+// over-consumption: the granter's token pool meters actual CPU; this
+// bucket only governs burst qualification.
 func (m *cpuTimeBurstBucket) init(capacity int64, disabled bool, maxCPU bool) {
-	// The bucket of a new group is inited full. This implies that
-	// a group can burst when its work first appears on a KV node.
-	// After <= 1s, the bucket state should track the usage of the
-	// group accurately.
 	*m = cpuTimeBurstBucket{
 		tokens:   capacity,
 		capacity: capacity,
