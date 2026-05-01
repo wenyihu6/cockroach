@@ -197,6 +197,20 @@ func (coord *CPUGrantCoordinators) SetTenantWeights(weights map[uint64]uint32) {
 	coord.cpuTimeCoord.setGroupWeights(weights)
 }
 
+// SetResourceGroupConfig installs a new per-resource-group
+// configuration (weight + maxCPU) for Resource Manager mode in two
+// steps: write the source-of-truth holder, then signal the RM-mode
+// WorkQueue (queues[0]) to refresh its cached per-group state from
+// the holder.
+//
+// See ResourceGroupConfigHolder's type comment in
+// resource_group_config_holder.go for the design discussion of why a
+// dedicated holder owns the config storage.
+func (coord *CPUGrantCoordinators) SetResourceGroupConfig(config map[uint64]ResourceGroupConfig) {
+	coord.cpuTimeCoord.configHolder.Set(config)
+	coord.cpuTimeCoord.queues[0].(*WorkQueue).RefreshResourceGroupConfig()
+}
+
 // GetRunnableCountCallback returns a callback of type
 // goschedstats.RunnableCountCallback.
 func (coord *CPUGrantCoordinators) GetRunnableCountCallback() goschedstats.RunnableCountCallback {
@@ -210,8 +224,9 @@ func (cg *CPUGrantCoordinators) Close() {
 }
 
 type cpuTimeTokenGrantCoordinator struct {
-	filler *cpuTimeTokenFiller
-	queues [numResourceTiers]requesterClose
+	filler       *cpuTimeTokenFiller
+	queues       [numResourceTiers]requesterClose
+	configHolder *ResourceGroupConfigHolder
 }
 
 func makeCPUTimeTokenGrantCoordinator(
@@ -263,6 +278,12 @@ func makeCPUTimeTokenGrantCoordinator(
 
 	var requesters [numResourceTiers]requester
 	wqMetrics := makeWorkQueueMetrics("cpu", registry)
+	// One holder shared across both per-tier WorkQueues. RM mode only
+	// uses tier 0, but the holder is harmless on tier 1's WorkQueue:
+	// the coord-level Set+Refresh path targets tier 0 only, so tier 1's
+	// holder retains the constructor seed (defaultRMResourceGroupConfig)
+	// and never participates in apply.
+	configHolder := newResourceGroupConfigHolder()
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		opts := makeWorkQueueOptions(KVWork)
 		opts.mode = usesCPUTimeTokens
@@ -272,6 +293,7 @@ func makeCPUTimeTokenGrantCoordinator(
 			tokensUsed:     metrics.TokensUsedPerTenant[tier],
 			tokensReturned: metrics.TokensReturnedPerTenant[tier],
 		}
+		opts.configHolder = configHolder
 		requesters[tier] = makeWorkQueue(
 			ambientCtx, KVWork, &childGranters[tier], settings, wqMetrics, opts)
 		granter.requester[tier] = requesters[tier]
@@ -282,7 +304,8 @@ func makeCPUTimeTokenGrantCoordinator(
 	allocator.strategy = allocator.newStrategy(initialMode)
 
 	coordinator := &cpuTimeTokenGrantCoordinator{
-		filler: filler,
+		filler:       filler,
+		configHolder: configHolder,
 	}
 	for tier := resourceTier(0); tier < numResourceTiers; tier++ {
 		coordinator.queues[tier] = requesters[tier]
