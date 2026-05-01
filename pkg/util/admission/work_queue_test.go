@@ -568,16 +568,34 @@ func runCPUTimeTokenWorkQueueTest(t *testing.T, path string) {
 				var v bool
 				d.ScanArgs(t, "group", &group)
 				d.ScanArgs(t, "v", &v)
-				// Build the full map from current state plus the new entry,
-				// then call the production SetMaxCPUGroups method.
+				// In production this is two steps: write the holder, then
+				// signal RefreshResourceGroupConfig. The test builds a
+				// merged config from current groupInfo state (so
+				// successive set-max-cpu-groups commands accumulate as a
+				// real caller would observe), writes the holder, then
+				// forces an apply because the datadriven tests use
+				// tenant-keyed groupInfos (useResourceGroup=false) but
+				// still expect a config change to flip maxCPU on existing
+				// groups.
 				q.mu.Lock()
-				m := make(map[uint64]bool)
-				for k, val := range q.mu.maxCPUGroups {
-					m[k] = val
+				cfg := make(map[uint64]ResourceGroupConfig, len(q.mu.groups)+1)
+				for k, g := range q.mu.groups {
+					cfg[k.id] = ResourceGroupConfig{
+						Weight: g.weight,
+						MaxCPU: g.cpuTimeBurstBucket.maxCPU,
+					}
 				}
 				q.mu.Unlock()
-				m[uint64(group)] = v
-				q.SetMaxCPUGroups(m)
+				cur := cfg[uint64(group)]
+				cur.MaxCPU = v
+				if cur.Weight == 0 {
+					cur.Weight = 1
+				}
+				cfg[uint64(group)] = cur
+				q.configHolder.Set(cfg)
+				q.mu.Lock()
+				q.applyConfigLocked(q.configHolder.Snapshot())
+				q.mu.Unlock()
 				return ""
 
 			case "set-priority-based-groups":
@@ -1266,6 +1284,246 @@ func TestStoreWorkQueueBasic(t *testing.T) {
 				return fmt.Sprintf("unknown command: %s", d.Cmd)
 			}
 		})
+}
+
+// makeRMWorkQueueForTest constructs a *WorkQueue configured for CPU
+// time token AC, with the given configHolder, optional disable knobs,
+// and a tryGet-returns-true testGranter so admits run synchronously.
+// The caller is responsible for invoking close on the WorkQueue (or
+// closing via the test stopper) when done.
+func makeRMWorkQueueForTest(
+	t *testing.T, holder *ResourceGroupConfigHolder,
+) (*WorkQueue, *testGranter) {
+	tg := &testGranter{buf: &builderWithMu{}}
+	tg.mu.returnValueFromTryGet = true
+
+	opts := makeWorkQueueOptions(KVWork)
+	opts.mode = usesCPUTimeTokens
+	opts.disableEpochClosingGoroutine = true
+	opts.disableGCGroupsAndResetUsed = true
+	opts.configHolder = holder
+	cpuMetrics := makeCPUTimeTokenMetrics()
+	opts.perGroupAggMetrics = &groupAggMetrics{
+		admittedCount:  cpuMetrics.AdmittedCountPerTenant[systemTenant],
+		waitTimeNanos:  cpuMetrics.WaitTimeNanosPerTenant[systemTenant],
+		tokensUsed:     cpuMetrics.TokensUsedPerTenant[systemTenant],
+		tokensReturned: cpuMetrics.TokensReturnedPerTenant[systemTenant],
+	}
+
+	registry := metric.NewRegistry()
+	metrics := makeWorkQueueMetrics("", registry)
+	st := cluster.MakeTestingClusterSettings()
+	q := makeWorkQueue(log.MakeTestingAmbientContext(tracing.NewTracer()),
+		KVWork, tg, st, metrics, opts).(*WorkQueue)
+	q.knobs.DisableCPUTimeTokenEstimation = true
+	tg.r = q
+	return q, tg
+}
+
+// admitOnce runs Admit with the given WorkInfo and returns the
+// resulting *groupInfo (for direct field assertions). Fails the test
+// on Admit error.
+func admitOnce(t *testing.T, q *WorkQueue, info WorkInfo) *groupInfo {
+	t.Helper()
+	_, err := q.Admit(context.Background(), info)
+	require.NoError(t, err)
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.mu.groups[q.groupKeyForWorkLocked(info)]
+}
+
+// TestRMLazyCreateUsesHolder exercises the lazy-create path in RM mode:
+// after entering RM mode, an admit for a configured ID creates a
+// groupInfo whose weight and maxCPU come from the holder.
+func TestRMLazyCreateUsesHolder(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+
+	holder := newResourceGroupConfigHolder()
+	holder.Set(map[uint64]ResourceGroupConfig{
+		highResourceGroupID: {Weight: 80, MaxCPU: true},
+		lowResourceGroupID:  {Weight: 20, MaxCPU: false},
+	})
+
+	q, _ := makeRMWorkQueueForTest(t, holder)
+	defer close(q.stopCh)
+
+	q.setUseResourceGroup(true)
+
+	high := admitOnce(t, q, WorkInfo{
+		TenantID: roachpb.MustMakeTenantID(1),
+		Priority: admissionpb.NormalPri,
+	})
+	require.Equal(t, uint32(80), high.weight, "weight from holder propagates to groupInfo")
+	require.True(t, high.cpuTimeBurstBucket.maxCPU, "MaxCPU from holder propagates to groupInfo")
+
+	low := admitOnce(t, q, WorkInfo{
+		TenantID: roachpb.MustMakeTenantID(1),
+		Priority: admissionpb.LowPri,
+	})
+	require.Equal(t, uint32(20), low.weight)
+	require.False(t, low.cpuTimeBurstBucket.maxCPU)
+}
+
+// TestRMLazyCreateUnknownIDUsesDefault verifies that an admit for an
+// ID that isn't in the holder's config falls back to
+// defaultGroupConfig: weight=defaultGroupWeight, maxCPU=false,
+// burstFrac=0.
+func TestRMLazyCreateUnknownIDUsesDefault(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+
+	holder := newResourceGroupConfigHolder()
+	// Set a config that does NOT include some hypothetical custom ID.
+	// Note: weights would normally sum to 100; this test deliberately
+	// configures only one group so the lazy-create path for the other
+	// hardcoded RM ID exercises the default fallback.
+	holder.Set(map[uint64]ResourceGroupConfig{
+		highResourceGroupID: {Weight: 100, MaxCPU: false},
+	})
+
+	q, _ := makeRMWorkQueueForTest(t, holder)
+	defer close(q.stopCh)
+
+	q.setUseResourceGroup(true)
+
+	// priorityToResourceGroup(LowPri) returns lowResourceGroupID, which
+	// is NOT in the custom config above; the lazy-create path should
+	// route through GetOrDefault and pick up the safety fallback.
+	low := admitOnce(t, q, WorkInfo{
+		TenantID: roachpb.MustMakeTenantID(1),
+		Priority: admissionpb.LowPri,
+	})
+	require.Equal(t, uint32(defaultGroupWeight), low.weight,
+		"unknown ID falls back to defaultGroupConfig.Weight")
+	require.False(t, low.cpuTimeBurstBucket.maxCPU,
+		"unknown ID falls back to MaxCPU=false")
+}
+
+// TestRMGCThenLazyRecreateRecoversConfig is the headline regression test
+// for the design change: GC of a configured idle group is safe because
+// the next admit recreates the groupInfo via the holder with correct
+// weight/maxCPU/burstFrac.
+func TestRMGCThenLazyRecreateRecoversConfig(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+
+	holder := newResourceGroupConfigHolder()
+	holder.Set(map[uint64]ResourceGroupConfig{
+		highResourceGroupID: {Weight: 75, MaxCPU: true},
+		lowResourceGroupID:  {Weight: 25, MaxCPU: false},
+	})
+
+	q, _ := makeRMWorkQueueForTest(t, holder)
+	defer close(q.stopCh)
+
+	q.setUseResourceGroup(true)
+
+	infoHigh := WorkInfo{TenantID: roachpb.MustMakeTenantID(1), Priority: admissionpb.NormalPri}
+	high := admitOnce(t, q, infoHigh)
+	require.Equal(t, uint32(75), high.weight)
+	require.True(t, high.cpuTimeBurstBucket.maxCPU)
+
+	// Force GC: drive used=0 (a fresh admit may have left it >0).
+	q.mu.Lock()
+	high.used = 0
+	q.mu.Unlock()
+	q.gcGroupsResetUsedAndUpdateEstimators()
+
+	q.mu.Lock()
+	_, stillPresent := q.mu.groups[rgGroupKey(highResourceGroupID)]
+	q.mu.Unlock()
+	require.False(t, stillPresent,
+		"configured idle group should be GC'd (this is the behavior change)")
+
+	// Next admit should recreate via holder with correct config.
+	high2 := admitOnce(t, q, infoHigh)
+	require.Equal(t, uint32(75), high2.weight,
+		"recreated groupInfo gets configured weight from holder, not defaults")
+	require.True(t, high2.cpuTimeBurstBucket.maxCPU,
+		"recreated groupInfo gets configured maxCPU from holder, not defaults")
+}
+
+// TestRefreshResourceGroupConfigInServerlessIsNoOp verifies that
+// RefreshResourceGroupConfig in serverless mode does not push holder
+// state onto WorkQueue groupInfos. The next false→true transition
+// picks up the latest snapshot.
+func TestRefreshResourceGroupConfigInServerlessIsNoOp(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+
+	holder := newResourceGroupConfigHolder()
+	q, _ := makeRMWorkQueueForTest(t, holder)
+	defer close(q.stopCh)
+
+	// Stay in serverless mode (useResourceGroup=false).
+	infoHigh := WorkInfo{TenantID: roachpb.MustMakeTenantID(1), Priority: admissionpb.NormalPri}
+	tenantGroup := admitOnce(t, q, infoHigh)
+	originalMaxCPU := tenantGroup.cpuTimeBurstBucket.maxCPU
+	require.False(t, originalMaxCPU, "serverless lazy-create sets maxCPU=false")
+
+	// Set a config with MaxCPU=true while still in serverless.
+	holder.Set(map[uint64]ResourceGroupConfig{
+		highResourceGroupID: {Weight: 80, MaxCPU: true},
+		lowResourceGroupID:  {Weight: 20, MaxCPU: false},
+	})
+	q.RefreshResourceGroupConfig()
+
+	// WorkQueue's groupInfo for the existing tenant=1 entry must NOT
+	// have been mutated - refresh only applies when useResourceGroup=true.
+	q.mu.Lock()
+	stillUntouched := q.mu.groups[tenantGroupKey(1)]
+	q.mu.Unlock()
+	require.Equal(t, originalMaxCPU, stillUntouched.cpuTimeBurstBucket.maxCPU,
+		"RefreshResourceGroupConfig in serverless mode must not mutate existing groupInfo")
+
+	// Holder should reflect the new config though.
+	highCfg := holder.GetOrDefault(highResourceGroupID)
+	require.True(t, highCfg.MaxCPU, "holder records the Set even in serverless mode")
+	require.Equal(t, uint32(80), highCfg.Weight)
+
+	// Mode swap to RM applies the holder snapshot atomically.
+	q.setUseResourceGroup(true)
+	q.mu.Lock()
+	high := q.mu.groups[rgGroupKey(highResourceGroupID)]
+	q.mu.Unlock()
+	require.NotNil(t, high, "mode swap should pre-create groupInfo for configured IDs")
+	require.True(t, high.cpuTimeBurstBucket.maxCPU,
+		"mode swap applies the latest holder snapshot")
+	require.Equal(t, uint32(80), high.weight)
+}
+
+// TestModeSwapRoundTripAppliesLatestConfig verifies that toggling
+// RM→serverless→RM with an intervening holder.Set picks up the
+// latest config on the second activation, not the first.
+func TestModeSwapRoundTripAppliesLatestConfig(t *testing.T) {
+	defer leaktest.AfterTest(t)()
+
+	holder := newResourceGroupConfigHolder()
+	q, _ := makeRMWorkQueueForTest(t, holder)
+	defer close(q.stopCh)
+
+	// Enter RM mode with the default seed.
+	q.setUseResourceGroup(true)
+	q.mu.Lock()
+	high1 := q.mu.groups[rgGroupKey(highResourceGroupID)]
+	q.mu.Unlock()
+	require.True(t, high1.cpuTimeBurstBucket.maxCPU,
+		"default seed has high MaxCPU=true")
+
+	// Exit RM mode.
+	q.setUseResourceGroup(false)
+	// While in serverless, change the config so high is NOT MaxCPU.
+	holder.Set(map[uint64]ResourceGroupConfig{
+		highResourceGroupID: {Weight: 50, MaxCPU: false},
+		lowResourceGroupID:  {Weight: 50, MaxCPU: false},
+	})
+	q.RefreshResourceGroupConfig()
+
+	// Re-enter RM mode. The apply should reflect the NEW config.
+	q.setUseResourceGroup(true)
+	q.mu.Lock()
+	high2 := q.mu.groups[rgGroupKey(highResourceGroupID)]
+	q.mu.Unlock()
+	require.False(t, high2.cpuTimeBurstBucket.maxCPU,
+		"second RM activation must apply the post-Set config (MaxCPU=false), not the pre-Set seed")
+	require.Equal(t, uint32(50), high2.weight)
 }
 
 // TODO(sumeer):

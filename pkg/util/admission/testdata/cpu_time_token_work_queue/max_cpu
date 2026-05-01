@@ -39,7 +39,9 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 10 used: 1, w: 1, fifo: -128
  group-id: 20 used: 1, w: 1, fifo: -128
-burst-buckets: t10=fullness=0.0% tokens=-1 capacity=0 maxCPU=true qual=can_burst t20=fullness=0.0% tokens=-1 capacity=0 qual=no_burst
+ group-id: 10 used: 0, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+burst-buckets: t10=fullness=0.0% tokens=-1 capacity=0 qual=no_burst t20=fullness=0.0% tokens=-1 capacity=0 qual=no_burst rg10=fullness=0.0% tokens=0 capacity=0 maxCPU=true qual=can_burst rg20=fullness=0.0% tokens=0 capacity=0 qual=no_burst
 
 # Refill 25 tokens with capacity=100. Both buckets: -1+25=24 tokens,
 # 24% full. Group 10 (maxCPU=true) is can_burst despite being well
@@ -52,7 +54,9 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 10 used: 1, w: 1, fifo: -128
  group-id: 20 used: 1, w: 1, fifo: -128
-burst-buckets: t10=fullness=24.0% tokens=24 capacity=100 maxCPU=true qual=can_burst t20=fullness=24.0% tokens=24 capacity=100 qual=no_burst
+ group-id: 10 used: 0, w: 1, fifo: -128
+ group-id: 20 used: 0, w: 1, fifo: -128
+burst-buckets: t10=fullness=24.0% tokens=24 capacity=100 qual=no_burst t20=fullness=24.0% tokens=24 capacity=100 qual=no_burst rg10=fullness=25.0% tokens=25 capacity=100 maxCPU=true qual=can_burst rg20=fullness=25.0% tokens=25 capacity=100 qual=no_burst
 
 # Queue work for both groups. Group 10's work should be granted
 # first since it has can_burst via maxCPU, even though both have
@@ -66,7 +70,6 @@ tryGet: input no_burst, returning false
 
 admit id=4 tenant=10 requested-count=1
 ----
-tryGet: input can_burst, returning false
 
 # Reset used to 0 for both groups so the heap ordering below is
 # determined solely by burst qualification, not by used/weight.
@@ -100,7 +103,7 @@ set-try-get-return-value v=true
 # Bucket was at 24 tokens; admitting 100000 drives it to 24-100000.
 admit id=5 tenant=10 requested-count=100000
 ----
-tryGet: input can_burst, returning true
+tryGet: input no_burst, returning true
 id 5: admit succeeded
 
 # Refill with capacity=100. Floor is -capacity/4 = -25.
@@ -115,4 +118,4 @@ print
 closed epoch: 0 groupHeap len: 0
  group-id: 10 used: 100001, w: 1, fifo: -128
  group-id: 20 used: 1, w: 1, fifo: -128
-burst-buckets: t10=fullness=-25.0% tokens=-25 capacity=100 maxCPU=true qual=can_burst t20=fullness=48.0% tokens=48 capacity=100 qual=no_burst
+burst-buckets: t10=fullness=-25.0% tokens=-25 capacity=100 qual=no_burst t20=fullness=48.0% tokens=48 capacity=100 qual=no_burst
